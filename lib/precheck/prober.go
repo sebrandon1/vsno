@@ -27,7 +27,7 @@ type PodProber struct {
 }
 
 // Probe implements Prober.
-func (p *PodProber) Probe(ctx context.Context, nodes []string) (map[string]NodeHardware, map[string]error) {
+func (p *PodProber) Probe(ctx context.Context, nodes []string, onDone func(node string, err error)) (map[string]NodeHardware, map[string]error) {
 	hw := map[string]NodeHardware{}
 	errs := map[string]error{}
 	if len(nodes) == 0 {
@@ -53,19 +53,20 @@ func (p *PodProber) Probe(ctx context.Context, nodes []string) (map[string]NodeH
 		go func(node string) {
 			defer wg.Done()
 			out, err := p.probeNode(ctx, ns, node)
+			var h NodeHardware
 			if err == nil {
-				var h NodeHardware
 				h, err = ParseProbe(out)
-				if err == nil {
-					mu.Lock()
-					hw[node] = h
-					mu.Unlock()
-					return
-				}
 			}
 			mu.Lock()
-			errs[node] = err
+			if err == nil {
+				hw[node] = h
+			} else {
+				errs[node] = err
+			}
 			mu.Unlock()
+			if onDone != nil {
+				onDone(node, err)
+			}
 		}(node)
 	}
 	wg.Wait()

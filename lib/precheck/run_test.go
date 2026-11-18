@@ -2,9 +2,11 @@ package precheck
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	authv1 "k8s.io/api/authorization/v1"
@@ -22,7 +24,7 @@ import (
 
 type fixtureProber map[string]string // node -> fixture file
 
-func (f fixtureProber) Probe(_ context.Context, nodes []string) (map[string]NodeHardware, map[string]error) {
+func (f fixtureProber) Probe(_ context.Context, nodes []string, onDone func(string, error)) (map[string]NodeHardware, map[string]error) {
 	hw, errs := map[string]NodeHardware{}, map[string]error{}
 	for _, n := range nodes {
 		b, err := os.ReadFile(filepath.Join("testdata", f[n]))
@@ -31,6 +33,9 @@ func (f fixtureProber) Probe(_ context.Context, nodes []string) (map[string]Node
 			continue
 		}
 		h, err := ParseProbe(string(b))
+		if onDone != nil {
+			onDone(n, err)
+		}
 		if err != nil {
 			errs[n] = err
 			continue
@@ -267,5 +272,57 @@ func TestRunCountsExistingVsnoMemoryAsAvailable(t *testing.T) {
 	r = Run(context.Background(), env, DefaultRequirements(), Options{})
 	if got := find(r, "bm-worker: memory"); got == nil || got.Status != Fail {
 		t.Fatalf("13 GiB free must fail, got %+v", got)
+	}
+}
+
+// recorder is a Progress that records events in order.
+type recorder struct {
+	mu     sync.Mutex
+	events []string
+}
+
+type recStep struct {
+	r     *recorder
+	title string
+}
+
+func (r *recorder) log(s string) {
+	r.mu.Lock()
+	r.events = append(r.events, s)
+	r.mu.Unlock()
+}
+func (r *recorder) Start(t string) ProgressStep { r.log("start " + t); return recStep{r, t} }
+func (s recStep) Update(string)                 {}
+func (s recStep) SetProgress(d, t int)          { s.r.log(fmt.Sprintf("progress %s %d/%d", s.title, d, t)) }
+func (s recStep) Done(m string)                 { s.r.log("done " + s.title + ": " + m) }
+func (s recStep) Warn(m string)                 { s.r.log("warn " + s.title + ": " + m) }
+func (s recStep) Fail(m string)                 { s.r.log("fail " + s.title + ": " + m) }
+
+func TestRunReportsProgress(t *testing.T) {
+	env := labEnv(t, "probe-baremetal-empty-disk.txt")
+	rec := &recorder{}
+	env.Progress = rec
+	Run(context.Background(), env, DefaultRequirements(), Options{})
+
+	want := []string{
+		"start Checking cluster configuration",
+		"done Checking cluster configuration: 4.22.0-0.nightly-2026-11-03-073516",
+		"start Probing 2 worker(s)",
+		"progress Probing 2 worker(s) 0/2",
+		"progress Probing 2 worker(s) 1/2",
+		"progress Probing 2 worker(s) 2/2",
+		"done Probing 2 worker(s): 2 probed",
+	}
+	if strings.Join(rec.events, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("events:\n%s\nwant:\n%s", strings.Join(rec.events, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestSeedRegistryDefaultsToInCluster(t *testing.T) {
+	env := labEnv(t, "probe-baremetal-empty-disk.txt")
+	r := Run(context.Background(), env, DefaultRequirements(), Options{})
+	got := find(r, "Seed registry")
+	if got == nil || got.Status != Info || !strings.Contains(got.Detail, "in-cluster registry (default)") {
+		t.Fatalf("no --seed-repo must mean the in-cluster registry, got %+v", got)
 	}
 }

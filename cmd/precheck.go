@@ -69,11 +69,15 @@ func runPrecheck(cmd *cobra.Command, _ []string) error {
 	if !pcNoProbe {
 		env.Prober = &precheck.PodProber{Kube: c.Kube, Image: pcProbeImage, Timeout: pcProbeWait}
 	}
+	env.Progress = precheckProgress{newProgress()}
 
 	if outputFormat == "table" {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Checking %s (context %q)...\n\n", c.Config.Host, c.Context)
 	}
 	report := precheck.Run(cmd.Context(), env, pcReq, precheck.Options{Node: pcNode})
+	if outputFormat == "table" {
+		fmt.Fprintln(cmd.ErrOrStderr())
+	}
 
 	out := cmd.OutOrStdout()
 	if outputFormat == "json" {

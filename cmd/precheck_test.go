@@ -13,7 +13,7 @@ func TestRenderReportEligible(t *testing.T) {
 		Results: []precheck.Result{
 			{Check: "Cluster access", Status: precheck.Pass, Detail: "cluster-admin"},
 			{Check: "vm-worker: cpu", Status: precheck.Fail, Detail: "4 threads; one VM needs 16", Hint: "use a bigger node"},
-			{Check: "Seed registry credentials", Status: precheck.Info, Detail: "skipped", Hint: "info hints are hidden"},
+			{Check: "Seed registry", Status: precheck.Info, Detail: "skipped", Hint: "info hints are hidden"},
 		},
 		Suggested: precheck.Suggested{Node: "bm-worker", Disk: "/dev/disk/by-id/wwn-0x1", DiskSizeGB: 1919,
 			HostDNS: "172.30.0.10", LVMSChannel: "stable-4.22", CNVChannel: "stable"},

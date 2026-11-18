@@ -18,10 +18,20 @@ make build && ./vsno --help
 
 ## precheck
 
-Point vsno at the host cluster and ask whether it can host vSNOs:
+All vsno needs is a kubeconfig for a cluster with a bare-metal worker. It uses `$KUBECONFIG`
+(or `~/.kube/config`) like `oc` does, or you can pass `--kubeconfig`:
 
 ```bash
-vsno precheck --kubeconfig ~/cluster/kubeconfig --seed-repo quay.io/<you>/ibu-seed
+vsno precheck
+# or
+vsno precheck --kubeconfig ~/cluster/kubeconfig
+```
+
+Long-running steps show a spinner, elapsed time and a progress bar:
+
+```text
+✓ Checking cluster configuration (2s): 4.22.0
+⠼ Probing 2 worker(s) [##########----------] 1/2 worker-1 ✓ (9s)
 ```
 
 It checks:
@@ -33,7 +43,7 @@ It checks:
 | Catalog | `kubevirt-hyperconverged` and `lvms-operator` are available. It picks the LVMS channel that matches the host's version. |
 | Existing state | OpenShift Virtualization or LVMS already installed, an existing `lvms-vg-vsno` StorageClass, an existing `vsno` namespace |
 | Hub | Whether the cluster is managed by an ACM hub (hub policies may revert operators vsno installs) |
-| Registry | Push credentials for `--seed-repo` exist in your local podman/docker auth files |
+| Registry | The seed image goes to an in-cluster registry by default, so nothing is needed. Only if you pass the optional `--seed-repo` (e.g. `quay.io/<you>/ibu-seed`) does it check your local podman/docker auth files for push credentials. |
 | Each worker | `/dev/kvm`, bare metal or nested virtualization, CPU threads, schedulable memory, and an empty disk of at least 600 GB for LVMS |
 
 The per-worker hardware probe runs a short-lived privileged pod on each worker in a temporary
@@ -66,6 +76,7 @@ Useful flags:
 |---|---|
 | `-o json` | Machine-readable report |
 | `--write-config vsno.yaml` | Save the suggested settings to a file |
+| `--seed-repo <repo>` | Optional: check push credentials for an external seed registry |
 | `--node <name>` | Probe only that worker |
 | `--vms`, `--vm-cores`, `--vm-memory`, `--min-disk` | Change the sizing requirements |
 | `--probe-image` | Use a different probe image (it needs `bash` and `chroot`) |

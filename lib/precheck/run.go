@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,7 +20,9 @@ type Options struct {
 // Run executes every check and fills in Suggested from the best eligible node.
 func Run(ctx context.Context, e *Env, req Requirements, opts Options) *Report {
 	r := &Report{}
+	step := e.progress().Start("Checking cluster configuration")
 	if !e.checkClusterAdmin(ctx, r) {
+		step.Fail("no cluster-admin access")
 		return r // nothing else will work
 	}
 	e.checkHostVersion(ctx, r)
@@ -29,6 +32,7 @@ func Run(ctx context.Context, e *Env, req Requirements, opts Options) *Report {
 	storageReady := e.checkExisting(ctx, r)
 	e.checkZTP(ctx, r)
 	e.checkSeedRepo(r, req)
+	step.Done(r.Suggested.HostVersion)
 	e.checkNodes(ctx, r, req, opts, storageReady)
 	return r
 }
@@ -85,7 +89,27 @@ func nodeNames(nodes []corev1.Node) []string {
 
 // evaluateWorkers probes the workers and evaluates each one that answered.
 func (e *Env) evaluateWorkers(ctx context.Context, r *Report, workers []corev1.Node, req Requirements, storageReady bool) []NodeVerdict {
-	hw, probeErrs := e.Prober.Probe(ctx, nodeNames(workers))
+	names := nodeNames(workers)
+	step := e.progress().Start(fmt.Sprintf("Probing %d worker(s)", len(names)))
+	step.SetProgress(0, len(names))
+	var mu sync.Mutex
+	finished := 0
+	hw, probeErrs := e.Prober.Probe(ctx, names, func(node string, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		finished++
+		step.SetProgress(finished, len(names))
+		mark := "✓"
+		if err != nil {
+			mark = "✗"
+		}
+		step.Update(node + " " + mark)
+	})
+	if len(probeErrs) > 0 {
+		step.Warn(fmt.Sprintf("%d of %d probes failed", len(probeErrs), len(names)))
+	} else {
+		step.Done(fmt.Sprintf("%d probed", len(names)))
+	}
 	var verdicts []NodeVerdict
 	for _, n := range workers {
 		if perr := probeErrs[n.Name]; perr != nil {

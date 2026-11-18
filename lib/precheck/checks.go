@@ -36,8 +36,9 @@ const (
 
 // Prober collects NodeHardware from nodes. The real implementation runs a
 // short-lived privileged pod per node; tests use fixtures.
+// onDone, if non-nil, is called as each node finishes (from any goroutine).
 type Prober interface {
-	Probe(ctx context.Context, nodes []string) (map[string]NodeHardware, map[string]error)
+	Probe(ctx context.Context, nodes []string, onDone func(node string, err error)) (map[string]NodeHardware, map[string]error)
 }
 
 // Env is everything the checks need.
@@ -47,6 +48,14 @@ type Env struct {
 	Prober    Prober // nil skips the hardware probe
 	Namespace string // vsno namespace, used to detect an existing environment
 	AuthFiles []string
+	Progress  Progress // nil = silent
+}
+
+func (e *Env) progress() Progress {
+	if e.Progress == nil {
+		return noopProgress{}
+	}
+	return e.Progress
 }
 
 func (e *Env) checkClusterAdmin(ctx context.Context, r *Report) bool {
@@ -224,16 +233,17 @@ func (e *Env) checkZTP(ctx context.Context, r *Report) {
 
 func (e *Env) checkSeedRepo(r *Report, req Requirements) {
 	if req.SeedRepo == "" {
-		r.add(Result{Check: "Seed registry credentials", Status: Info, Detail: "skipped (pass --seed-repo to check)"})
+		r.add(Result{Check: "Seed registry", Status: Info,
+			Detail: "in-cluster registry (default); pass --seed-repo to push to an external registry instead"})
 		return
 	}
 	file, key, err := FindRegistryAuth(req.SeedRepo, e.AuthFiles)
 	if err != nil {
-		r.add(Result{Check: "Seed registry credentials", Status: Warn, Detail: "no push credentials for " + req.SeedRepo,
+		r.add(Result{Check: "Seed registry", Status: Warn, Detail: "no push credentials for " + req.SeedRepo,
 			Hint: "Run `podman login " + repoPrefix(req.SeedRepo) + "` with an account that can push there."})
 		return
 	}
-	r.add(Result{Check: "Seed registry credentials", Status: Pass, Detail: fmt.Sprintf("%s (key %q in %s)", req.SeedRepo, key, file)})
+	r.add(Result{Check: "Seed registry", Status: Pass, Detail: fmt.Sprintf("%s (key %q in %s)", req.SeedRepo, key, file)})
 }
 
 func repoPrefix(repo string) string {

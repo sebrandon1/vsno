@@ -85,3 +85,27 @@ func DefaultRequirements() Requirements {
 
 // vmOverheadGiB approximates virt-launcher memory overhead per VM.
 const vmOverheadGiB = 1
+
+// Progress displays long-running steps. Env.Progress may be nil (silent).
+type Progress interface {
+	Start(title string) ProgressStep
+}
+
+// ProgressStep is one running step.
+type ProgressStep interface {
+	Update(detail string)
+	SetProgress(done, total int)
+	Done(msg string)
+	Warn(msg string)
+	Fail(msg string)
+}
+
+type noopProgress struct{}
+type noopStep struct{}
+
+func (noopProgress) Start(string) ProgressStep { return noopStep{} }
+func (noopStep) Update(string)                 {}
+func (noopStep) SetProgress(int, int)          {}
+func (noopStep) Done(string)                   {}
+func (noopStep) Warn(string)                   {}
+func (noopStep) Fail(string)                   {}
