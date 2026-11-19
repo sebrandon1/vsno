@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vsno-registry-ca
+  namespace: openshift-config
+data:
+  registry.vsno-test.svc.cluster.local..5000: "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n"

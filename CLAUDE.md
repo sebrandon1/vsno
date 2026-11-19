@@ -75,6 +75,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   `WaitState`, and the `Oc`/`SSH`/`Kubeconfig`/`Screenshot` helpers. `Classify` turns
   observations (VM status, ISO DataVolume, probe) into a `State`; create's wait and list share it.
   Golden files in `testdata/` (`go test ./lib/guest -update`).
+- `lib/seed`: Image Based Upgrade seed images. `Create` drives the Lifecycle Agent on a vSNO
+  (`check`, `waitStable`, `ensureLCA`, `ensureTrust`, `generate`, `finish`); while the guest API is
+  down it reads progress from the node's `lca-generate-seed-image` unit. `List`/`Delete` talk to the
+  environment's registry through `scripts/registry.sh` (skopeo + curl, credentials on stdin) from the
+  builder. Templates and the script are embedded; goldens in `testdata/`.
 - `lib/ui/color.go`: `Palette` (ANSI colors when `On`; status icons via `Icon`), `ColorEnabled`
   (terminal, no `NO_COLOR`, `TERM` not `dumb`), and `Table`, which aligns columns by visible width.
 - `lib/ui`: step progress. On a terminal it shows a spinner, elapsed time and an optional bar

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .TrustConfigMap }}
+  namespace: openshift-config
+data:
+  {{ .TrustKey }}: {{ quote .CA }}

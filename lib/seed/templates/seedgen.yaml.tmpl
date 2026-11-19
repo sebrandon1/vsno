@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: seedgen
+  namespace: {{ .LCANamespace }}
+type: Opaque
+stringData:
+  seedAuth: {{ quote .SeedAuth }}
+---
+apiVersion: lca.openshift.io/v1
+kind: SeedGenerator
+metadata:
+  name: seedimage
+spec:
+  seedImage: {{ quote .Image }}

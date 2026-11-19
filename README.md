@@ -241,6 +241,39 @@ to `oc` or `ssh`, so put vsno's own flags, such as `-n`, before the name.
 `delete` removes the VM, its disks, the ISO, its Service, its DNS entry and the builder's files for
 it. It asks first unless you pass `--yes`, and `--dry-run` only lists what it would delete.
 
+## Seed images
+
+```bash
+vsno seed create a                 # make seeds/a:4.20.46 from vSNO a
+vsno seed create a --stop          # ...and stop a afterwards, to free its memory
+vsno seed list                     # or ls, or -o json
+vsno seed delete a:4.20.46 --dry-run
+vsno seed delete a                 # all of a's seeds
+```
+
+`seed create` turns a ready vSNO into an Image Based Upgrade seed image. Seed generation has to run
+on the vSNO itself, so the cluster is stopped while the Lifecycle Agent builds the image and comes
+back when it's done. `create`:
+1. waits for the cluster's operators to settle
+2. installs the Lifecycle Agent from the vSNO's own catalog if it's missing
+3. makes the vSNO trust the environment's registry
+4. runs the seed generation, following it to the end
+
+The image lands in the environment's registry as `seeds/<vsno>:<version>`. `--image` pushes elsewhere
+(the host cluster's pull secret must have credentials for that registry). It takes about 15–30
+minutes; the vSNO's API is down for most of it.
+
+| Flag | Meaning |
+|---|---|
+| `--image` | Push the seed here instead of the environment's registry |
+| `--stop` | Stop the vSNO afterwards |
+| `--timeout` | How long to wait for the generation (default `1h`) |
+
+`seed list` shows each seed image's reference, the vSNO it came from, its OpenShift version, size and
+age. `seed delete` removes tags by full reference, `<vsno>:<version>` or `<vsno>`. It asks you to
+type the arguments first unless `--yes`, and `--dry-run` only lists. The registry frees the disk
+space only when it is garbage collected, so deletion does not shrink it immediately.
+
 ## status
 
 ```bash
