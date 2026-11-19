@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/apply"
+	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -42,6 +45,7 @@ type Options struct {
 	// Settings from --config and flags. Empty fields come from the precheck.
 	Settings precheck.Suggested
 	Yes      bool // approve taking over the LVMS disk
+	Force    bool // apply into an existing namespace vsno didn't create
 	DryRun   bool // plan and report, change nothing
 	Images   manifests.Images
 }
@@ -82,13 +86,16 @@ type Result struct {
 func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 	e.defaults()
 	res := &Result{Namespace: o.Namespace}
+	if err := checkNamespace(ctx, e, o, res); err != nil {
+		return res, err
+	}
 	rec := &recorder{}
 	if o.DryRun {
 		rec.plan, _ = e.Applier.(apply.Planner) // without one, every object is planned as created
 		e.Applier = rec
 	}
 	s, warnings, err := resolve(e.Precheck(ctx, o.Settings.Node), o.Settings)
-	res.Settings, res.Warnings = s, warnings
+	res.Settings, res.Warnings = s, append(res.Warnings, warnings...)
 	if err != nil {
 		return res, err
 	}
@@ -133,6 +140,34 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 		return res, err
 	}
 	return res, nil
+}
+
+// checkNamespace refuses an existing namespace that vsno didn't create (see
+// cluster.CreatedByVsno), because setup would overwrite objects in it, such as
+// a hand-built environment's dnsmasq or builder. --force applies anyway; a dry
+// run only warns, so its plan shows what would be taken over.
+func checkNamespace(ctx context.Context, e Env, o Options, res *Result) error {
+	ns, err := e.Kube.CoreV1().Namespaces().Get(ctx, o.Namespace, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading namespace %s: %w", o.Namespace, err)
+	}
+	ours, err := cluster.CreatedByVsno(ctx, e.Kube, o.Namespace, ns.Labels)
+	if err != nil || ours {
+		return err
+	}
+	msg := fmt.Sprintf("namespace %s exists but was not created by vsno, so setup would overwrite objects in it", o.Namespace)
+	switch {
+	case o.Force:
+		res.Warnings = append(res.Warnings, msg+" (--force)")
+	case o.DryRun:
+		res.Warnings = append(res.Warnings, msg+"; without --force, setup refuses")
+	default:
+		return fmt.Errorf("%s. See `vsno setup --dry-run`, use another namespace (-n), or pass --force", msg)
+	}
+	return nil
 }
 
 func (e *Env) defaults() {

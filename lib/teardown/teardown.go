@@ -15,7 +15,6 @@ import (
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
-	"github.com/sebrandon1/vsno/lib/state"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -217,15 +216,12 @@ func (p *planner) planNamespace(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading namespace %s: %w", ns, err)
 	}
-	if !cluster.ManagedByVsno(u.GetLabels()) {
-		// A state ConfigMap, even an unreadable one, means vsno set it up.
-		_, found, err := state.Load(ctx, p.Kube, ns)
-		if !found && err != nil {
-			return err
-		}
-		if !found {
-			p.block("namespace %s was not created by vsno", ns)
-		}
+	created, err := cluster.CreatedByVsno(ctx, p.Kube, ns, u.GetLabels())
+	if err != nil {
+		return err
+	}
+	if !created {
+		p.block("namespace %s was not created by vsno", ns)
 	}
 	vms, err := p.list(ctx, cluster.GVRVirtualMachine, ns)
 	if err != nil {

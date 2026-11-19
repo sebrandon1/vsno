@@ -147,6 +147,11 @@ precheck's suggestion. If `--node` names a different node than `--config`, the c
 dropped, since it belongs to the other node. A rerun reuses everything and reports each object as `unchanged`.
 Progress and the result are recorded in ConfigMap `<namespace>/vsno-state`.
 
+Setup refuses an existing namespace that vsno didn't create: one with neither the
+`app.kubernetes.io/managed-by=vsno` label nor a `vsno-state` ConfigMap. It would overwrite objects
+there, such as an environment built by hand. Use another namespace with `-n`, or pass `--force`
+after checking `--dry-run`.
+
 `--dry-run` lists each step (reuse what is installed, or apply) and each object, with what applying
 it would do:
 - `create`: it doesn't exist yet
@@ -165,6 +170,7 @@ runs one (for example `-n vsno-dev` next to `vsno`) usually needs `--node`.
 | `--node`, `--disk` | Worker for the VMs and the `/dev/disk/by-id` path for LVMS |
 | `--config <file>` | Settings written by `precheck --write-config` |
 | `--yes` | Approve taking over the disk without asking |
+| `--force` | Set up in an existing namespace vsno didn't create (see below) |
 | `--dry-run` | List what setup would do and change nothing (see below) |
 | `--manifests` | With `--dry-run`, also print the manifests, Secret values redacted (implies `--dry-run`) |
 | `--no-probe` | Skip the hardware probe (then `--node` is required) |

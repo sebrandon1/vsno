@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/state"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynfake "k8s.io/client-go/dynamic/fake"
+	kfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
 
@@ -101,5 +103,36 @@ func TestRolledOutAndReady(t *testing.T) {
 		if a, w := Ready(c.d); a != c.available || w != c.wantN {
 			t.Errorf("%s: Ready = %d/%d", c.name, a, w)
 		}
+	}
+}
+
+func TestCreatedByVsno(t *testing.T) {
+	ctx := context.Background()
+	withState := kfake.NewClientset()
+	if err := state.Save(ctx, withState, "env", &state.State{Node: "worker-1"}); err != nil {
+		t.Fatal(err)
+	}
+	broken := kfake.NewClientset()
+	broken.PrependReactor("get", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("api down")
+	})
+	for _, c := range []struct {
+		name    string
+		kube    *kfake.Clientset
+		labels  map[string]string
+		want    bool
+		wantErr bool
+	}{
+		{"labeled", broken, map[string]string{ManagedByLabel: "vsno"}, true, false}, // the label alone decides; no read
+		{"state ConfigMap", withState, nil, true, false},
+		{"neither", kfake.NewClientset(), map[string]string{ManagedByLabel: "someone-else"}, false, false},
+		{"state unreadable", broken, nil, false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := CreatedByVsno(ctx, c.kube, "env", c.labels)
+			if got != c.want || (err != nil) != c.wantErr {
+				t.Errorf("got %v, %v; want %v, error %v", got, err, c.want, c.wantErr)
+			}
+		})
 	}
 }

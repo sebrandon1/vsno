@@ -247,6 +247,75 @@ func TestRunFreshCluster(t *testing.T) {
 	}
 }
 
+// simWithNamespace is a sim whose environment namespace already exists with labels.
+func simWithNamespace(t *testing.T, labels map[string]string) *sim {
+	t.Helper()
+	s := newSim()
+	if _, err := s.kube.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns, Labels: labels}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestRunRefusesForeignNamespace(t *testing.T) {
+	// A namespace vsno didn't create is refused before precheck, and nothing is applied.
+	s := simWithNamespace(t, nil)
+	e := s.env(report())
+	prechecked := false
+	e.Precheck = func(context.Context, string) *precheck.Report { prechecked = true; return report() }
+	if _, err := Run(context.Background(), e, opts()); err == nil || !strings.Contains(err.Error(), "not created by vsno") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("err = %v", err)
+	}
+	if prechecked || len(s.applied) != 0 {
+		t.Errorf("refused run prechecked=%v applied %v", prechecked, s.applied)
+	}
+
+	// A failed read stops setup too.
+	s = newSim()
+	s.kube.PrependReactor("get", "namespaces", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("api down")
+	})
+	if _, err := Run(context.Background(), s.env(report()), opts()); err == nil || !strings.Contains(err.Error(), "reading namespace "+ns+": api down") {
+		t.Errorf("read error = %v", err)
+	}
+}
+
+func TestRunForeignNamespaceForceAndDryRun(t *testing.T) {
+	// --force warns and proceeds.
+	s := simWithNamespace(t, nil)
+	o := opts()
+	o.Force = true
+	res, err := Run(context.Background(), s.env(report()), o)
+	if err != nil || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "(--force)") || len(s.applied) == 0 {
+		t.Errorf("forced: %v %v applied %d", err, res.Warnings, len(s.applied))
+	}
+
+	// A dry run warns, and keeps precheck's warnings too.
+	s = simWithNamespace(t, nil)
+	o = opts()
+	o.DryRun = true
+	res, err = Run(context.Background(), s.env(report(precheck.Result{Node: node, Check: "memory", Status: precheck.Fail, Detail: "8 GiB schedulable"})), o)
+	if err != nil || len(res.Warnings) != 2 || !strings.Contains(res.Warnings[0], "without --force, setup refuses") || !strings.Contains(res.Warnings[1], "8 GiB") {
+		t.Errorf("dry run: %v %q", err, res.Warnings)
+	}
+}
+
+func TestRunOwnNamespace(t *testing.T) {
+	// Labeled by vsno.
+	s := simWithNamespace(t, map[string]string{cluster.ManagedByLabel: "vsno"})
+	if res, err := Run(context.Background(), s.env(report()), opts()); err != nil || len(res.Warnings) != 0 {
+		t.Errorf("labeled: %v %v", err, res.Warnings)
+	}
+	// Holding vsno-state.
+	s = simWithNamespace(t, nil)
+	if err := state.Save(context.Background(), s.kube, ns, &state.State{Node: node}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(context.Background(), s.env(report()), opts()); err != nil {
+		t.Errorf("with vsno-state: %v", err)
+	}
+}
+
 func TestRunReusesHostAndRerunIsNoOp(t *testing.T) {
 	s := newSim()
 	s.existingHost(t)

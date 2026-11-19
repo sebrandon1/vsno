@@ -115,9 +115,13 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   capabilities.
 - setup waits for an existing HyperConverged that isn't Available instead of reusing it as is.
 - setup's step names must match `manifests.Steps` (`TestRunDryRun` checks the order).
-- teardown only deletes a namespace with the `app.kubernetes.io/managed-by=vsno` label or a
-  `vsno-state` ConfigMap. `--host` refuses while any of these exist: VMs elsewhere, PVCs on a
-  TopoLVM StorageClass elsewhere, or an LVMCluster vsno didn't create. PVCs in
+- setup refuses, and teardown only deletes, a namespace that `cluster.CreatedByVsno` accepts: it has
+  the `app.kubernetes.io/managed-by=vsno` label or a `vsno-state` ConfigMap. `--force` overrides
+  either. setup checks this first, before precheck. Per-object "take over" in the dry-run plan is
+  only reported, not enforced: vsno objects from before every object was labeled can lack vsno's
+  field manager, so enforcing it would refuse old environments.
+- teardown `--host` refuses while any of these exist: VMs elsewhere, PVCs on a TopoLVM StorageClass
+  elsewhere, or an LVMCluster vsno didn't create. PVCs in
   `openshift-virtualization-os-images` don't count; teardown deletes that namespace before the
   LVMCluster. `--force` skips all of these checks, but they are still reported: as warnings
   marked `(ignored: --force)`, and as `forced` in the JSON result.

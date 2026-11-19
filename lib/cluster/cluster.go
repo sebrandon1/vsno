@@ -6,6 +6,9 @@ import (
 	"context"
 	"strings"
 
+	"github.com/sebrandon1/vsno/lib/state"
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/sebrandon1/vsno/lib/precheck"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -29,6 +32,21 @@ const (
 
 // ManagedByVsno reports whether labels carry ManagedByLabel=vsno.
 func ManagedByVsno(labels map[string]string) bool { return labels[ManagedByLabel] == "vsno" }
+
+// CreatedByVsno reports whether vsno created namespace ns, given its labels:
+// it carries ManagedByLabel=vsno, or it holds a vsno-state ConfigMap (even an
+// unreadable one). setup refuses, and teardown blocks on, a namespace that
+// fails this, unless --force.
+func CreatedByVsno(ctx context.Context, kube kubernetes.Interface, ns string, labels map[string]string) (bool, error) {
+	if ManagedByVsno(labels) {
+		return true, nil
+	}
+	_, found, err := state.Load(ctx, kube, ns)
+	if !found && err != nil {
+		return false, err
+	}
+	return found, nil
+}
 
 // GVRs of the resources setup, status and teardown use, besides precheck's.
 var (

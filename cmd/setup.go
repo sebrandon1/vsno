@@ -28,6 +28,7 @@ var (
 	suDisk      string
 	suConfig    string
 	suYes       bool
+	suForce     bool
 	suDryRun    bool
 	suManifests bool
 	suNoProbe   bool
@@ -52,6 +53,10 @@ file 'vsno precheck --write-config' writes), then the precheck's suggestion.
 Taking over a disk asks you to type the node name, unless --yes. Reruns reuse
 generated credentials and report "unchanged" for objects that didn't change.
 
+setup refuses an existing namespace it didn't create (no
+app.kubernetes.io/managed-by=vsno label and no vsno-state ConfigMap), because it
+would overwrite objects there; --force applies anyway.
+
 --dry-run lists what setup would do and changes nothing: each step, and each
 object it would create, reapply (vsno applied it before) or take over (it
 exists but vsno didn't create it, so setup would overwrite it). Add
@@ -65,6 +70,7 @@ func init() {
 	f.StringVar(&suDisk, "disk", "", "disk for LVMS, a /dev/disk/by-id path (default: precheck's suggestion)")
 	f.StringVar(&suConfig, "config", "", "settings file written by 'vsno precheck --write-config'")
 	f.BoolVar(&suYes, "yes", false, "approve taking over the LVMS disk without asking")
+	f.BoolVar(&suForce, "force", false, "set up in an existing namespace vsno didn't create, overwriting objects in it")
 	f.BoolVar(&suDryRun, "dry-run", false, "list what setup would do and change nothing")
 	f.BoolVar(&suManifests, "manifests", false, "with --dry-run, also print the manifests (Secret values redacted); implies --dry-run")
 	f.BoolVar(&suNoProbe, "no-probe", false, "skip the precheck hardware probe (then --node is required)")
@@ -106,7 +112,7 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Setting up %s in %s (context %q)...\n\n", namespace, c.Config.Host, c.Context)
 	}
 	res, err := setup.Run(cmd.Context(), env, setup.Options{
-		Namespace: namespace, Settings: settings, Yes: suYes, DryRun: suDryRun, Images: manifests.DefaultImages(),
+		Namespace: namespace, Settings: settings, Yes: suYes, Force: suForce, DryRun: suDryRun, Images: manifests.DefaultImages(),
 	})
 	if outputFormat == "table" {
 		fmt.Fprintln(cmd.ErrOrStderr())
