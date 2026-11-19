@@ -53,10 +53,20 @@ type Update struct {
 	Plan      string `json:"plan,omitempty"` // InstallPlan waiting for approval
 }
 
-// String is "<installed> → <available>", or "<installed> → upgrading" when the
-// catalog can't say what the update installs.
+// SameCSV reports whether the channel to move to already runs this very CSV, so
+// the Subscription's channel is the only thing to change.
+func (u Update) SameCSV() bool {
+	return u.Suggested != "" && (u.Available == "" || u.Available == u.Installed)
+}
+
+// String is "<installed> → <available>", "channel <old> → <new>" when only the
+// channel moves, or "<installed> → upgrading" when the catalog can't say what
+// the update installs.
 func (u Update) String() string {
-	if u.Available == "" {
+	switch {
+	case u.SameCSV():
+		return "channel " + u.Channel + " → " + u.Suggested
+	case u.Available == "":
 		return u.Installed + " → upgrading"
 	}
 	return u.Installed + " → " + u.Available
@@ -111,11 +121,7 @@ func OperatorUpdate(ctx context.Context, dyn dynamic.Interface, op Operator, sug
 		return nil, err
 	}
 	u := &Update{Operator: op.Key, Installed: installed, Channel: st.Channel, Approval: st.Approval}
-	target := st.Channel
-	if suggested != "" && suggested != st.Channel {
-		u.Suggested, target = suggested, suggested
-	}
-	if u.Available, err = channelCSV(ctx, dyn, op.Package, target); err != nil {
+	if u.Available, u.Suggested, err = targetCSV(ctx, dyn, op.Package, st, suggested); err != nil {
 		return nil, err
 	}
 	if st.Approval == "Manual" {
@@ -124,30 +130,47 @@ func OperatorUpdate(ctx context.Context, dyn dynamic.Interface, op Operator, sug
 		}
 	}
 	newer := u.Available != "" && u.Available != installed
-	if !newer && st.State != "UpgradePending" && u.Plan == "" {
+	if !newer && u.Suggested == "" && st.State != "UpgradePending" && u.Plan == "" {
 		return nil, nil
 	}
 	return u, nil
 }
 
-// channelCSV returns the CSV at the head of pkg's channel, or "" when the
-// catalog doesn't list the package or the channel.
-func channelCSV(ctx context.Context, dyn dynamic.Interface, pkg, channel string) (string, error) {
+// targetCSV returns the CSV an upgrade would install and the channel to move to
+// when the Subscription is behind the suggested one. The channel stays "" when
+// the catalog doesn't list it: patching one it doesn't have would fail in OLM.
+func targetCSV(ctx context.Context, dyn dynamic.Interface, pkg string, st SubscriptionStatus, suggested string) (csv, move string, err error) {
+	if csv, _, err = channelCSV(ctx, dyn, pkg, st.Channel); err != nil {
+		return "", "", err
+	}
+	if suggested == "" || suggested == st.Channel {
+		return csv, "", nil
+	}
+	other, ok, err := channelCSV(ctx, dyn, pkg, suggested)
+	if err != nil || !ok {
+		return csv, "", err
+	}
+	return other, suggested, nil
+}
+
+// channelCSV returns the CSV at the head of pkg's channel, and whether the
+// catalog lists that channel.
+func channelCSV(ctx context.Context, dyn dynamic.Interface, pkg, channel string) (string, bool, error) {
 	pm, err := dyn.Resource(GVRPackageManifest).Namespace(MarketplaceNamespace).Get(ctx, pkg, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
-			return "", nil
+			return "", false, nil
 		}
-		return "", fmt.Errorf("reading the catalog entry for %s: %w", pkg, err)
+		return "", false, fmt.Errorf("reading the catalog entry for %s: %w", pkg, err)
 	}
 	chs, _, _ := unstructured.NestedSlice(pm.Object, "status", "channels")
 	for _, c := range chs {
 		if m, ok := c.(map[string]any); ok && m["name"] == channel {
 			csv, _ := m["currentCSV"].(string)
-			return csv, nil
+			return csv, true, nil
 		}
 	}
-	return "", nil
+	return "", false, nil
 }
 
 // pendingPlan returns the InstallPlan waiting for approval that would install

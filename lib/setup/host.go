@@ -175,6 +175,13 @@ func (r *runner) upgradeOperator(ctx context.Context, ps precheck.ProgressStep, 
 			return step, err
 		}
 	}
+	if u.SameCSV() {
+		// The channel pointed at the CSV that already runs: moving it is the
+		// whole upgrade, and no new CSV will appear to wait for.
+		r.st.Versions[op.Key] = u.Installed
+		step.Detail = u.String()
+		return step, nil
+	}
 	ps.Update("waiting for the new CSV to succeed")
 	csv, err := r.waitForUpgrade(ctx, op, u.Installed)
 	if csv != "" {

@@ -249,10 +249,10 @@ func (e *Env) existingOperator(ctx context.Context, r *Report, op cluster.Operat
 }
 
 // UpdateDetail is "update available (<installed> → <available>)", naming a
-// channel change when the upgrade needs one.
+// channel change when the update installs a different CSV.
 func UpdateDetail(u *cluster.Update) string {
 	detail := "update available (" + u.String() + ")"
-	if u.Suggested != "" {
+	if u.Suggested != "" && !u.SameCSV() {
 		detail += fmt.Sprintf(", channel %s → %s", u.Channel, u.Suggested)
 	}
 	return detail

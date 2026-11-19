@@ -404,3 +404,34 @@ func TestSummarize(t *testing.T) {
 		t.Errorf("summarize = %q", got)
 	}
 }
+
+func TestRunOperatorUpgradeMovesOnlyTheChannel(t *testing.T) {
+	ctx := context.Background()
+	s := newSim()
+	s.existingHost(t)
+	// Both channels point at the CSV that runs, so only the channel moves and
+	// there is no new CSV to wait for.
+	s.create(t, cluster.GVRSubscription, cnvSub("stable-4.21", "", cnvCSV))
+	s.create(t, cluster.GVRPackageManifest, manifestObj(cluster.CNV.Package, cnvCSV))
+	e := s.env(report()) // precheck suggests channel1
+	o := opts()
+	o.UpgradeOperators = true
+
+	res, err := Run(ctx, e, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := outcomes(res)["cnv"]; got != Upgraded {
+		t.Fatalf("cnv = %q", got)
+	}
+	if d := stepOf(res, "cnv").Detail; d != "channel stable-4.21 → "+channel1 {
+		t.Errorf("detail = %q", d)
+	}
+	sub, err := s.dyn.Resource(cluster.GVRSubscription).Namespace(cluster.CNV.Namespace).Get(ctx, "hco-operatorhub", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ch, _, _ := unstructured.NestedString(sub.Object, "spec", "channel"); ch != channel1 {
+		t.Errorf("channel = %q, want %q", ch, channel1)
+	}
+}

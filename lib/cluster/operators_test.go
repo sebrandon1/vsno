@@ -121,6 +121,21 @@ func TestOperatorUpdate(t *testing.T) {
 			want:      csvV1 + " → " + csvV3, wantSug: "stable-4.22",
 		},
 		{
+			name: "channel behind, catalog heads match",
+			objs: []runtime.Object{csv(CNV.Namespace, csvV1, "Succeeded"),
+				subscription("stable-4.21", "", csvV1, csvV1, "AtLatestKnown"),
+				manifest(map[string]string{"stable-4.21": csvV1, "stable-4.22": csvV1})},
+			suggested: "stable-4.22",
+			want:      "channel stable-4.21 → stable-4.22", wantSug: "stable-4.22",
+		},
+		{
+			name: "suggested channel isn't in the catalog",
+			objs: []runtime.Object{csv(CNV.Namespace, csvV1, "Succeeded"),
+				subscription("stable-4.21", "", csvV1, csvV1, "AtLatestKnown"),
+				manifest(map[string]string{"stable-4.21": csvV1})},
+			suggested: "stable-4.22",
+		},
+		{
 			name: "no subscription",
 			objs: []runtime.Object{csv(CNV.Namespace, csvV1, "Succeeded")},
 		},
@@ -195,6 +210,8 @@ func TestUpdateString(t *testing.T) {
 	}{
 		{Update{Installed: "a", Available: "b"}, "a → b"},
 		{Update{Installed: "a"}, "a → upgrading"},
+		{Update{Installed: "a", Available: "a", Channel: "c", Suggested: "d"}, "channel c → d"},
+		{Update{Installed: "a", Channel: "c", Suggested: "d"}, "channel c → d"},
 	}
 	for _, c := range cases {
 		if got := c.u.String(); got != c.want {
