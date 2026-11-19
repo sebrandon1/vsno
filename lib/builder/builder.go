@@ -1,0 +1,117 @@
+// Package builder runs scripts in the environment's builder pod, which has the
+// tools vSNOs need (oc, openshift-install, nmstate, ssh) and reaches the
+// guests by their Service ClusterIPs.
+package builder
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/streaming/pkg/httpstream"
+)
+
+// Container is the builder Deployment's container.
+const Container = "builder"
+
+// IO wires a script's streams. Any may be nil; a non-nil TTY size queue asks
+// for a terminal.
+type IO struct {
+	Stdin          io.Reader
+	Stdout, Stderr io.Writer
+	TTY            bool
+	Resize         remotecommand.TerminalSizeQueue
+}
+
+// Runner runs a bash script with arguments in the builder.
+type Runner interface {
+	Run(ctx context.Context, script string, args []string, streams IO) error
+}
+
+// Exec is the Runner for a real cluster.
+type Exec struct {
+	Config    *rest.Config
+	Kube      kubernetes.Interface
+	Namespace string
+}
+
+// ErrNotReady means the builder pod isn't running and ready; vsno setup
+// creates it.
+var ErrNotReady = errors.New("no ready builder pod")
+
+// Pod returns the ready builder pod's name.
+func Pod(ctx context.Context, kube kubernetes.Interface, ns string) (string, error) {
+	pods, err := kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: "app=builder"})
+	if err != nil {
+		return "", fmt.Errorf("finding the builder pod: %w", err)
+	}
+	for _, p := range pods.Items {
+		if p.Status.Phase != corev1.PodRunning || p.DeletionTimestamp != nil {
+			continue
+		}
+		for _, c := range p.Status.Conditions {
+			if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+				return p.Name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("%w in namespace %s; run `vsno setup -n %s`", ErrNotReady, ns, ns)
+}
+
+// Run implements Runner. The script runs as `bash -c script vsno args...`.
+// Without a stderr writer, stderr is captured and its last line added to an
+// error (exec also needs at least one output stream).
+func (e Exec) Run(ctx context.Context, script string, args []string, s IO) error {
+	var captured bytes.Buffer
+	if s.Stderr == nil && !s.TTY {
+		s.Stderr = &captured
+	}
+	err := e.run(ctx, script, args, s)
+	if err != nil && captured.Len() > 0 {
+		out := strings.TrimSpace(captured.String())
+		err = fmt.Errorf("%w: %s", err, out[strings.LastIndex(out, "\n")+1:])
+	}
+	return err
+}
+
+func (e Exec) run(ctx context.Context, script string, args []string, s IO) error {
+	pod, err := Pod(ctx, e.Kube, e.Namespace)
+	if err != nil {
+		return err
+	}
+	req := e.Kube.CoreV1().RESTClient().Post().Resource("pods").Namespace(e.Namespace).Name(pod).SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: Container,
+			Command:   append([]string{"bash", "-c", script, "vsno"}, args...),
+			Stdin:     s.Stdin != nil,
+			Stdout:    s.Stdout != nil,
+			Stderr:    s.Stderr != nil && !s.TTY, // a TTY merges stderr into stdout
+			TTY:       s.TTY,
+		}, scheme.ParameterCodec)
+	ws, err := remotecommand.NewWebSocketExecutor(e.Config, "GET", req.URL().String())
+	if err != nil {
+		return err
+	}
+	spdy, err := remotecommand.NewSPDYExecutor(e.Config, "POST", req.URL())
+	if err != nil {
+		return err
+	}
+	ex, err := remotecommand.NewFallbackExecutor(ws, spdy, httpstream.IsUpgradeFailure)
+	if err != nil {
+		return err
+	}
+	opts := remotecommand.StreamOptions{Stdin: s.Stdin, Stdout: s.Stdout, Tty: s.TTY, TerminalSizeQueue: s.Resize}
+	if !s.TTY {
+		opts.Stderr = s.Stderr
+	}
+	return ex.StreamWithContext(ctx, opts)
+}

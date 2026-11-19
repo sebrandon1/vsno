@@ -11,7 +11,6 @@ import (
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/setup"
-	"github.com/sebrandon1/vsno/lib/teardown"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -176,7 +175,7 @@ func TestRenderSetupManifests(t *testing.T) {
 func TestPlanAction(t *testing.T) {
 	for a, want := range map[apply.Action]string{
 		apply.Create: colored.Green("create"), apply.Reapply: colored.Dim("reapply"), apply.TakeOver: colored.Yellow("take over"),
-		teardown.Delete: colored.Red("delete"), teardown.Absent: colored.Dim("absent"), teardown.Removed: colored.Green("deleted"),
+		apply.Delete: colored.Red("delete"), apply.Absent: colored.Dim("absent"), apply.Removed: colored.Green("deleted"),
 	} {
 		if got := planAction(colored, a); got != want {
 			t.Errorf("%s = %q, want %q", a, got, want)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/status"
 	"github.com/sebrandon1/vsno/lib/teardown"
@@ -36,7 +37,7 @@ func TestColorKeepsLayout(t *testing.T) {
 	targets := tdResult()
 	targets.Blockers, targets.Forced = []string{"VMs elsewhere"}, true
 	done := tdResult()
-	done.Steps[0].Outcome, done.Objects[0].Action = teardown.Deleted, teardown.Removed
+	done.Steps[0].Outcome, done.Objects[0].Action = teardown.Deleted, apply.Removed
 	stuck := statusReport()
 	stuck.VMs = append(stuck.VMs, status.VM{Name: "target", Status: "Provisioning", Node: "worker-1"})
 	stuck.Stages[len(stuck.Stages)-1].Status = "failed"

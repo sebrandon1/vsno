@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
@@ -67,6 +68,7 @@ func healthy() []runtime.Object {
 			"conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}),
 		obj("kubevirt.io/v1", "VirtualMachineInstance", ns, "seed", status(map[string]any{"nodeName": node})),
 		obj("kubevirt.io/v1", "VirtualMachine", ns, "target", status(map[string]any{"printableStatus": "Stopped"})),
+		vsno("b"), // a vSNO: the caller reports it with guest.List, not as a VM
 	}
 	for i, d := range cluster.Deployments {
 		objs = append(objs, deployment(d, 1), service(d, fmt.Sprintf("172.30.0.%d", i+1)))
@@ -260,4 +262,10 @@ func TestCollectErrors(t *testing.T) {
 			t.Errorf("%s = %s %q", c.Name, c.Status, c.Detail)
 		}
 	}
+}
+
+func vsno(name string) *unstructured.Unstructured {
+	u := obj("kubevirt.io/v1", "VirtualMachine", ns, name, status(map[string]any{"printableStatus": "Running"}))
+	u.SetLabels(map[string]string{guest.LabelName: name})
+	return u
 }

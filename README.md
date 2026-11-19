@@ -8,13 +8,12 @@ One workflow built on top of that is testing
 [lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent) **Image Based Upgrades
 (IBU)** between two vSNOs.
 
-> **Status:** milestones 1 and 2 are done: `vsno precheck`, `setup`, `status` and `teardown` work.
+> **Status:** milestones 1–3 are done: `precheck`, `setup`, `status`, `teardown`, and the vSNO
+> lifecycle (`create`, `list`, `delete`, `start`, `stop`, `oc`, `ssh`, `kubeconfig`, `screenshot`).
 > Planned, in order:
-> 1. `create <name> --version …`, `list`, `delete` and the guest helpers (`ssh`, `oc`,
->    `kubeconfig`, `screenshot`)
-> 2. fast creates from an in-cluster release cache
-> 3. IBU (`prepare`, `seed generate`, `upgrade`) and testing lifecycle-agent builds
-> 4. `vsno run`
+> 1. fast creates from an in-cluster release cache
+> 2. IBU (`prepare`, `seed generate`, `upgrade`) and testing lifecycle-agent builds
+> 3. `vsno run`
 >
 > See the [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap).
 
@@ -184,6 +183,63 @@ runs one (for example `-n vsno-dev` next to `vsno`) usually needs `--node`.
 | `--no-probe` | Skip the hardware probe (then `--node` is required) |
 | `--timeout <duration>` | How long to wait for each component (default `20m`) |
 | `-n <namespace>` | Environment namespace (default `vsno`) |
+
+## vSNOs
+
+```bash
+vsno create a --version 4.20 --watch       # latest 4.20 z-stream, follow the install
+vsno create b --version 4.22-nightly       # latest accepted 4.22 nightly; returns once the VM exists
+vsno create --version 4.20                 # no name: a random one, such as brave-otter
+vsno list                                  # or --watch, or -o json
+vsno oc a get nodes                        # oc against the vSNO
+vsno ssh a                                 # a shell as core; vsno ssh a -- uptime
+vsno kubeconfig a > a.kubeconfig
+vsno screenshot a                          # a.png of the console
+vsno stop a && vsno start a --wait
+vsno delete a b
+```
+
+`create` needs an environment from `vsno setup`. Without `-n`, the vSNO commands (and `status`) use
+the environment `vsno setup` created, if there is exactly one; with several, pass `-n`.
+
+`create`:
+1. resolves `--version` to a release image
+2. builds the agent ISO in the builder pod
+3. creates the VM, its disks, a Service and DNS entries
+4. returns. The install takes about 45 minutes: `--watch` follows it with a progress bar, or
+   follow it later with `vsno list --watch`.
+
+`--version` accepts:
+- a release: `4.20.46`
+- a minor: `4.20`, its latest stable z-stream
+- `4.22-nightly`: the latest accepted nightly
+- a nightly's name: `4.22.0-0.nightly-…`
+- a release image pullspec
+
+Nightlies need credentials for `registry.ci.openshift.org` in the cluster pull secret
+(`openshift-config/pull-secret`). `create` checks for them first.
+
+| Flag | Meaning |
+|---|---|
+| `--version` | OpenShift version (required) |
+| `--cores`, `--memory`, `--disk` | Size: defaults 16 vCPU / 16 GiB / 200 GiB; minimum 8 / 16 / 120. Use `--memory 24` or `32` for heavier work such as IBU |
+| `--node` | Worker to run on (default: the node `setup` chose) |
+| `--watch`, `-w` | Follow the install with progress until the vSNO is ready |
+| `--timeout` | How long to wait for the install (default `90m`) |
+
+`create` refuses a vSNO that doesn't fit next to what already runs on the node, and shows the free
+memory. `vsno stop` frees a vSNO's memory and keeps its disk.
+
+`list` shows each vSNO's state, version, size, age and API, and how many more default-size vSNOs
+fit on the node. The states are `importing-iso`, `starting`, `installing` (with the installer's
+progress), `finishing`, `ready`, `stopped`, `failed` and `deleting`.
+
+Each vSNO's API is `https://api.<name>.vsno.lab:6443`. Only the environment resolves that name,
+so `oc`, `ssh` and `kubeconfig` work through the builder pod. Everything after the vSNO's name goes
+to `oc` or `ssh`, so put vsno's own flags, such as `-n`, before the name.
+
+`delete` removes the VM, its disks, the ISO, its Service, its DNS entry and the builder's files for
+it. It asks first unless you pass `--yes`, and `--dry-run` only lists what it would delete.
 
 ## status
 

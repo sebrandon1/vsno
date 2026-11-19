@@ -43,6 +43,9 @@ func (r *runner) support(ctx context.Context, ps precheck.ProgressStep) (Step, e
 		}
 		return nil
 	}
+	if err := r.sshKey(ctx); err != nil {
+		return step, err
+	}
 	if err := applyAll(manifests.DNSMasq, manifests.Builder, manifests.RegistryService); err != nil {
 		return step, err
 	}
@@ -68,6 +71,24 @@ func (r *runner) support(ctx context.Context, ps precheck.ProgressStep) (Step, e
 	}
 	r.res.Registry = net.JoinHostPort(r.st.Services["registry"], fmt.Sprint(cluster.RegistryPort))
 	return step, nil
+}
+
+// sshKey fills the builder's SSH key pair into r.cfg, reusing the stored one.
+func (r *runner) sshKey(ctx context.Context) error {
+	if r.o.DryRun {
+		r.cfg.SSHPrivateKey, r.cfg.SSHPublicKey = redacted, redacted
+		return nil
+	}
+	s, err := r.secret(ctx, "vsno-ssh")
+	if err != nil {
+		return err
+	}
+	if pki.SSHKeyMatches(s["id_ed25519"], s["id_ed25519.pub"]) {
+		r.cfg.SSHPrivateKey, r.cfg.SSHPublicKey = s["id_ed25519"], s["id_ed25519.pub"]
+		return nil
+	}
+	r.cfg.SSHPrivateKey, r.cfg.SSHPublicKey, err = pki.SSHKey("vsno@" + r.o.Namespace)
+	return err
 }
 
 // credentials fills the S3 keys and registry TLS/auth into r.cfg, reusing

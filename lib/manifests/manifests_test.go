@@ -20,19 +20,20 @@ var all = []string{Operators, HyperConverged, LVMCluster, Namespace, DNSMasq, Bu
 // testConfig uses synthetic values only; this repo is public.
 func testConfig() Config {
 	return Config{
-		Namespace:    "vsno",
-		Node:         "worker-1",
-		DiskByID:     "/dev/disk/by-id/wwn-0x5000000000000002",
-		HostDNS:      "172.30.0.10",
-		CNVChannel:   "stable",
-		LVMSChannel:  "stable-4.22",
-		BaseDomain:   DefaultBaseDomain,
-		Guests:       []string{"seed", "target"},
-		StorageClass: DefaultStorageClass,
-		Images:       DefaultImages(),
-		S3AccessKey:  "vsno",
-		S3SecretKey:  "s3-secret",
-		S3Bucket:     DefaultS3Bucket,
+		Namespace:     "vsno",
+		Node:          "worker-1",
+		DiskByID:      "/dev/disk/by-id/wwn-0x5000000000000002",
+		HostDNS:       "172.30.0.10",
+		CNVChannel:    "stable",
+		LVMSChannel:   "stable-4.22",
+		BaseDomain:    DefaultBaseDomain,
+		SSHPrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\ntest\n-----END OPENSSH PRIVATE KEY-----\n",
+		SSHPublicKey:  "ssh-ed25519 AAAAtest vsno@vsno",
+		StorageClass:  DefaultStorageClass,
+		Images:        DefaultImages(),
+		S3AccessKey:   "vsno",
+		S3SecretKey:   "s3-secret",
+		S3Bucket:      DefaultS3Bucket,
 		Registry: RegistryAuth{
 			CACert: "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n",
 			CAKey:  "ca-key", Cert: "cert", Key: "key",
@@ -93,29 +94,44 @@ func find(t *testing.T, objs []*unstructured.Unstructured, kind, name string) *u
 	return nil
 }
 
-func TestDNSMasqHasNoWildcard(t *testing.T) {
+func TestDNSMasqLoadsGuestFiles(t *testing.T) {
 	objs, err := Render(DNSMasq, testConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	conf, _, _ := unstructured.NestedString(find(t, objs, "ConfigMap", "dnsmasq").Object, "data", "dnsmasq.conf")
-	for _, bad := range []string{"address=/vsno.lab/", "address=/seed.vsno.lab/", "address=/target.vsno.lab/"} {
-		if strings.Contains(conf, bad) {
-			t.Errorf("dnsmasq.conf has a wildcard %q:\n%s", bad, conf)
-		}
-	}
-	for _, want := range []string{
-		"address=/api.seed.vsno.lab/10.0.2.2",
-		"address=/api-int.target.vsno.lab/10.0.2.2",
-		"address=/apps.target.vsno.lab/10.0.2.2",
-		"server=172.30.0.10",
-	} {
+	for _, want := range []string{"conf-dir=/etc/vsno-guests,*.conf", "server=172.30.0.10"} {
 		if !strings.Contains(conf, want) {
-			t.Errorf("dnsmasq.conf missing %q", want)
+			t.Errorf("dnsmasq.conf missing %q:\n%s", want, conf)
 		}
 	}
-	if n := strings.Count(conf, "address="); n != 6 {
-		t.Errorf("want 6 address lines (3 per guest), got %d", n)
+	if strings.Contains(conf, "address=") {
+		t.Errorf("setup's dnsmasq.conf must not hold guest entries; vsno create adds them:\n%s", conf)
+	}
+	// The guests ConfigMap is optional: it doesn't exist until the first create.
+	vols, _, _ := unstructured.NestedSlice(find(t, objs, "Deployment", "dnsmasq").Object, "spec", "template", "spec", "volumes")
+	found := false
+	for _, v := range vols {
+		cm, _, _ := unstructured.NestedMap(v.(map[string]any), "configMap")
+		if cm["name"] == GuestsConfigMap && cm["optional"] == true {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("dnsmasq does not mount ConfigMap %s as optional: %v", GuestsConfigMap, vols)
+	}
+}
+
+func TestGuestDNSHasNoWildcard(t *testing.T) {
+	got := GuestDNS("seed", "vsno.lab")
+	want := "address=/api.seed.vsno.lab/10.0.2.2\naddress=/api-int.seed.vsno.lab/10.0.2.2\naddress=/apps.seed.vsno.lab/10.0.2.2\n"
+	if got != want {
+		t.Errorf("GuestDNS =\n%s\nwant\n%s", got, want)
+	}
+	for _, bad := range []string{"address=/vsno.lab/", "address=/seed.vsno.lab/"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("wildcard %q in:\n%s", bad, got)
+		}
 	}
 }
 
@@ -253,7 +269,7 @@ func TestStepsObjects(t *testing.T) {
 			t.Errorf("%s = %v, want %v", s.Name, got, w)
 		}
 	}
-	if total != 27 {
-		t.Errorf("%d objects in all steps, want 27 (19 in the namespace, 8 on the host)", total)
+	if total != 28 {
+		t.Errorf("%d objects in all steps, want 28 (20 in the namespace, 8 on the host)", total)
 	}
 }

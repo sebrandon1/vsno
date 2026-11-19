@@ -13,6 +13,7 @@ import (
 
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -128,7 +129,7 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 			e.ShowPlan(res)
 		}
 		q := fmt.Sprintf("This deletes %d object(s), listed above, and everything else in the namespace. Type %q to continue",
-			apply.Count(res.Changes(), Delete), answer)
+			apply.Count(res.Changes(), apply.Delete), answer)
 		if e.Confirm == nil || !e.Confirm(q, answer) {
 			return res, errors.New("not confirmed; rerun with --yes to skip the question")
 		}
@@ -235,6 +236,12 @@ func (p *planner) planNamespace(ctx context.Context) error {
 		Detail: fmt.Sprintf("%d VM(s)%s, %d PVC(s)", len(vms), names(vms), len(pvcs.Items))})
 	ours := setupPVCs(ns)
 	for _, vm := range vms {
+		if name := vm.GetLabels()[guest.LabelName]; name != "" {
+			// A vSNO: its disks go with it, so name it once.
+			p.res.Unmanaged = append(p.res.Unmanaged, "vSNO "+name)
+			ours[name+"-root"], ours[name+"-iso"] = true, true
+			continue
+		}
 		p.res.Unmanaged = append(p.res.Unmanaged, "VM "+vm.GetName())
 	}
 	for _, pvc := range pvcs.Items {

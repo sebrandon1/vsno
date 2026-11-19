@@ -10,16 +10,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// Actions on Result.Objects.
-const (
-	// Delete means the object exists and teardown will delete it.
-	Delete apply.Action = "delete"
-	// Absent means setup would create the object, but it doesn't exist.
-	Absent apply.Action = "absent"
-	// Removed means teardown deleted it.
-	Removed apply.Action = "deleted"
-)
-
 // Kept is the Outcome of a host step without --host.
 const Kept Outcome = "kept"
 
@@ -63,7 +53,7 @@ func (p *planner) planSteps(ctx context.Context) error {
 			p.res.Objects = append(p.res.Objects, Object{Change: c, Step: ms.Name})
 		}
 		step.Outcome, step.Detail = Planned, PlanDetail(ch)
-		if apply.Count(ch, Delete) == 0 {
+		if apply.Count(ch, apply.Delete) == 0 {
 			step.Outcome = Gone
 		}
 		p.res.Steps = append(p.res.Steps, step)
@@ -71,7 +61,7 @@ func (p *planner) planSteps(ctx context.Context) error {
 	return nil
 }
 
-// exists marks each object Delete or Absent. Without a Planner it assumes
+// exists marks each object apply.Delete or apply.Absent. Without a Planner it assumes
 // every object exists.
 func (p *planner) exists(ctx context.Context, objs []*unstructured.Unstructured) ([]apply.Change, error) {
 	var ch []apply.Change
@@ -87,9 +77,9 @@ func (p *planner) exists(ctx context.Context, objs []*unstructured.Unstructured)
 	}
 	for i := range ch {
 		if ch[i].Action == apply.Create {
-			ch[i].Action = Absent
+			ch[i].Action = apply.Absent
 		} else {
-			ch[i].Action = Delete
+			ch[i].Action = apply.Delete
 		}
 	}
 	return ch, nil
@@ -99,7 +89,7 @@ func (p *planner) exists(ctx context.Context, objs []*unstructured.Unstructured)
 func (p *planner) extraTargets(step string, setupObjs []apply.Change) []apply.Change {
 	var extra []apply.Change
 	for _, t := range p.res.Targets {
-		c := apply.Change{Kind: t.Kind, Namespace: t.Namespace, Name: t.Name, Action: Delete}
+		c := apply.Change{Kind: t.Kind, Namespace: t.Namespace, Name: t.Name, Action: apply.Delete}
 		if t.step == step && !slices.ContainsFunc(setupObjs, func(o apply.Change) bool { return o.Ref() == c.Ref() }) {
 			extra = append(extra, c)
 		}
@@ -119,8 +109,8 @@ func (r *Result) markDeleted() {
 	done[manifests.StepSupport] = done[manifests.StepNamespace]
 	n := map[string]int{}
 	for i, o := range r.Objects {
-		if o.Action == Delete && done[o.Step] {
-			r.Objects[i].Action = Removed
+		if o.Action == apply.Delete && done[o.Step] {
+			r.Objects[i].Action = apply.Removed
 			n[o.Step]++
 		}
 	}
@@ -142,5 +132,5 @@ func (r *Result) Changes() []apply.Change {
 
 // PlanDetail is "n to delete, n absent", leaving out zeros.
 func PlanDetail(ch []apply.Change) string {
-	return apply.Tally(ch, "nothing to delete", apply.Label{Action: Delete, Text: "to delete"}, apply.Label{Action: Absent, Text: "absent"})
+	return apply.Tally(ch, "nothing to delete", apply.Label{Action: apply.Delete, Text: "to delete"}, apply.Label{Action: apply.Absent, Text: "absent"})
 }

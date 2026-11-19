@@ -2,13 +2,27 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"slices"
+	"strings"
+
 	"io"
 	"os"
+
+	"github.com/sebrandon1/vsno/lib/cluster"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/sebrandon1/vsno/lib/ui"
 
 	"github.com/spf13/cobra"
+)
+
+// Output formats for -o.
+const (
+	formatTable = "table"
+	formatJSON  = "json"
 )
 
 var (
@@ -38,7 +52,7 @@ Start with:  vsno precheck`,
 			}
 		}
 		switch outputFormat {
-		case "table", "json":
+		case formatTable, formatJSON:
 			return nil
 		default:
 			return fmt.Errorf("invalid --output %q (want table or json)", outputFormat)
@@ -51,13 +65,13 @@ func init() {
 	pf.StringVar(&kubeconfig, "kubeconfig", "", "path to the host cluster kubeconfig (default: $KUBECONFIG, then ~/.kube/config)")
 	pf.StringVar(&kubeContext, "context", "", "kubeconfig context to use")
 	pf.StringVarP(&namespace, "namespace", "n", "vsno", "namespace that holds the vSNO environment")
-	pf.StringVarP(&outputFormat, "output", "o", "table", "output format: table or json")
+	pf.StringVarP(&outputFormat, "output", "o", formatTable, "output format: table or json")
 	pf.BoolVar(&noColor, "no-color", false, "don't color the output (also: NO_COLOR=1)")
 }
 
 // palette colors table output written to a terminal.
 func palette(w io.Writer) ui.Palette {
-	return ui.Palette{On: outputFormat == "table" && ui.ColorEnabled(w)}
+	return ui.Palette{On: outputFormat == formatTable && ui.ColorEnabled(w)}
 }
 
 // SetVersion is called from main with the build-time version.
@@ -69,4 +83,31 @@ func SetVersion(v string) {
 // Execute runs the root command.
 func Execute() error {
 	return rootCmd.Execute()
+}
+
+// useEnvironment picks the environment for commands that work in one, when -n
+// isn't given: the namespace vsno setup labeled, if there is exactly one (the
+// default name may hold something else, such as an environment built by
+// hand). With none, the default stays; with several, the user must choose.
+func useEnvironment(ctx context.Context, kube kubernetes.Interface) error {
+	if rootCmd.PersistentFlags().Changed("namespace") {
+		return nil
+	}
+	l, err := kube.CoreV1().Namespaces().List(ctx, metav1.ListOptions{LabelSelector: cluster.ManagedByLabel + "=vsno"})
+	if err != nil {
+		return nil //nolint:nilerr // keep the default; the command reports access problems itself
+	}
+	names := make([]string, 0, len(l.Items))
+	for _, n := range l.Items {
+		names = append(names, n.Name)
+	}
+	switch {
+	case slices.Contains(names, namespace):
+	case len(names) == 1:
+		namespace = names[0]
+	case len(names) > 1:
+		slices.Sort(names)
+		return fmt.Errorf("there are several vsno environments (%s); pick one with -n", strings.Join(names, ", "))
+	}
+	return nil
 }

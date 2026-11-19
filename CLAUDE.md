@@ -63,6 +63,18 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   are; `support` follows `namespace`.
 - `lib/manifests`: `Steps` (with `Step*` name constants) is setup's step list and is the single
   source teardown mirrors. `NamesConfig(ns)` renders object names without real settings.
+- `lib/release`: `Resolver.Resolve` turns `--version` into a release image (update graph for releases
+  and minors, the CI release controller for `X.Y-nightly`; nightly names and pullspecs as given).
+  Tests use `httptest`.
+- `lib/builder`: `Runner` runs a bash script in the builder pod (`Exec`: pod exec, WebSocket with
+  SPDY fallback). Without a stderr writer it captures stderr into the error; exec needs at least
+  one output stream.
+- `lib/guest`: vSNOs. `templates/` (install-config, agent-config, the `/var/lib/containers`
+  MachineConfig, and the Service, ISO DataVolume and VM) and `scripts/` (`iso.sh`, `probe.sh`,
+  `rm.sh`, run in the builder) are embedded. `Create`, `List`, `Delete`, `SetRunning`,
+  `WaitState`, and the `Oc`/`SSH`/`Kubeconfig`/`Screenshot` helpers. `Classify` turns
+  observations (VM status, ISO DataVolume, probe) into a `State`; create's wait and list share it.
+  Golden files in `testdata/` (`go test ./lib/guest -update`).
 - `lib/ui/color.go`: `Palette` (ANSI colors when `On`; status icons via `Icon`), `ColorEnabled`
   (terminal, no `NO_COLOR`, `TERM` not `dumb`), and `Table`, which aligns columns by visible width.
 - `lib/ui`: step progress. On a terminal it shows a spinner, elapsed time and an optional bar
@@ -114,6 +126,22 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - The builder installs RPMs with `tsflags=nocaps`, because the anyuid SCC can't set file
   capabilities.
 - setup waits for an existing HyperConverged that isn't Available instead of reusing it as is.
+- Without `-n`, the vSNO commands and `status` call `useEnvironment` (`cmd/root.go`): they use the
+  one namespace labeled `managed-by=vsno`, because the default name may hold something else.
+  `setup` and `teardown` keep the plain default.
+- The VM labeled `vsno.io/name` is the vSNO inventory; there is no separate list. Its annotations
+  hold the requested version, the release image and the installed version.
+- Guests reach each other's names only through dnsmasq. setup's `dnsmasq.conf` loads
+  `/etc/vsno-guests` (ConfigMap `vsno-guests`, one key per vSNO, written by create and delete).
+  dnsmasq restarts itself when those files change. Never add guest names to setup's ConfigMap.
+- vsno reaches guests only through the builder pod: their Service ClusterIP, plus
+  `--tls-server-name api.<name>.vsno.lab`. Install progress before the first reboot comes from the
+  agent API on port 8090, using the token in `.openshift_install_state.json`.
+- `iso.sh` builds one ISO at a time (`flock`: parallel builds hit a `libnmstate.so` race). It caches
+  `openshift-install` per release image in `/work/bin`, and the installer's base ISO under
+  `/work/cache`.
+- setup creates the builder's SSH key (Secret `vsno-ssh`) once and reuses it; create reads the
+  cluster pull secret directly.
 - setup's step names must match `manifests.Steps` (`TestRunDryRun` checks the order).
 - setup refuses, and teardown only deletes, a namespace that `cluster.CreatedByVsno` accepts: it has
   the `app.kubernetes.io/managed-by=vsno` label or a `vsno-state` ConfigMap. `--force` overrides
@@ -142,11 +170,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 
 ## Plan
 
-Milestones 1 (`precheck`) and 2 (`setup`, `status`, `teardown`, #3) are done. The rest are GitHub issues labeled `roadmap`:
+Milestones 1 (`precheck`), 2 (`setup`, `status`, `teardown`, #3) and 3 (vSNO lifecycle, #4) are done. The rest are GitHub issues labeled `roadmap`:
 
-- #4, milestone 3: vSNO lifecycle. `create <name> --version` (released, `4.20`, nightly or pullspec),
-  `list` with per-vSNO stats, `delete`, `start`/`stop`, and the guest helpers. One shared
-  environment; each vSNO is a VM labeled `vsno.io/name`.
 - #16, milestone 4: fast creates. Cache the tools for each version, and mirror releases into the
   in-cluster registry.
 - #5, milestone 5: IBU on any two vSNOs (`prepare`, `seed generate`, `upgrade`)

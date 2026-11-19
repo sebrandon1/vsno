@@ -1,0 +1,37 @@
+apiVersion: v1beta1
+kind: AgentConfig
+metadata:
+  name: {{ .Name }}
+rendezvousIP: {{ .GuestIP }}
+hosts:
+- hostname: {{ .Name }}
+  role: master
+  rootDeviceHints:
+    deviceName: /dev/vda
+  interfaces:
+  - name: enp1s0
+    macAddress: {{ quote .MAC }}
+  networkConfig:
+    interfaces:
+    - name: enp1s0
+      type: ethernet
+      state: up
+      mac-address: {{ quote .MAC }}
+      mtu: 1400
+      ipv4:
+        enabled: true
+        dhcp: false
+        address:
+        - ip: {{ .GuestIP }}
+          prefix-length: 24
+      ipv6:
+        enabled: false
+    dns-resolver:
+      config:
+        server:
+        - {{ .DNS }}
+    routes:
+      config:
+      - destination: 0.0.0.0/0
+        next-hop-address: {{ .Gateway }}
+        next-hop-interface: enp1s0

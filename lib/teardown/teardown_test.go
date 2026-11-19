@@ -10,6 +10,7 @@ import (
 
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
@@ -141,7 +142,7 @@ func TestRunNamespace(t *testing.T) {
 	if tg := res.Targets[0]; tg.Outcome != Deleted || tg.Detail != "1 VM(s) (seed), 1 PVC(s)" {
 		t.Errorf("target = %+v", tg)
 	}
-	if c.answer != ns || c.shown != 1 || !strings.Contains(c.asked, "This deletes 19 object(s)") {
+	if c.answer != ns || c.shown != 1 || !strings.Contains(c.asked, "This deletes 20 object(s)") {
 		t.Errorf("confirm: answer %q shown %d q %q", c.answer, c.shown, c.asked)
 	}
 	if exists(t, d, cluster.GVRNamespace, "", ns) || !exists(t, d, precheck.GVRHyperConverged, cluster.CNVNamespace, cluster.HyperConvergedName) {
@@ -260,7 +261,7 @@ func TestRunHostDeletes(t *testing.T) {
 			t.Errorf("step %s = %s %q", s.Name, s.Outcome, s.Detail)
 		}
 	}
-	if n := apply.Count(res.Changes(), Removed); n != len(res.Objects) {
+	if n := apply.Count(res.Changes(), apply.Removed); n != len(res.Objects) {
 		t.Errorf("%d of %d objects marked deleted", n, len(res.Objects))
 	}
 	// A CSV isn't among setup's objects but is in its operator's step.
@@ -309,7 +310,7 @@ func TestRunStepsMirrorSetup(t *testing.T) {
 	if !slices.Equal(got, names) {
 		t.Errorf("steps = %v, want setup's reversed: %v", got, names)
 	}
-	if s := res.Steps[0]; s.Name != "support" || s.Outcome != Planned || s.Detail != "15 to delete, 1 absent" {
+	if s := res.Steps[0]; s.Name != "support" || s.Outcome != Planned || s.Detail != "16 to delete, 1 absent" {
 		t.Errorf("support = %+v", s)
 	}
 	if first, last := res.Objects[0], res.Objects[len(res.Objects)-1]; first.Ref() != ns+"/Deployment/registry" || last.Ref() != "Namespace/"+ns {
@@ -342,11 +343,26 @@ func TestRunStepWithNothingToDeleteIsGone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"support": "gone 16 absent", "namespace": "gone 3 absent", "storage": "planned 1 to delete"}
+	want := map[string]string{"support": "gone 17 absent", "namespace": "gone 3 absent", "storage": "planned 1 to delete"}
 	for _, s := range res.Steps {
 		if w, ok := want[s.Name]; ok && string(s.Outcome)+" "+s.Detail != w {
 			t.Errorf("%s = %s %q, want %s", s.Name, s.Outcome, s.Detail, w)
 		}
+	}
+}
+
+func TestRunNamesVSNOsOnce(t *testing.T) {
+	b := vm(ns, "b")
+	b.SetLabels(map[string]string{guest.LabelName: "b"})
+	objs := []runtime.Object{namespace(ns, true), b} // no plain VM, unlike host()
+	e := (&confirmer{}).env(newKube(lvmsPVC(ns, "b-root"), lvmsPVC(ns, "b-iso"), lvmsPVC(ns, "data")), newDyn(objs...))
+	res, err := Run(context.Background(), e, Options{Namespace: ns, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// vSNO b's disks go with it; only the PVC nobody owns is listed separately.
+	if want := []string{"vSNO b", "PVC data"}; !slices.Equal(res.Unmanaged, want) {
+		t.Errorf("unmanaged = %v, want %v", res.Unmanaged, want)
 	}
 }
 
@@ -382,8 +398,8 @@ func TestPlanDetail(t *testing.T) {
 		want string
 	}{
 		{nil, "nothing to delete"},
-		{[]apply.Change{c(Delete)}, "1 to delete"},
-		{[]apply.Change{c(Absent), c(Delete), c(Absent)}, "1 to delete, 2 absent"},
+		{[]apply.Change{c(apply.Delete)}, "1 to delete"},
+		{[]apply.Change{c(apply.Absent), c(apply.Delete), c(apply.Absent)}, "1 to delete, 2 absent"},
 	} {
 		if got := PlanDetail(tc.ch); got != tc.want {
 			t.Errorf("PlanDetail = %q, want %q", got, tc.want)

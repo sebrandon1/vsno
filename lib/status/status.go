@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
@@ -41,14 +42,17 @@ type Report struct {
 	// Exists is false when the namespace doesn't exist.
 	Exists bool `json:"exists"`
 	// Managed is true when vsno created the namespace or recorded state in it.
-	Managed  bool          `json:"managed"`
-	Node     string        `json:"node,omitempty"`
-	Disk     string        `json:"disk,omitempty"`
-	Host     []Component   `json:"host"`
-	Support  []Component   `json:"support,omitempty"`
-	Registry string        `json:"registry,omitempty"`
-	VMs      []VM          `json:"vms,omitempty"`
-	Stages   []state.Stage `json:"stages,omitempty"`
+	Managed  bool        `json:"managed"`
+	Node     string      `json:"node,omitempty"`
+	Disk     string      `json:"disk,omitempty"`
+	Host     []Component `json:"host"`
+	Support  []Component `json:"support,omitempty"`
+	Registry string      `json:"registry,omitempty"`
+	// VSNOs are the vSNOs, filled in by the caller (guest.List needs the builder).
+	VSNOs []guest.Guest `json:"vsnos,omitempty"`
+	// VMs are the other VMs in the namespace, such as ones built by hand.
+	VMs    []VM          `json:"vms,omitempty"`
+	Stages []state.Stage `json:"stages,omitempty"`
 }
 
 // Healthy reports whether no component failed.
@@ -224,8 +228,8 @@ func serviceIP(ctx context.Context, dyn dynamic.Interface, ns, name string) stri
 	return ip
 }
 
-// vms lists the VirtualMachines in ns with the node their instance runs on.
-// No KubeVirt CRD means no VMs.
+// vms lists the VirtualMachines in ns that aren't vSNOs, with the node their
+// instance runs on. No KubeVirt CRD means no VMs.
 func vms(ctx context.Context, dyn dynamic.Interface, ns string) ([]VM, error) {
 	l, err := dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).List(ctx, metav1.ListOptions{})
 	if apierrors.IsNotFound(err) {
@@ -236,6 +240,9 @@ func vms(ctx context.Context, dyn dynamic.Interface, ns string) ([]VM, error) {
 	}
 	out := make([]VM, 0, len(l.Items))
 	for _, u := range l.Items {
+		if u.GetLabels()[guest.LabelName] != "" {
+			continue // a vSNO: reported with its install state instead
+		}
 		vm := VM{Name: u.GetName(), Ready: cluster.Condition(&u, "Ready") == "True"}
 		vm.Status, _, _ = unstructured.NestedString(u.Object, "status", "printableStatus")
 		if vmi, err := dyn.Resource(cluster.GVRVMI).Namespace(ns).Get(ctx, u.GetName(), metav1.GetOptions{}); err == nil {

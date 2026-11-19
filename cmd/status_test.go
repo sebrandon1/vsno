@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
 	"github.com/sebrandon1/vsno/lib/status"
@@ -20,6 +21,8 @@ func statusReport() *status.Report {
 		Support:  []status.Component{{Name: "registry", Status: precheck.Warn, Detail: "0/1 ready"}},
 		Registry: "172.30.0.50:5000",
 		VMs:      []status.VM{{Name: "seed", Status: "Running", Ready: true, Node: "worker-1"}},
+		VSNOs: []guest.Guest{{Name: "b", State: guest.Finishing, Version: "4.22.0-0.nightly-2026-11-10-072952", Detail: "3 operators progressing"},
+			{Name: "c", State: guest.Importing, Requested: "4.20", Detail: "40%"}},
 	}
 	for i := range 7 {
 		r.Stages = append(r.Stages, state.Stage{Name: "setup", Status: state.Done, Time: time.Date(2026, 11, 18, i, 0, 0, 0, time.UTC), Detail: fmt.Sprintf("run %d", i)})
@@ -36,6 +39,8 @@ func TestRenderStatusTable(t *testing.T) {
 	for _, want := range []string{
 		"Environment vsno on node worker-1", "✓  cnv", "!  registry", "registry 172.30.0.50:5000",
 		"seed  Running  true   worker-1", "run 6", "run 2",
+		"vSNOs\n  NAME  STATE          VERSION                             DETAIL\n  b     finishing      4.22.0-0.nightly-2026-11-10-072952  3 operators progressing\n  c     importing-iso  4.20                                40%\n",
+		"Other VMs\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)

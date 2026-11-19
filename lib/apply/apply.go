@@ -39,6 +39,15 @@ const (
 	// TakeOver means the object exists but vsno didn't create it: applying
 	// would overwrite the fields vsno sets.
 	TakeOver Action = "take over"
+
+	// Deletion actions, for teardown and vsno delete.
+
+	// Delete means the object exists and will be deleted.
+	Delete Action = "delete"
+	// Absent means the object doesn't exist, so there is nothing to delete.
+	Absent Action = "absent"
+	// Removed means it was deleted.
+	Removed Action = "deleted"
 )
 
 // Change is the result of applying one object.

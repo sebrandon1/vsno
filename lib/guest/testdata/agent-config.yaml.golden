@@ -1,0 +1,37 @@
+apiVersion: v1beta1
+kind: AgentConfig
+metadata:
+  name: seed
+rendezvousIP: 10.0.2.2
+hosts:
+- hostname: seed
+  role: master
+  rootDeviceHints:
+    deviceName: /dev/vda
+  interfaces:
+  - name: enp1s0
+    macAddress: "02:76:73:b6:22:67"
+  networkConfig:
+    interfaces:
+    - name: enp1s0
+      type: ethernet
+      state: up
+      mac-address: "02:76:73:b6:22:67"
+      mtu: 1400
+      ipv4:
+        enabled: true
+        dhcp: false
+        address:
+        - ip: 10.0.2.2
+          prefix-length: 24
+      ipv6:
+        enabled: false
+    dns-resolver:
+      config:
+        server:
+        - 172.30.0.53
+    routes:
+      config:
+      - destination: 0.0.0.0/0
+        next-hop-address: 10.0.2.1
+        next-hop-interface: enp1s0

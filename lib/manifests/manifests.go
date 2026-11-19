@@ -83,7 +83,7 @@ func (s Step) Objects(cfg Config) ([]*unstructured.Unstructured, error) {
 // NamesConfig is enough Config to render every object's kind, namespace and
 // name for ns, e.g. to find what setup created there.
 func NamesConfig(ns string) Config {
-	return Config{Namespace: ns, BaseDomain: DefaultBaseDomain, Guests: []string{"seed", "target"},
+	return Config{Namespace: ns, BaseDomain: DefaultBaseDomain,
 		StorageClass: DefaultStorageClass, Images: DefaultImages(), S3Bucket: DefaultS3Bucket}
 }
 
@@ -138,9 +138,11 @@ type Config struct {
 	CNVChannel   string
 	LVMSChannel  string
 	BaseDomain   string
-	Guests       []string
 	StorageClass string
 	Images       Images
+
+	// SSHPrivateKey and SSHPublicKey are the builder's key for guest SSH.
+	SSHPrivateKey, SSHPublicKey string
 
 	S3AccessKey string
 	S3SecretKey string
@@ -151,6 +153,24 @@ type Config struct {
 
 // GuestIP is exposed to templates.
 func (Config) GuestIP() string { return GuestIP }
+
+// GuestsConfigMap holds one dnsmasq file per vSNO; templates use it.
+func (Config) GuestsConfigMap() string { return GuestsConfigMap }
+
+// GuestsConfigMap is the ConfigMap with one dnsmasq file per vSNO.
+const GuestsConfigMap = "vsno-guests"
+
+// GuestDNS is the dnsmasq file for vSNO name: api, api-int and *.apps resolve to
+// GuestIP, the address each masquerade guest has for itself. A wildcard on the
+// whole cluster domain would fail the agent installer's
+// dns-wildcard-not-configured validation.
+func GuestDNS(name, baseDomain string) string {
+	var b strings.Builder
+	for _, host := range []string{"api", "api-int", "apps"} {
+		fmt.Fprintf(&b, "address=/%s.%s.%s/%s\n", host, name, baseDomain, GuestIP)
+	}
+	return b.String()
+}
 
 // S3ConfigJSON is the SeaweedFS identity file for the generated access key.
 func (c Config) S3ConfigJSON() (string, error) {
@@ -180,16 +200,21 @@ func RenderYAML(name string, cfg Config) (string, error) {
 	return b.String(), nil
 }
 
-// Render renders one template and parses it into objects, each labeled
-// app.kubernetes.io/managed-by=vsno. Owning that label keeps vsno's field
-// manager on every object it applies, even one whose only other fields are
-// set by controllers (a ServiceAccount, for example), so a later dry run can
-// tell vsno's objects from someone else's.
+// Render renders one template and parses it into objects (see Parse).
 func Render(name string, cfg Config) ([]*unstructured.Unstructured, error) {
 	s, err := RenderYAML(name, cfg)
 	if err != nil {
 		return nil, err
 	}
+	return Parse(name, s)
+}
+
+// Parse splits multi-document YAML into objects, each labeled
+// app.kubernetes.io/managed-by=vsno. Owning that label keeps vsno's field
+// manager on every object it applies, even one whose only other fields are
+// set by controllers (a ServiceAccount, for example), so a later dry run can
+// tell vsno's objects from someone else's. what names the source in errors.
+func Parse(what, s string) ([]*unstructured.Unstructured, error) {
 	var objs []*unstructured.Unstructured
 	for i, doc := range strings.Split(s, "\n---\n") {
 		if strings.TrimSpace(doc) == "" {
@@ -197,11 +222,11 @@ func Render(name string, cfg Config) ([]*unstructured.Unstructured, error) {
 		}
 		j, err := yaml.YAMLToJSON([]byte(doc))
 		if err != nil {
-			return nil, fmt.Errorf("parsing %s document %d: %w", name, i, err)
+			return nil, fmt.Errorf("parsing %s document %d: %w", what, i, err)
 		}
 		u := &unstructured.Unstructured{}
 		if err := u.UnmarshalJSON(j); err != nil {
-			return nil, fmt.Errorf("parsing %s document %d: %w", name, i, err)
+			return nil, fmt.Errorf("parsing %s document %d: %w", what, i, err)
 		}
 		labels := u.GetLabels()
 		if labels == nil {

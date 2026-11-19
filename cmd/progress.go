@@ -9,7 +9,7 @@ import (
 
 // newProgress shows step progress on stderr for table output; JSON output stays clean.
 func newProgress() *ui.Progress {
-	return ui.New(os.Stderr, outputFormat == "table")
+	return ui.New(os.Stderr, outputFormat == formatTable)
 }
 
 // precheckProgress adapts ui.Progress to precheck.Progress.

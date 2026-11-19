@@ -23,9 +23,9 @@ func tdResult() *teardown.Result {
 			{Name: "cnv", Outcome: teardown.Kept, Detail: "pass --host to remove"},
 		},
 		Objects: []teardown.Object{
-			obj("Deployment", "vsno", "registry", teardown.Delete, "support"),
-			obj("Secret", "vsno", "registry-ca", teardown.Absent, "support"),
-			obj("Namespace", "", "vsno", teardown.Delete, "namespace"),
+			obj("Deployment", "vsno", "registry", apply.Delete, "support"),
+			obj("Secret", "vsno", "registry-ca", apply.Absent, "support"),
+			obj("Namespace", "", "vsno", apply.Delete, "namespace"),
 		},
 		Unmanaged: []string{"VM seed", "PVC seed-root"},
 		Targets:   []teardown.Target{{Kind: "Namespace", Name: "vsno", Outcome: teardown.Planned}},
@@ -45,7 +45,7 @@ func TestRenderTeardown(t *testing.T) {
 		"~  support    planned  1 to delete, 1 absent\n~  namespace  planned  1 to delete\n=  cnv        kept     pass --host to remove\n",
 		"Objects\n  delete  Deployment  vsno/registry\n  absent  Secret      vsno/registry-ca\n  delete  Namespace   vsno\n",
 		"3 object(s): 2 to delete, 1 absent. Nothing was changed.",
-		"! Deleting namespace vsno also deletes 2 object(s) setup didn't create: VM seed, PVC seed-root.",
+		"! Deleting namespace vsno also deletes what setup didn't create (2): VM seed, PVC seed-root.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
@@ -67,7 +67,7 @@ func TestRenderTeardownDryRunAndDone(t *testing.T) {
 	// After a real run: the steps and a count, not the object list.
 	res = tdResult()
 	res.Steps[0] = teardown.Step{Name: "support", Outcome: teardown.Deleted, Detail: "1 deleted"}
-	res.Objects[0].Action = teardown.Removed
+	res.Objects[0].Action = apply.Removed
 	b.Reset()
 	_ = renderTeardown(&b, res, nil, true, plain)
 	out := b.String()
@@ -125,7 +125,7 @@ func TestRenderTeardownPlanShown(t *testing.T) {
 		t.Errorf("not confirmed: the plan is already on screen, got:\n%s", b.String())
 	}
 	res := tdResult()
-	res.Objects[0].Action = teardown.Removed // failed partway
+	res.Objects[0].Action = apply.Removed // failed partway
 	_ = renderTeardown(&b, res, errors.New("x"), true, plain)
 	if !strings.Contains(b.String(), "1 object(s) deleted") {
 		t.Errorf("failed partway: show what was deleted, got:\n%s", b.String())

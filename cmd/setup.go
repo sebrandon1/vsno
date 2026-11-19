@@ -108,13 +108,13 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		Progress: progress,
 		Timeout:  suTimeout,
 	}
-	if outputFormat == "table" {
+	if outputFormat == formatTable {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Setting up %s in %s (context %q)...\n\n", namespace, c.Config.Host, c.Context)
 	}
 	res, err := setup.Run(cmd.Context(), env, setup.Options{
 		Namespace: namespace, Settings: settings, Yes: suYes, Force: suForce, DryRun: suDryRun, Images: manifests.DefaultImages(),
 	})
-	if outputFormat == "table" {
+	if outputFormat == formatTable {
 		fmt.Fprintln(cmd.ErrOrStderr())
 	}
 	if rerr := renderSetup(cmd.OutOrStdout(), res, suDryRun, palette(cmd.OutOrStdout())); rerr != nil && err == nil {
@@ -189,7 +189,7 @@ func renderSetup(w io.Writer, res *setup.Result, dryRun bool, pal ui.Palette) er
 	if res == nil {
 		return nil
 	}
-	if outputFormat == "json" {
+	if outputFormat == formatJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(res)
@@ -257,9 +257,9 @@ func renderObjects(w io.Writer, changes []apply.Change, pal ui.Palette) {
 // red, take over yellow, reapply and absent dim.
 func planAction(pal ui.Palette, a apply.Action) string {
 	switch a {
-	case apply.Create, teardown.Removed:
+	case apply.Create, apply.Removed:
 		return pal.Green(string(a))
-	case teardown.Delete:
+	case apply.Delete:
 		return pal.Red(string(a))
 	case apply.TakeOver:
 		return pal.Yellow(string(a))

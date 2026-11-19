@@ -1,0 +1,44 @@
+# A separate /var/lib/containers partition, which Image Based Upgrade needs
+# (lifecycle-agent docs/seed-image-generation.md). The unit names must use
+# systemd escaping (\x2d); see openshift-kni/lifecycle-agent#10670.
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: master
+  name: 98-var-lib-containers-partitioned
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    storage:
+      disks:
+      - device: /dev/vda
+        partitions:
+        - label: var-lib-containers
+          startMiB: 102400
+          sizeMiB: 0
+      filesystems:
+      - device: /dev/disk/by-partlabel/var-lib-containers
+        format: xfs
+        mountOptions: [defaults, prjquota]
+        path: /var/lib/containers
+        wipeFilesystem: true
+    systemd:
+      units:
+      - name: var-lib-containers.mount
+        enabled: true
+        contents: |-
+          [Unit]
+          Before=local-fs.target
+          Requires=systemd-fsck@dev-disk-by\x2dpartlabel-var\x2dlib\x2dcontainers.service
+          After=systemd-fsck@dev-disk-by\x2dpartlabel-var\x2dlib\x2dcontainers.service
+
+          [Mount]
+          Where=/var/lib/containers
+          What=/dev/disk/by-partlabel/var-lib-containers
+          Type=xfs
+          Options=defaults,prjquota
+
+          [Install]
+          RequiredBy=local-fs.target

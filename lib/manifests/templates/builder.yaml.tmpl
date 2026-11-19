@@ -1,4 +1,14 @@
 apiVersion: v1
+kind: Secret
+metadata:
+  name: vsno-ssh
+  namespace: {{ .Namespace }}
+type: Opaque
+stringData:
+  id_ed25519: {{ quote .SSHPrivateKey }}
+  id_ed25519.pub: {{ quote .SSHPublicKey }}
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: builder-work
@@ -30,7 +40,7 @@ spec:
         - -c
         - |
           set -e
-          dnf -y -q --setopt=tsflags=nocaps install nmstate nmstate-libs jq tar gzip python3 openssh-clients bind-utils skopeo >/dev/null
+          dnf -y -q --setopt=tsflags=nocaps install nmstate nmstate-libs jq tar gzip python3 openssh-clients bind-utils skopeo util-linux >/dev/null
           if [ ! -x /work/bin/oc ]; then
             mkdir -p /work/bin
             curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar -xz -C /work/bin oc
@@ -42,8 +52,12 @@ spec:
         securityContext: {runAsUser: 0}
         readinessProbe: {exec: {command: [test, -f, /tmp/ready]}, periodSeconds: 5}
         ports: [{containerPort: 8080}]
-        volumeMounts: [{name: work, mountPath: /work}]
-      volumes: [{name: work, persistentVolumeClaim: {claimName: builder-work}}]
+        volumeMounts:
+        - {name: work, mountPath: /work}
+        - {name: ssh, mountPath: /etc/vsno-ssh, readOnly: true}
+      volumes:
+      - {name: work, persistentVolumeClaim: {claimName: builder-work}}
+      - {name: ssh, secret: {secretName: vsno-ssh, defaultMode: 0400}}
 ---
 apiVersion: v1
 kind: Service

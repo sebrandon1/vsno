@@ -84,12 +84,15 @@ func (t *Table) Write(w io.Writer) {
 	}
 	var b strings.Builder
 	for _, r := range t.rows {
+		var line strings.Builder
 		for i, c := range r {
-			b.WriteString(c)
+			line.WriteString(c)
 			if i < len(r)-1 {
-				b.WriteString(strings.Repeat(" ", widths[i]-VisibleWidth(c)+2))
+				line.WriteString(strings.Repeat(" ", widths[i]-VisibleWidth(c)+2))
 			}
 		}
+		// An empty last cell would leave the padding before it.
+		b.WriteString(strings.TrimRight(line.String(), " "))
 		b.WriteByte('\n')
 	}
 	_, _ = io.WriteString(w, b.String())

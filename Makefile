@@ -8,8 +8,14 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 build:
 	go build -ldflags "-X main.version=$(VERSION)" -o $(APP_NAME)
 
+# Remove before copying: overwriting the file in place leaves macOS with a stale
+# code signature for it, and the new binary gets killed (SIGKILL) when run.
+INSTALL_DIR ?= $(if $(GOPATH),$(GOPATH),$(HOME)/go)/bin
+
 install: build
-	cp $(APP_NAME) $(GOPATH)/bin/$(APP_NAME) 2>/dev/null || cp $(APP_NAME) $(HOME)/go/bin/$(APP_NAME)
+	mkdir -p $(INSTALL_DIR)
+	rm -f $(INSTALL_DIR)/$(APP_NAME)
+	cp $(APP_NAME) $(INSTALL_DIR)/$(APP_NAME)
 
 lint:
 	golangci-lint run ./...

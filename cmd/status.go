@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
+	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
 	"github.com/sebrandon1/vsno/lib/status"
 	"github.com/sebrandon1/vsno/lib/ui"
@@ -24,7 +26,8 @@ var statusCmd = &cobra.Command{
   - the host components setup installs: the OpenShift Virtualization and
     LVM Storage operators, HyperConverged, the LVMCluster and StorageClass
   - the support services in the namespace and the registry endpoint
-  - the VMs in the namespace
+  - the vSNOs, with their install state (as vsno list shows it), and any
+    other VMs in the namespace
   - the most recent stages recorded in ConfigMap <namespace>/vsno-state
 
 It exits non-zero when the namespace is missing or a component is missing or
@@ -41,9 +44,22 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	if err := useEnvironment(cmd.Context(), c.Kube); err != nil {
+		return err
+	}
 	r, err := status.Collect(cmd.Context(), c.Kube, c.Dyn, namespace)
 	if err != nil {
 		return err
+	}
+	if r.Exists {
+		env, err := guestEnv(cmd.Context(), c, 0)
+		if err != nil {
+			return err
+		}
+		env.Progress = nil
+		if r.VSNOs, err = guest.List(cmd.Context(), env, namespace); err != nil {
+			r.Support = append(r.Support, status.Component{Name: "vsnos", Status: precheck.Warn, Detail: err.Error()})
+		}
 	}
 	if err := renderStatus(cmd.OutOrStdout(), r, palette(cmd.OutOrStdout())); err != nil {
 		return err
@@ -55,7 +71,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 }
 
 func renderStatus(w io.Writer, r *status.Report, pal ui.Palette) error {
-	if outputFormat == "json" {
+	if outputFormat == formatJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(r)
@@ -77,22 +93,8 @@ func renderStatus(w io.Writer, r *status.Report, pal ui.Palette) error {
 	if r.Registry != "" {
 		fmt.Fprintf(w, "\nregistry %s (credentials in secret %s/registry-auth)\n", r.Registry, r.Namespace)
 	}
-	if len(r.VMs) > 0 {
-		fmt.Fprintf(w, "\n%s\n", pal.Bold("VMs"))
-		var t ui.Table
-		t.Row("  NAME", "STATUS", "READY", "NODE")
-		for _, vm := range r.VMs {
-			st, ready := pal.Yellow(vm.Status), pal.Red("false")
-			if vm.Status == "Running" {
-				st = pal.Green(vm.Status)
-			}
-			if vm.Ready {
-				ready = pal.Green("true")
-			}
-			t.Row("  "+vm.Name, st, ready, vm.Node)
-		}
-		t.Write(w)
-	}
+	renderVSNOs(w, r.VSNOs, pal)
+	renderVMs(w, r.VMs, pal)
 	if n := len(r.Stages); n > 0 {
 		fmt.Fprintf(w, "\n%s\n", pal.Bold("Recent stages"))
 		var t ui.Table
@@ -122,5 +124,36 @@ func stageStatus(pal ui.Palette, st state.StageStatus) string {
 		return pal.Red(string(st))
 	default:
 		return pal.Yellow(string(st))
+	}
+}
+
+func renderVSNOs(w io.Writer, vsnos []guest.Guest, pal ui.Palette) {
+	if len(vsnos) > 0 {
+		fmt.Fprintf(w, "\n%s\n", pal.Bold("vSNOs"))
+		var t ui.Table
+		t.Row("  NAME", "STATE", "VERSION", "DETAIL")
+		for _, g := range vsnos {
+			t.Row("  "+g.Name, stateText(pal, g.State), g.ShownVersion(), pal.Dim(g.Detail))
+		}
+		t.Write(w)
+	}
+}
+
+func renderVMs(w io.Writer, vms []status.VM, pal ui.Palette) {
+	if len(vms) > 0 {
+		fmt.Fprintf(w, "\n%s\n", pal.Bold("Other VMs"))
+		var t ui.Table
+		t.Row("  NAME", "STATUS", "READY", "NODE")
+		for _, vm := range vms {
+			st, ready := pal.Yellow(vm.Status), pal.Red("false")
+			if vm.Status == "Running" {
+				st = pal.Green(vm.Status)
+			}
+			if vm.Ready {
+				ready = pal.Green("true")
+			}
+			t.Row("  "+vm.Name, st, ready, vm.Node)
+		}
+		t.Write(w)
 	}
 }

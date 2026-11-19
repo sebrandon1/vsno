@@ -598,8 +598,8 @@ func TestRunDryRun(t *testing.T) {
 			}
 		}
 	}
-	if secrets != 4 {
-		t.Errorf("dry run rendered %d secrets, want 4", secrets)
+	if secrets != 5 {
+		t.Errorf("dry run rendered %d secrets, want 5", secrets)
 	}
 }
 
@@ -767,7 +767,7 @@ func TestRunAPIErrors(t *testing.T) {
 		{name: "listing CSVs", verb: "list", resource: "clusterserviceversions", wantErr: "api down"},
 		{name: "getting HyperConverged", verb: "get", resource: "hyperconvergeds", host: true, wantErr: "api down"},
 		{name: "listing LVMClusters", verb: "list", resource: "lvmclusters", wantErr: "api down"},
-		{name: "reading secrets", verb: "get", resource: "secrets", host: true, wantErr: "reading secret s3-config: api down"},
+		{name: "reading secrets", verb: "get", resource: "secrets", host: true, wantErr: "reading secret vsno-ssh: api down"},
 		{name: "registry without ClusterIP", host: true, ips: map[string]string{"registry": "None"}, wantErr: `service registry has no ClusterIP ("None")`},
 	}
 	for _, c := range cases {

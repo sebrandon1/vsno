@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+  labels: {"{{ .LabelName }}": {{ quote .Name }}}
+  annotations:
+{{- range $k, $v := .Annotations }}
+    {{ $k }}: {{ quote $v }}
+{{- end }}
+spec:
+  selector: {"{{ .LabelName }}": {{ quote .Name }}}
+  ports:
+  - {name: api, port: 6443}
+  - {name: https, port: 443}
+  - {name: http, port: 80}
+  - {name: ssh, port: 22}
+  - {name: agent, port: 8090}
+---
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: {{ .Name }}-iso
+  namespace: {{ .Namespace }}
+  labels: {"{{ .LabelName }}": {{ quote .Name }}}
+spec:
+  source:
+    http:
+      url: {{ quote .ISOURL }}
+  storage:
+    storageClassName: {{ quote .StorageClass }}
+    resources:
+      requests:
+        storage: 3Gi
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+  labels: {"{{ .LabelName }}": {{ quote .Name }}}
+  annotations:
+{{- range $k, $v := .Annotations }}
+    {{ $k }}: {{ quote $v }}
+{{- end }}
+spec:
+  runStrategy: Always
+  dataVolumeTemplates:
+  - metadata:
+      name: {{ .Name }}-root
+      labels: {"{{ .LabelName }}": {{ quote .Name }}}
+    spec:
+      source:
+        blank: {}
+      storage:
+        storageClassName: {{ quote .StorageClass }}
+        volumeMode: Block
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: {{ .DiskGiB }}Gi
+  template:
+    metadata:
+      labels: {"{{ .LabelName }}": {{ quote .Name }}}
+    spec:
+      evictionStrategy: None
+      nodeSelector:
+        kubernetes.io/hostname: {{ quote .Node }}
+      domain:
+        cpu:
+          sockets: 1
+          cores: {{ .Cores }}
+          threads: 1
+        memory:
+          guest: {{ .MemoryGiB }}Gi
+        devices:
+          disks:
+          - name: root
+            bootOrder: 1
+            disk: {bus: virtio}
+          - name: iso
+            bootOrder: 2
+            cdrom: {bus: sata}
+          interfaces:
+          - name: default
+            masquerade: {}
+            model: virtio
+            macAddress: {{ quote .MAC }}
+      networks:
+      - name: default
+        pod: {}
+      volumes:
+      - name: root
+        dataVolume: {name: {{ .Name }}-root}
+      - name: iso
+        dataVolume: {name: {{ .Name }}-iso}

@@ -107,7 +107,6 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 		CNVChannel:   s.CNVChannel,
 		LVMSChannel:  s.LVMSChannel,
 		BaseDomain:   manifests.DefaultBaseDomain,
-		Guests:       []string{"seed", "target"},
 		StorageClass: manifests.DefaultStorageClass,
 		Images:       o.Images,
 		S3Bucket:     manifests.DefaultS3Bucket,

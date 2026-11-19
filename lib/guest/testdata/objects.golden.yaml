@@ -1,0 +1,116 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    vsno.io/release-image: quay.io/openshift-release-dev/ocp-release:4.20.46-x86_64
+    vsno.io/version: 4.20.46
+    vsno.io/version-requested: "4.20"
+  labels:
+    app.kubernetes.io/managed-by: vsno
+    vsno.io/name: seed
+  name: seed
+  namespace: vsno
+spec:
+  ports:
+  - name: api
+    port: 6443
+  - name: https
+    port: 443
+  - name: http
+    port: 80
+  - name: ssh
+    port: 22
+  - name: agent
+    port: 8090
+  selector:
+    vsno.io/name: seed
+---
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: vsno
+    vsno.io/name: seed
+  name: seed-iso
+  namespace: vsno
+spec:
+  source:
+    http:
+      url: http://builder.vsno.svc:8080/seed.iso
+  storage:
+    resources:
+      requests:
+        storage: 3Gi
+    storageClassName: lvms-vg-vsno
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  annotations:
+    vsno.io/release-image: quay.io/openshift-release-dev/ocp-release:4.20.46-x86_64
+    vsno.io/version: 4.20.46
+    vsno.io/version-requested: "4.20"
+  labels:
+    app.kubernetes.io/managed-by: vsno
+    vsno.io/name: seed
+  name: seed
+  namespace: vsno
+spec:
+  dataVolumeTemplates:
+  - metadata:
+      labels:
+        vsno.io/name: seed
+      name: seed-root
+    spec:
+      source:
+        blank: {}
+      storage:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 200Gi
+        storageClassName: lvms-vg-vsno
+        volumeMode: Block
+  runStrategy: Always
+  template:
+    metadata:
+      labels:
+        vsno.io/name: seed
+    spec:
+      domain:
+        cpu:
+          cores: 16
+          sockets: 1
+          threads: 1
+        devices:
+          disks:
+          - bootOrder: 1
+            disk:
+              bus: virtio
+            name: root
+          - bootOrder: 2
+            cdrom:
+              bus: sata
+            name: iso
+          interfaces:
+          - macAddress: 02:76:73:b6:22:67
+            masquerade: {}
+            model: virtio
+            name: default
+        memory:
+          guest: 32Gi
+      evictionStrategy: None
+      networks:
+      - name: default
+        pod: {}
+      nodeSelector:
+        kubernetes.io/hostname: worker-1
+      volumes:
+      - dataVolume:
+          name: seed-root
+        name: root
+      - dataVolume:
+          name: seed-iso
+        name: iso

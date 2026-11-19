@@ -72,7 +72,7 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 			planShown = true
 		},
 	}
-	if outputFormat == "table" {
+	if outputFormat == formatTable {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Tearing down %s in %s (context %q)...\n\n", namespace, c.Config.Host, c.Context)
 	}
 	res, err := teardown.Run(cmd.Context(), env, o)
@@ -87,7 +87,7 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 // the confirmation prompt already showed the plan; it is not repeated unless
 // something was deleted since.
 func renderTeardown(w io.Writer, res *teardown.Result, runErr error, planShown bool, pal ui.Palette) error {
-	if outputFormat == "json" {
+	if outputFormat == formatJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(res)
@@ -105,7 +105,7 @@ func renderTeardown(w io.Writer, res *teardown.Result, runErr error, planShown b
 		}
 		return nil
 	}
-	deleted := apply.Count(res.Changes(), teardown.Removed)
+	deleted := apply.Count(res.Changes(), apply.Removed)
 	if planShown && deleted == 0 {
 		return nil
 	}
@@ -139,6 +139,6 @@ func renderTeardownPlan(w io.Writer, res *teardown.Result, pal ui.Palette) {
 	fmt.Fprintf(w, "\n%d object(s): %s. %s\n", len(ch), teardown.PlanDetail(ch), note)
 	if n := len(res.Unmanaged); n > 0 {
 		fmt.Fprintf(w, "%s %s\n", pal.Icon("!"), pal.Yellow(fmt.Sprintf(
-			"Deleting namespace %s also deletes %d object(s) setup didn't create: %s.", res.Namespace, n, strings.Join(res.Unmanaged, ", "))))
+			"Deleting namespace %s also deletes what setup didn't create (%d): %s.", res.Namespace, n, strings.Join(res.Unmanaged, ", "))))
 	}
 }
