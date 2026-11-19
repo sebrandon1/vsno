@@ -110,7 +110,7 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 func setupSettings() (precheck.Suggested, error) {
 	var s precheck.Suggested
 	if suConfig != "" {
-		b, err := os.ReadFile(suConfig)
+		b, err := os.ReadFile(suConfig) // #nosec G304 -- the user names the file with --config
 		if err != nil {
 			return s, err
 		}
