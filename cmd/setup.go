@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/apply"
@@ -16,6 +15,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/setup"
+	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"k8s.io/client-go/discovery"
@@ -100,7 +100,7 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	if outputFormat == "table" {
 		fmt.Fprintln(cmd.ErrOrStderr())
 	}
-	if rerr := renderSetup(cmd.OutOrStdout(), res, suDryRun); rerr != nil && err == nil {
+	if rerr := renderSetup(cmd.OutOrStdout(), res, suDryRun, palette(cmd.OutOrStdout())); rerr != nil && err == nil {
 		err = rerr
 	}
 	return err
@@ -145,10 +145,20 @@ func confirm(in io.Reader, w io.Writer, question, answer string) bool {
 	return strings.TrimSpace(line) == answer
 }
 
-var outcomeIcon = map[setup.Outcome]string{setup.Reused: "=", setup.Applied: "✓", setup.Planned: "~"}
+// outcomeIcon marks a setup step: = reused, ✓ applied, ~ planned (dry run).
+func outcomeIcon(pal ui.Palette, o setup.Outcome) string {
+	switch o {
+	case setup.Reused:
+		return pal.Dim("=")
+	case setup.Applied:
+		return pal.Green("✓")
+	default:
+		return pal.Yellow("~")
+	}
+}
 
 // renderSetup prints the setup report, or the dry-run manifests.
-func renderSetup(w io.Writer, res *setup.Result, dryRun bool) error {
+func renderSetup(w io.Writer, res *setup.Result, dryRun bool, pal ui.Palette) error {
 	if res == nil {
 		return nil
 	}
@@ -168,13 +178,13 @@ func renderSetup(w io.Writer, res *setup.Result, dryRun bool) error {
 		fmt.Fprintln(w)
 	}
 	for _, warn := range res.Warnings {
-		fmt.Fprintf(w, "! %s\n", warn)
+		fmt.Fprintf(w, "%s %s\n", pal.Icon("!"), warn)
 	}
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	var t ui.Table
 	for _, s := range res.Steps {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", outcomeIcon[s.Outcome], s.Name, s.Outcome, s.Detail)
+		t.Row(outcomeIcon(pal, s.Outcome), s.Name, string(s.Outcome), s.Detail)
 	}
-	_ = tw.Flush()
+	t.Write(w)
 	if len(res.Steps) == 0 {
 		return nil
 	}

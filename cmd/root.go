@@ -3,6 +3,10 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"os"
+
+	"github.com/sebrandon1/vsno/lib/ui"
 
 	"github.com/spf13/cobra"
 )
@@ -13,6 +17,7 @@ var (
 	kubeContext  string
 	namespace    string
 	outputFormat string
+	noColor      bool
 )
 
 var rootCmd = &cobra.Command{
@@ -25,6 +30,12 @@ drives a lifecycle-agent Image Based Upgrade (IBU) between them.
 Start with:  vsno precheck`,
 	SilenceUsage: true,
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		if noColor {
+			// One switch for everything: the tables and the progress on stderr.
+			if err := os.Setenv("NO_COLOR", "1"); err != nil {
+				return err
+			}
+		}
 		switch outputFormat {
 		case "table", "json":
 			return nil
@@ -40,6 +51,12 @@ func init() {
 	pf.StringVar(&kubeContext, "context", "", "kubeconfig context to use")
 	pf.StringVarP(&namespace, "namespace", "n", "vsno", "namespace that holds the vSNO environment")
 	pf.StringVarP(&outputFormat, "output", "o", "table", "output format: table or json")
+	pf.BoolVar(&noColor, "no-color", false, "don't color the output (also: NO_COLOR=1)")
+}
+
+// palette colors table output written to a terminal.
+func palette(w io.Writer) ui.Palette {
+	return ui.Palette{On: outputFormat == "table" && ui.ColorEnabled(w)}
 }
 
 // SetVersion is called from main with the build-time version.

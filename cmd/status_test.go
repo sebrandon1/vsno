@@ -29,7 +29,7 @@ func statusReport() *status.Report {
 
 func TestRenderStatusTable(t *testing.T) {
 	var b bytes.Buffer
-	if err := renderStatus(&b, statusReport()); err != nil {
+	if err := renderStatus(&b, statusReport(), plain); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -54,7 +54,7 @@ func TestRenderStatusHeadings(t *testing.T) {
 	}
 	for want, r := range cases {
 		var b bytes.Buffer
-		if err := renderStatus(&b, r); err != nil || !strings.Contains(b.String(), want) {
+		if err := renderStatus(&b, r, plain); err != nil || !strings.Contains(b.String(), want) {
 			t.Errorf("want %q in:\n%s", want, b.String())
 		}
 		if !r.Exists && strings.Contains(b.String(), "Support services") {
@@ -67,7 +67,7 @@ func TestRenderStatusJSON(t *testing.T) {
 	outputFormat = "json"
 	t.Cleanup(func() { outputFormat = "table" })
 	var b bytes.Buffer
-	if err := renderStatus(&b, statusReport()); err != nil {
+	if err := renderStatus(&b, statusReport(), plain); err != nil {
 		t.Fatal(err)
 	}
 	var got status.Report

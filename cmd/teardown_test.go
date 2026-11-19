@@ -15,7 +15,7 @@ func TestRenderTeardown(t *testing.T) {
 		Targets: []teardown.Target{{Kind: "Namespace", Name: "vsno", Detail: "2 VM(s)", Outcome: teardown.Planned},
 			{Kind: "LVMCluster", Namespace: "openshift-storage", Name: "vsno-lvmcluster", Outcome: teardown.Deleted}}}
 	var b bytes.Buffer
-	if err := renderTeardown(&b, res, errors.New("refusing"), false); err != nil {
+	if err := renderTeardown(&b, res, errors.New("refusing"), false, plain); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -28,12 +28,12 @@ func TestRenderTeardown(t *testing.T) {
 
 func TestRenderTeardownNothing(t *testing.T) {
 	var b bytes.Buffer
-	_ = renderTeardown(&b, &teardown.Result{Namespace: "vsno"}, nil, false)
+	_ = renderTeardown(&b, &teardown.Result{Namespace: "vsno"}, nil, false, plain)
 	if !strings.Contains(b.String(), "Nothing to delete: namespace vsno does not exist") {
 		t.Errorf("out = %q", b.String())
 	}
 	b.Reset()
-	_ = renderTeardown(&b, &teardown.Result{Namespace: "vsno", Blockers: []string{"b"}}, errors.New("refusing"), false)
+	_ = renderTeardown(&b, &teardown.Result{Namespace: "vsno", Blockers: []string{"b"}}, errors.New("refusing"), false, plain)
 	if strings.Contains(b.String(), "Nothing to delete") {
 		t.Errorf("a refused run printed nothing-to-delete: %q", b.String())
 	}
@@ -44,7 +44,7 @@ func TestRenderTeardownJSON(t *testing.T) {
 	t.Cleanup(func() { outputFormat = "table" })
 	var b bytes.Buffer
 	res := &teardown.Result{Namespace: "vsno", Host: true, Targets: []teardown.Target{{Kind: "Namespace", Name: "vsno", Outcome: teardown.Deleted}}}
-	if err := renderTeardown(&b, res, nil, false); err != nil {
+	if err := renderTeardown(&b, res, nil, false, plain); err != nil {
 		t.Fatal(err)
 	}
 	var got teardown.Result
@@ -57,7 +57,7 @@ func TestRenderTeardownForced(t *testing.T) {
 	var b bytes.Buffer
 	res := &teardown.Result{Namespace: "vsno", Blockers: []string{"VMs outside vsno still exist: other/web"}, Forced: true,
 		Targets: []teardown.Target{{Kind: "Namespace", Name: "vsno", Outcome: teardown.Planned}}}
-	_ = renderTeardown(&b, res, nil, false)
+	_ = renderTeardown(&b, res, nil, false, plain)
 	if out := b.String(); !strings.Contains(out, "!  VMs outside vsno still exist: other/web (ignored: --force)") || strings.Contains(out, "✗") {
 		t.Errorf("out = %q", out)
 	}
@@ -76,7 +76,7 @@ func TestRenderTeardownPlanShown(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var b bytes.Buffer
-			_ = renderTeardown(&b, &teardown.Result{Namespace: "vsno", Targets: tc.targets}, errors.New("x"), true)
+			_ = renderTeardown(&b, &teardown.Result{Namespace: "vsno", Targets: tc.targets}, errors.New("x"), true, plain)
 			if got := strings.Contains(b.String(), "Namespace vsno"); got != tc.want {
 				t.Errorf("targets printed = %v, want %v:\n%s", got, tc.want, b.String())
 			}

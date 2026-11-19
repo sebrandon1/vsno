@@ -26,7 +26,7 @@ func TestRenderReportEligible(t *testing.T) {
 			HostDNS: "172.30.0.10", LVMSChannel: "stable-4.22", CNVChannel: "stable"},
 	}
 	var b bytes.Buffer
-	renderReport(&b, r)
+	renderReport(&b, r, plain)
 	out := b.String()
 	want := []string{
 		"Cluster\n✓  Cluster access   cluster-admin\n✗  Network overlap  overlap\n",
@@ -90,7 +90,7 @@ func TestRenderReportIneligible(t *testing.T) {
 		{Check: "Eligible node", Status: precheck.Fail, Detail: "none", Group: precheck.GroupWorkers},
 	}, Nodes: []precheck.NodeSummary{{Name: "vm-worker"}}}
 	var b bytes.Buffer
-	renderReport(&b, r)
+	renderReport(&b, r, plain)
 	out := b.String()
 	for _, w := range []string{"Workers\n✗  vm-worker  not usable\n   ✗  cpu  4 threads\n", "cannot host vSNOs yet (2 failing check(s))"} {
 		if !strings.Contains(out, w) {
@@ -105,7 +105,7 @@ func TestRenderReportIneligible(t *testing.T) {
 func TestRenderReportNoProbe(t *testing.T) {
 	r := &precheck.Report{Results: []precheck.Result{{Check: "Hardware probe", Status: precheck.Warn, Detail: "skipped", Group: precheck.GroupWorkers}}}
 	var b bytes.Buffer
-	renderReport(&b, r)
+	renderReport(&b, r, plain)
 	if out := b.String(); !strings.Contains(out, "No node suggested: the hardware probe was skipped") || strings.Contains(out, "cannot host") {
 		t.Errorf("out = %q", out)
 	}

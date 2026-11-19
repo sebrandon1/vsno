@@ -25,7 +25,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `main.go`: passes the build version (`-ldflags "-X main.version=..."`) to `cmd.SetVersion`.
 - `cmd/`: one file per command, plus `_test.go`.
   - `root.go`: global flags `--kubeconfig`, `--context`, `-n/--namespace` (default `vsno`),
-    `-o/--output table|json`.
+    `-o/--output table|json`, `--no-color` (sets `NO_COLOR`). `palette(w)` colors table output
+    on a terminal; each renderer takes a `ui.Palette`, and tests pass `plain` or `colored`.
   - `precheck.go`: renders `precheck.Report` as a table or JSON, and supports
     `--write-config`.
   - `setup.go`: flags and `--config` into `setup.Options`, the terminal disk confirmation, and
@@ -55,6 +56,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   component becomes a Fail or Warn row; only namespace or state read errors fail it.
 - `lib/teardown`: `Run` plans the targets in order, checks the safety rules, confirms, then
   deletes each target and waits for those marked `wait`.
+- `lib/ui/color.go`: `Palette` (ANSI colors when `On`; status icons via `Icon`), `ColorEnabled`
+  (terminal, no `NO_COLOR`, `TERM` not `dumb`), and `Table`, which aligns columns by visible width.
 - `lib/ui`: step progress. On a terminal it shows a spinner, elapsed time and an optional bar
   (`Bar`, `FormatElapsed`). Elsewhere it prints one line when a step starts and one when it ends.
 
@@ -86,6 +89,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - Without `--seed-repo`, the "Seed registry" row is `info` (the in-cluster registry is the
   default) and no auth files are read.
 - Progress goes to stderr and is turned off for `-o json`, so stdout stays machine-readable.
+- Tables with colored cells use `ui.Table`, not `text/tabwriter`, which counts color codes as width.
+  With the codes stripped, colored output must equal plain output (`TestColorKeepsLayout`).
 - dnsmasq publishes only `api`, `api-int` and `apps` for each guest, never a wildcard on the cluster
   domain.
 - Guests reach the in-cluster registry by its ClusterIP, which is also an IP SAN on the cert. The

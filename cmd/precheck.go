@@ -12,6 +12,7 @@ import (
 
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 )
@@ -89,7 +90,7 @@ func runPrecheck(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	} else {
-		renderReport(out, report)
+		renderReport(out, report, palette(out))
 	}
 
 	if pcWriteConfig != "" {
@@ -127,7 +128,7 @@ var reportSections = []struct {
 
 // renderReport prints the results by section, each worker under its own
 // heading, then the suggested settings.
-func renderReport(w io.Writer, r *precheck.Report) {
+func renderReport(w io.Writer, r *precheck.Report, pal ui.Palette) {
 	printed := false
 	for _, sec := range reportSections {
 		var rows []precheck.Result
@@ -143,20 +144,20 @@ func renderReport(w io.Writer, r *precheck.Report) {
 			fmt.Fprintln(w)
 		}
 		printed = true
-		fmt.Fprintln(w, sec.title)
-		renderRows(w, r, rows)
+		fmt.Fprintln(w, pal.Bold(sec.title))
+		renderRows(w, r, rows, pal)
 	}
 
 	s := r.Suggested
 	switch {
 	case s.Node == "" && r.Failed() > 0:
-		fmt.Fprintf(w, "\nResult: this cluster cannot host vSNOs yet (%d failing check(s)).\n", r.Failed())
+		fmt.Fprintf(w, "\n%s\n", pal.Red(fmt.Sprintf("Result: this cluster cannot host vSNOs yet (%d failing check(s)).", r.Failed())))
 		return
 	case s.Node == "":
 		fmt.Fprintln(w, "\nNo node suggested: the hardware probe was skipped. Run without --no-probe, or pass --node to `vsno setup`.")
 		return
 	}
-	fmt.Fprintln(w, "\nSuggested settings for `vsno setup`:")
+	fmt.Fprintf(w, "\n%s\n", pal.Bold("Suggested settings for `vsno setup`:"))
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "  node\t%s\n", s.Node)
 	if s.Disk != "" {
@@ -175,7 +176,7 @@ func renderReport(w io.Writer, r *precheck.Report) {
 
 // renderRows prints rows in order. Consecutive rows for the same node go in a
 // block under a heading with the node's verdict.
-func renderRows(w io.Writer, r *precheck.Report, rows []precheck.Result) {
+func renderRows(w io.Writer, r *precheck.Report, rows []precheck.Result, pal ui.Palette) {
 	for len(rows) > 0 {
 		n := 1
 		for n < len(rows) && rows[n].Node == rows[0].Node {
@@ -184,31 +185,34 @@ func renderRows(w io.Writer, r *precheck.Report, rows []precheck.Result) {
 		block := rows[:n]
 		rows = rows[n:]
 		if block[0].Node == "" {
-			renderTable(w, "", block, false)
+			renderTable(w, "", block, false, pal)
 			continue
 		}
 		icon, verdict := nodeVerdict(r, block)
-		fmt.Fprintf(w, "%s  %s  %s\n", icon, block[0].Node, verdict)
-		renderTable(w, "   ", block, verdict == "not usable")
+		fmt.Fprintf(w, "%s  %s  %s\n", pal.Icon(icon), pal.Bold(block[0].Node), verdict)
+		renderTable(w, "   ", block, verdict == "not usable", pal)
 	}
 }
 
 // renderTable prints icon, check and detail columns, plus the hints of
-// warnings and failures. notUsable drops the "not usable: " prefix the
-// node heading already states.
-func renderTable(w io.Writer, indent string, rows []precheck.Result, notUsable bool) {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+// warnings and failures. Info details are dimmed. notUsable drops the
+// "not usable: " prefix the node heading already states.
+func renderTable(w io.Writer, indent string, rows []precheck.Result, notUsable bool, pal ui.Palette) {
+	var t ui.Table
 	for _, res := range rows {
 		detail := res.Detail
 		if notUsable {
 			detail = strings.TrimPrefix(detail, "not usable: ")
 		}
-		fmt.Fprintf(tw, "%s%s\t%s\t%s\n", indent, statusIcon[res.Status], res.Check, detail)
+		if res.Status == precheck.Info {
+			detail = pal.Dim(detail)
+		}
+		t.Row(indent+pal.Icon(statusIcon[res.Status]), res.Check, detail)
 		if res.Hint != "" && (res.Status == precheck.Fail || res.Status == precheck.Warn) {
-			fmt.Fprintf(tw, "%s\t\t→ %s\n", indent, res.Hint)
+			t.Row(indent, "", pal.Yellow("→")+" "+res.Hint)
 		}
 	}
-	_ = tw.Flush()
+	t.Write(w)
 }
 
 // nodeVerdict is the icon and word for a node's heading. A node that wasn't

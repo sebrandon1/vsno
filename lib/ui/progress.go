@@ -27,12 +27,14 @@ type Progress struct {
 	tick    time.Duration
 	// cols returns the terminal width, or 0 if unknown.
 	cols func() int
+	pal  Palette
 }
 
 // New returns a Progress writing to w. Redraws are used only when w is a terminal.
 // A disabled Progress (enabled=false) prints nothing, e.g. for -o json.
 func New(w io.Writer, enabled bool) *Progress {
-	p := &Progress{w: w, enabled: enabled, now: time.Now, tick: 100 * time.Millisecond, cols: func() int { return 0 }}
+	p := &Progress{w: w, enabled: enabled, now: time.Now, tick: 100 * time.Millisecond, cols: func() int { return 0 },
+		pal: Palette{On: enabled && ColorEnabled(w)}}
 	if f, ok := w.(*os.File); ok {
 		fd := int(f.Fd()) // #nosec G115 -- fd fits in int
 		p.tty = term.IsTerminal(fd)
@@ -93,7 +95,7 @@ func (s *Step) spin() {
 func (s *Step) draw() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	head := fmt.Sprintf("%s %s", spinnerFrames[s.frame%len(spinnerFrames)], s.title)
+	head := fmt.Sprintf("%s %s", s.p.pal.Cyan(spinnerFrames[s.frame%len(spinnerFrames)]), s.title)
 	s.frame++
 	if s.total > 0 {
 		head += " " + Bar(s.done, s.total, 20)
@@ -134,7 +136,7 @@ func (s *Step) finish(icon, msg string) {
 		s.ended.Wait()
 		fmt.Fprint(s.p.w, "\r\033[K")
 	}
-	line := fmt.Sprintf("%s %s (%s)", icon, s.title, FormatElapsed(s.p.now().Sub(s.start)))
+	line := fmt.Sprintf("%s %s (%s)", s.p.pal.Icon(icon), s.title, FormatElapsed(s.p.now().Sub(s.start)))
 	if msg != "" {
 		line += ": " + msg
 	}
@@ -146,16 +148,17 @@ func (s *Step) finish(icon, msg string) {
 // row, so every redraw would leave a copy behind. The detail is shortened
 // first, so the elapsed time in tail stays visible.
 func fitLine(head, detail, tail string, width int) string {
+	line := head + tail
 	if detail != "" {
-		room := width - len([]rune(head)) - len([]rune(tail)) - 1
-		if width < 1 || room >= len([]rune(detail)) {
-			return head + " " + detail + tail
-		}
-		if room >= 2 {
-			return head + " " + Truncate(detail, room) + tail
-		}
+		line = head + " " + detail + tail
 	}
-	return Truncate(head+tail, width)
+	if width < 1 || VisibleWidth(line) <= width {
+		return line
+	}
+	if room := width - VisibleWidth(head) - VisibleWidth(tail) - 1; detail != "" && room >= 2 {
+		return head + " " + Truncate(detail, room) + tail
+	}
+	return Truncate(StripANSI(head+tail), width) // too narrow even without the detail
 }
 
 // Truncate shortens s to at most width characters, ending in "…". A width

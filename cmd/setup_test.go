@@ -100,7 +100,7 @@ func setupResult() *setup.Result {
 
 func TestRenderSetupTable(t *testing.T) {
 	var b bytes.Buffer
-	if err := renderSetup(&b, setupResult(), false); err != nil {
+	if err := renderSetup(&b, setupResult(), false, plain); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -122,7 +122,7 @@ func TestRenderSetupDryRun(t *testing.T) {
 	res.Registry = ""
 	res.Objects = []*unstructured.Unstructured{{Object: map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "vsno"}}}}
 	var b bytes.Buffer
-	if err := renderSetup(&b, res, true); err != nil {
+	if err := renderSetup(&b, res, true, plain); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -135,7 +135,7 @@ func TestRenderSetupJSONAndEmpty(t *testing.T) {
 	outputFormat = "json"
 	t.Cleanup(func() { outputFormat = "table" })
 	var b bytes.Buffer
-	if err := renderSetup(&b, setupResult(), false); err != nil {
+	if err := renderSetup(&b, setupResult(), false, plain); err != nil {
 		t.Fatal(err)
 	}
 	var got setup.Result
@@ -145,11 +145,11 @@ func TestRenderSetupJSONAndEmpty(t *testing.T) {
 
 	outputFormat = "table"
 	b.Reset()
-	if err := renderSetup(&b, nil, false); err != nil || b.Len() != 0 {
+	if err := renderSetup(&b, nil, false, plain); err != nil || b.Len() != 0 {
 		t.Errorf("nil result: %q %v", b.String(), err)
 	}
 	b.Reset()
-	if err := renderSetup(&b, &setup.Result{Warnings: []string{"w"}}, false); err != nil || strings.Contains(b.String(), "object(s)") {
+	if err := renderSetup(&b, &setup.Result{Warnings: []string{"w"}}, false, plain); err != nil || strings.Contains(b.String(), "object(s)") {
 		t.Errorf("failed-before-steps result: %q", b.String())
 	}
 }

@@ -6,12 +6,12 @@ import (
 	"io"
 	"os"
 	"slices"
-	"text/tabwriter"
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/teardown"
+	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -61,7 +61,7 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 	env := teardown.Env{Kube: c.Kube, Dyn: c.Dyn, Progress: precheckProgress{newProgress()}, Timeout: tdTimeout,
 		Confirm: confirmOnTerminal(os.Stdin, cmd.ErrOrStderr()),
 		ShowPlan: func(r *teardown.Result) {
-			renderTargets(cmd.ErrOrStderr(), r)
+			renderTargets(cmd.ErrOrStderr(), r, palette(cmd.ErrOrStderr()))
 			fmt.Fprintln(cmd.ErrOrStderr())
 			planShown = true
 		},
@@ -70,7 +70,7 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Tearing down %s in %s (context %q)...\n\n", namespace, c.Config.Host, c.Context)
 	}
 	res, err := teardown.Run(cmd.Context(), env, o)
-	if rerr := renderTeardown(w, res, err, planShown); rerr != nil && err == nil {
+	if rerr := renderTeardown(w, res, err, planShown, palette(w)); rerr != nil && err == nil {
 		err = rerr
 	}
 	return err
@@ -79,7 +79,7 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 // renderTeardown prints the blockers and the targets. planShown means the
 // confirmation prompt already listed the targets; they are not repeated unless
 // something was deleted since.
-func renderTeardown(w io.Writer, res *teardown.Result, runErr error, planShown bool) error {
+func renderTeardown(w io.Writer, res *teardown.Result, runErr error, planShown bool, pal ui.Palette) error {
 	if outputFormat == "json" {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
@@ -87,9 +87,9 @@ func renderTeardown(w io.Writer, res *teardown.Result, runErr error, planShown b
 	}
 	for _, b := range res.Blockers {
 		if res.Forced {
-			fmt.Fprintf(w, "%s  %s (ignored: --force)\n", statusIcon[precheck.Warn], b)
+			fmt.Fprintf(w, "%s  %s %s\n", pal.Icon(statusIcon[precheck.Warn]), b, pal.Dim("(ignored: --force)"))
 		} else {
-			fmt.Fprintf(w, "%s  %s\n", statusIcon[precheck.Fail], b)
+			fmt.Fprintf(w, "%s  %s\n", pal.Icon(statusIcon[precheck.Fail]), b)
 		}
 	}
 	if len(res.Targets) == 0 {
@@ -101,14 +101,27 @@ func renderTeardown(w io.Writer, res *teardown.Result, runErr error, planShown b
 	if planShown && !slices.ContainsFunc(res.Targets, func(t teardown.Target) bool { return t.Outcome != teardown.Planned }) {
 		return nil
 	}
-	renderTargets(w, res)
+	renderTargets(w, res, pal)
 	return nil
 }
 
-func renderTargets(w io.Writer, res *teardown.Result) {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	for _, t := range res.Targets {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", t.Outcome, t.Ref(), t.Detail)
+func renderTargets(w io.Writer, res *teardown.Result, pal ui.Palette) {
+	var t ui.Table
+	for _, tg := range res.Targets {
+		t.Row(targetOutcome(pal, tg.Outcome), tg.Ref(), tg.Detail)
 	}
-	_ = tw.Flush()
+	t.Write(w)
+}
+
+// targetOutcome colors a teardown target: planned yellow, deleted green,
+// already gone dim.
+func targetOutcome(pal ui.Palette, o teardown.Outcome) string {
+	switch o {
+	case teardown.Deleted:
+		return pal.Green(string(o))
+	case teardown.Gone:
+		return pal.Dim(string(o))
+	default:
+		return pal.Yellow(string(o))
+	}
 }

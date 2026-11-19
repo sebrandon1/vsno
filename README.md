@@ -30,6 +30,7 @@ Global flags, accepted by every command:
 | `--context <name>` | Kubeconfig context to use |
 | `-n, --namespace <name>` | Namespace that holds the vSNO environment (default `vsno`) |
 | `-o, --output table\|json` | Output format (default `table`) |
+| `--no-color` | Plain output. Color is used only on a terminal, and never with `NO_COLOR` set or `-o json` |
 
 ## precheck
 
