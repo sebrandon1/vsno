@@ -5,8 +5,8 @@ Upgrade (IBU)** tests on **virtual single-node OpenShift clusters (vSNOs)**. The
 OpenShift Virtualization VMs on a bare-metal worker of an OpenShift cluster you already have,
 so you don't need a spare hypervisor or any reprovisioning.
 
-> **Status:** milestone 1. `vsno precheck` works. `setup`, `teardown`, `status`, `create`,
-> `prepare`, `seed generate`, `upgrade`, `run` and the guest helpers (`ssh`, `oc`,
+> **Status:** milestone 2 in progress. `vsno precheck` and `vsno setup` work. `teardown`,
+> `status`, `create`, `prepare`, `seed generate`, `upgrade`, `run` and the guest helpers (`ssh`, `oc`,
 > `kubeconfig`, `screenshot`) are planned. See the
 > [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap).
 
@@ -106,6 +106,40 @@ Useful flags:
 
 `precheck` exits non-zero if any check fails. When at least one worker is eligible, the
 problems found on the other workers are shown as info rather than failures.
+
+## setup
+
+```bash
+vsno precheck --write-config vsno.yaml   # review the suggested node and disk
+vsno setup --config vsno.yaml
+vsno setup --dry-run                     # print the manifests, change nothing
+```
+
+`setup` installs what the vSNOs need on the host cluster:
+
+1. OpenShift Virtualization and LVM Storage. Both are reused if their operator is already
+   installed.
+2. An `LVMCluster` on the chosen disk, which creates StorageClass `lvms-vg-vsno`. This is skipped
+   when that StorageClass already serves the node. Taking over a disk erases it, so `setup` asks you
+   to type the node name unless you pass `--yes`.
+3. The `vsno` namespace with dnsmasq (guest DNS), a builder pod, S3 (SeaweedFS, bucket `ibu`)
+   and a TLS registry. The S3 keys, the registry CA, its certificate and the login are generated
+   once and stored as Secrets in the namespace.
+
+It runs `precheck` first. Cluster-level failures stop it, while CPU or memory shortfalls on the
+node are only warnings. Settings come from `--node`/`--disk`, then `--config`, then the
+precheck's suggestion. A rerun reuses everything and reports each object as `unchanged`.
+Progress and the result are recorded in ConfigMap `<namespace>/vsno-state`.
+
+| Flag | Meaning |
+|---|---|
+| `--node`, `--disk` | Worker for the VMs and the `/dev/disk/by-id` path for LVMS |
+| `--config <file>` | Settings written by `precheck --write-config` |
+| `--yes` | Approve taking over the disk without asking |
+| `--dry-run` | Print the manifests (Secret values redacted) and change nothing |
+| `--no-probe` | Skip the hardware probe (then `--node` is required) |
+| `--timeout <duration>` | How long to wait for each component (default `20m`) |
+| `-n <namespace>` | Environment namespace (default `vsno`) |
 
 ## Background
 

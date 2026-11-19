@@ -100,6 +100,9 @@ type ProgressStep interface {
 	Fail(msg string)
 }
 
+// NoProgress returns a Progress that displays nothing.
+func NoProgress() Progress { return noopProgress{} }
+
 type noopProgress struct{}
 type noopStep struct{}
 

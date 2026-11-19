@@ -30,7 +30,7 @@ spec:
         - -c
         - |
           set -e
-          dnf -y -q install nmstate nmstate-libs jq tar gzip python3 openssh-clients bind-utils skopeo >/dev/null
+          dnf -y -q --setopt=tsflags=nocaps install nmstate nmstate-libs jq tar gzip python3 openssh-clients bind-utils skopeo >/dev/null
           if [ ! -x /work/bin/oc ]; then
             mkdir -p /work/bin
             curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar -xz -C /work/bin oc

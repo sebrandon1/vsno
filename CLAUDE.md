@@ -27,6 +27,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
     `-o/--output table|json`.
   - `precheck.go`: renders `precheck.Report` as a table or JSON, and supports
     `--write-config`.
+  - `setup.go`: flags and `--config` into `setup.Options`, the terminal disk confirmation, and
+    the step table or dry-run YAML.
   - `progress.go`: `newProgress()` returns a `ui.Progress` on stderr, disabled for `-o json`,
     plus the adapter to the `precheck.Progress` interface.
   - `version.go`: `vsno version`.
@@ -40,6 +42,9 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `lib/apply`: server-side apply (field manager `vsno`); it reports created, updated or unchanged
   for each object.
 - `lib/state`: environment state in ConfigMap `<ns>/vsno-state`.
+- `lib/setup`: `Run` resolves settings from the precheck, then runs the steps: operators, HyperConverged,
+  storage, namespace, support services. Each step either reuses what it finds or applies the manifests
+  and waits for them. In a dry run a recording Applier replaces SSA and the waits are skipped.
 - `lib/ui`: step progress. On a terminal it shows a spinner, elapsed time and an optional bar
   (`Bar`, `FormatElapsed`). Elsewhere it prints one line when a step starts and one when it ends.
 
@@ -71,6 +76,13 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - Guests reach the in-cluster registry by its ClusterIP, which is also an IP SAN on the cert. The
   guest's own `cluster.local` hides the host's Service names. Trusting the CA with
   `additionalTrustedCA` doesn't reboot the guest (spike in #3).
+- setup reuses generated credentials: S3 keys and the registry CA and login are read back from their
+  Secrets. The registry cert is reissued only when `pki.Covers` fails, for example because the
+  Service IP changed. Reruns must report every object `unchanged`.
+- setup never creates a second LVMCluster (LVMS supports one), and asks before it takes over a disk.
+- A support pod in CrashLoopBackOff for 3 or more restarts ends the rollout wait early (`errStuck`).
+- The builder installs RPMs with `tsflags=nocaps`, because the anyuid SCC can't set file
+  capabilities.
 - This repo is public. Docs, fixtures and tests must contain no lab hostnames, hardware models,
   real disk IDs or credentials.
 
@@ -86,7 +98,7 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 
 ## Plan
 
-Milestone 1, `precheck`, is done. The rest are GitHub issues labeled `roadmap`:
+Milestone 1, `precheck`, is done. Milestone 2 has `setup`; `status` and `teardown` are next. The rest are GitHub issues labeled `roadmap`:
 
 - #3, milestone 2: `setup` / `teardown` / `status`, plus the in-cluster registry
 - #4, milestone 3: `create seed|target` (agent ISO, VM, install wait) and the guest helpers

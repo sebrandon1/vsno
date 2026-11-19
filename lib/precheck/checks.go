@@ -309,8 +309,11 @@ func (e *Env) freeMemory(ctx context.Context, node corev1.Node) (free, heldByVsn
 }
 
 // hasTopoLVM reports whether LVMS (TopoLVM CSI) serves storage on this node.
-func (e *Env) hasTopoLVM(ctx context.Context, node string) bool {
-	csi, err := e.Kube.StorageV1().CSINodes().Get(ctx, node, metav1.GetOptions{})
+func (e *Env) hasTopoLVM(ctx context.Context, node string) bool { return HasTopoLVM(ctx, e.Kube, node) }
+
+// HasTopoLVM reports whether the node's CSINode lists the TopoLVM driver.
+func HasTopoLVM(ctx context.Context, kube kubernetes.Interface, node string) bool {
+	csi, err := kube.StorageV1().CSINodes().Get(ctx, node, metav1.GetOptions{})
 	if err != nil {
 		return false
 	}
