@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -61,6 +62,7 @@ func (e *Env) defaults() {
 
 // Guest is one vSNO as list shows it.
 type Guest struct {
+	Namespace string    `json:"namespace"`
 	Name      string    `json:"name"`
 	State     State     `json:"state"`
 	Detail    string    `json:"detail,omitempty"`
@@ -96,7 +98,9 @@ func API(name string) string {
 // is Unknown, with the reason in Detail.
 func List(ctx context.Context, e Env, ns string) ([]Guest, error) {
 	e.defaults()
-	vms, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).List(ctx, metav1.ListOptions{LabelSelector: LabelName})
+	// Every VM in an environment's namespace is a vSNO. The vsno.io/name label
+	// isn't required: an environment assembled by hand predates it.
+	vms, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).List(ctx, metav1.ListOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, nil // no KubeVirt
 	}
@@ -138,6 +142,57 @@ func List(ctx context.Context, e Env, ns string) ([]Guest, error) {
 	return out, nil
 }
 
+// Environments returns the namespaces that are vsno environments: those vsno
+// labeled, plus any that hold the builder pod (an environment built by hand
+// predates the label). Sorted.
+func Environments(ctx context.Context, kube kubernetes.Interface) ([]string, error) {
+	set := map[string]struct{}{}
+	nss, err := kube.CoreV1().Namespaces().List(ctx, metav1.ListOptions{LabelSelector: cluster.ManagedByLabel + "=vsno"})
+	if err != nil {
+		return nil, fmt.Errorf("listing the vsno environments: %w", err)
+	}
+	for _, n := range nss.Items {
+		set[n.Name] = struct{}{}
+	}
+	pods, err := kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{LabelSelector: builder.LabelSelector})
+	if err != nil {
+		return nil, fmt.Errorf("finding the builders: %w", err)
+	}
+	for _, p := range pods.Items {
+		set[p.Namespace] = struct{}{}
+	}
+	return slices.Sorted(maps.Keys(set)), nil
+}
+
+// ListAll returns the vSNOs in every environment, sorted by namespace then
+// name. envFor builds the Env for one namespace, so each environment's builder
+// probes its own vSNOs.
+func ListAll(ctx context.Context, kube kubernetes.Interface, envFor func(ns string) (Env, error)) ([]Guest, error) {
+	envs, err := Environments(ctx, kube)
+	if err != nil {
+		return nil, err
+	}
+	var out []Guest
+	for _, ns := range envs {
+		e, err := envFor(ns)
+		if err != nil {
+			return nil, err
+		}
+		gs, err := List(ctx, e, ns)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, gs...)
+	}
+	slices.SortFunc(out, func(a, b Guest) int {
+		if c := strings.Compare(a.Namespace, b.Namespace); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return out, nil
+}
+
 // buildingISO returns the vSNOs that have a Service but no VM yet: create
 // adds the Service first, then builds the ISO, then makes the VM.
 func buildingISO(ctx context.Context, e Env, ns string, have []Guest) ([]Guest, error) {
@@ -151,7 +206,7 @@ func buildingISO(ctx context.Context, e Env, ns string, have []Guest) ([]Guest, 
 		if slices.ContainsFunc(have, func(g Guest) bool { return g.Name == name }) {
 			continue
 		}
-		out = append(out, Guest{Name: name, State: Building, Requested: s.Annotations[AnnRequested],
+		out = append(out, Guest{Namespace: ns, Name: name, State: Building, Requested: s.Annotations[AnnRequested],
 			Version: s.Annotations[AnnVersion], Image: s.Annotations[AnnImage],
 			ServiceIP: s.Spec.ClusterIP, API: API(name), Created: s.CreationTimestamp.Time})
 	}
@@ -162,7 +217,7 @@ func buildingISO(ctx context.Context, e Env, ns string, have []Guest) ([]Guest, 
 func observe(ctx context.Context, e Env, vm *unstructured.Unstructured) (Guest, Observed) {
 	ns, name := vm.GetNamespace(), vm.GetName()
 	ann := vm.GetAnnotations()
-	g := Guest{Name: name, Requested: ann[AnnRequested], Image: ann[AnnImage], Version: ann[AnnVersion],
+	g := Guest{Namespace: ns, Name: name, Requested: ann[AnnRequested], Image: ann[AnnImage], Version: ann[AnnVersion],
 		API: API(name), Created: vm.GetCreationTimestamp().Time}
 	g.Cores, _, _ = unstructured.NestedInt64(vm.Object, "spec", "template", "spec", "domain", "cpu", "cores")
 	g.MemoryGiB = gib(nested(vm, "spec", "template", "spec", "domain", "memory", "guest"))

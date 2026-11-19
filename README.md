@@ -190,7 +190,8 @@ runs one (for example `-n vsno-dev` next to `vsno`) usually needs `--node`.
 vsno create a --version 4.20 --watch       # latest 4.20 z-stream, follow the install
 vsno create b --version 4.22-nightly       # latest accepted 4.22 nightly; returns once the VM exists
 vsno create --version 4.20                 # no name: a random one, such as brave-otter
-vsno list                                  # or --watch, or -o json
+vsno list                                  # every environment; --watch, or -o json
+vsno list -n vsno-dev                      # just one environment
 vsno oc a get nodes                        # oc against the vSNO
 vsno ssh a                                 # a shell as core; vsno ssh a -- uptime
 vsno kubeconfig a > a.kubeconfig
@@ -230,9 +231,12 @@ Nightlies need credentials for `registry.ci.openshift.org` in the cluster pull s
 `create` refuses a vSNO that doesn't fit next to what already runs on the node, and shows the free
 memory. `vsno stop` frees a vSNO's memory and keeps its disk.
 
-`list` shows each vSNO's state, version, size, age and API, and how many more default-size vSNOs
-fit on the node. The states are `importing-iso`, `starting`, `installing` (with the installer's
-progress), `finishing`, `ready`, `stopped`, `failed` and `deleting`.
+`list` shows every vSNO in every vsno environment, with a NAMESPACE column: the namespaces vsno
+labeled, plus any that hold the builder pod (an environment assembled by hand predates the label).
+`-n` narrows it to one. Each row has the vSNO's state, version, size, age and API, and the footer
+says how many more default-size vSNOs fit on each node. The states are `importing-iso`, `starting`,
+`installing` (with the installer's progress), `finishing`, `ready`, `stopped`, `failed` and
+`deleting`.
 
 Each vSNO's API is `https://api.<name>.vsno.lab:6443`. Only the environment resolves that name,
 so `oc`, `ssh` and `kubeconfig` work through the builder pod. Everything after the vSNO's name goes

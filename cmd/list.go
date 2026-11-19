@@ -1,14 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
-	"github.com/sebrandon1/vsno/lib/state"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
 )
@@ -37,11 +39,11 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 }
 
-// listing is list's report.
+// listing is list's report. Namespace is set only when -n picked one.
 type listing struct {
-	Namespace string          `json:"namespace"`
-	VSNOs     []guest.Guest   `json:"vsnos"`
-	Capacity  *guest.Capacity `json:"capacity,omitempty"`
+	Namespace string           `json:"namespace,omitempty"`
+	VSNOs     []guest.Guest    `json:"vsnos"`
+	Capacity  []guest.Capacity `json:"capacity,omitempty"`
 }
 
 func runList(cmd *cobra.Command, _ []string) error {
@@ -49,26 +51,23 @@ func runList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	env, err := guestEnv(cmd.Context(), c, 0)
-	if err != nil {
-		return err
-	}
-	env.Progress = nil // a table, not steps
-	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
-	for {
-		l := listing{Namespace: namespace}
-		if l.VSNOs, err = guest.List(cmd.Context(), env, namespace); err != nil {
+	single := rootCmd.PersistentFlags().Changed("namespace")
+	var env guest.Env
+	if single {
+		if env, err = guestEnv(cmd.Context(), c, 0); err != nil {
 			return err
 		}
-		if st, found, _ := state.Load(cmd.Context(), c.Kube, namespace); found && st.Node != "" {
-			if capa, err := guest.NodeCapacity(cmd.Context(), c.Kube, st.Node); err == nil {
-				l.Capacity = &capa
-			}
+	}
+	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
+	for {
+		l, err := collect(cmd.Context(), c, env, single)
+		if err != nil {
+			return err
 		}
 		if lsWatch && pal.On {
 			fmt.Fprint(w, "\033[H\033[2J") // clear the screen between refreshes
 		}
-		if err := renderList(w, &l, time.Now(), pal); err != nil || !lsWatch {
+		if err := renderList(w, l, time.Now(), pal); err != nil || !lsWatch {
 			return err
 		}
 		select {
@@ -79,6 +78,33 @@ func runList(cmd *cobra.Command, _ []string) error {
 	}
 }
 
+// collect reads the vSNOs and the nodes' capacity, from one environment or all.
+func collect(ctx context.Context, c *kube.Clients, env guest.Env, single bool) (*listing, error) {
+	l := &listing{}
+	var err error
+	if single {
+		l.Namespace = namespace
+		l.VSNOs, err = guest.List(ctx, env, namespace)
+	} else {
+		l.VSNOs, err = guest.ListAll(ctx, c.Kube, func(ns string) (guest.Env, error) { return guestEnvFor(c, ns, 0) })
+	}
+	if err != nil {
+		return nil, err
+	}
+	nodes := map[string]struct{}{}
+	for _, g := range l.VSNOs {
+		if g.Node != "" {
+			nodes[g.Node] = struct{}{}
+		}
+	}
+	for _, n := range slices.Sorted(maps.Keys(nodes)) {
+		if capa, cerr := guest.NodeCapacity(ctx, c.Kube, n); cerr == nil {
+			l.Capacity = append(l.Capacity, capa)
+		}
+	}
+	return l, nil
+}
+
 func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 	if outputFormat == formatJSON {
 		enc := json.NewEncoder(w)
@@ -86,21 +112,25 @@ func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 		return enc.Encode(l)
 	}
 	if len(l.VSNOs) == 0 {
+		if l.Namespace == "" {
+			fmt.Fprintln(w, "No vSNOs in any vsno environment. Create one with `vsno create <name> --version 4.20`.")
+			return nil
+		}
 		fmt.Fprintf(w, "No vSNOs in %s. Create one with `vsno create <name> --version 4.20`.\n", l.Namespace)
 	} else {
 		var t ui.Table
-		t.Row(pal.Bold("NAME"), pal.Bold("STATE"), pal.Bold("VERSION"), pal.Bold("AGE"), pal.Bold("CPU"), pal.Bold("MEMORY"), pal.Bold("DISK"), pal.Bold("API"), pal.Bold("DETAIL"))
+		t.Row(pal.Bold("NAMESPACE"), pal.Bold("NAME"), pal.Bold("STATE"), pal.Bold("VERSION"), pal.Bold("AGE"), pal.Bold("CPU"), pal.Bold("MEMORY"), pal.Bold("DISK"), pal.Bold("API"), pal.Bold("DETAIL"))
 		for _, g := range l.VSNOs {
 			api := "-"
 			if g.ServiceIP != "" {
 				api = fmt.Sprintf("api.%s (%s)", g.Name, g.ServiceIP)
 			}
-			t.Row(g.Name, stateText(pal, g.State), g.ShownVersion(), age(now.Sub(g.Created)), size(g.Cores, ""),
+			t.Row(g.Namespace, g.Name, stateText(pal, g.State), g.ShownVersion(), age(now.Sub(g.Created)), size(g.Cores, ""),
 				size(g.MemoryGiB, "Gi"), size(g.DiskGiB, "Gi"), api, pal.Dim(g.Detail))
 		}
 		t.Write(w)
 	}
-	if c := l.Capacity; c != nil {
+	for _, c := range l.Capacity {
 		fmt.Fprintf(w, "\nnode %s: %d GiB memory free, room for %d more default-size vSNO(s) (%d GiB each)\n",
 			c.Node, c.FreeMemoryGiB, c.FitDefault, guest.DefaultMemoryGiB)
 	}

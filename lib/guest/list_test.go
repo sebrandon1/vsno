@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,7 +36,7 @@ func TestList(t *testing.T) {
 	}
 	r := got[2]
 	r.Created, r.Image = time.Time{}, ""
-	want := Guest{Name: "ready", State: Ready, Detail: "1 operator(s) degraded or unavailable", Version: "4.20.47", Requested: "4.20",
+	want := Guest{Namespace: ns, Name: "ready", State: Ready, Detail: "1 operator(s) degraded or unavailable", Version: "4.20.47", Requested: "4.20",
 		Node: node, Cores: 16, MemoryGiB: 32, DiskGiB: 200, ServiceIP: "172.30.1.1", API: "https://api.ready.vsno.lab:6443", Unhealthy: intp(1)}
 	if !reflect.DeepEqual(r, want) {
 		t.Errorf("ready =\n %+v\nwant\n %+v", r, want)
@@ -46,6 +47,70 @@ func TestList(t *testing.T) {
 	// Only the running vSNO is probed.
 	if p := w.runner.ran("probe.sh"); len(p) != 1 || strings.Join(p[0].args, " ") != "vsno.lab ready=172.30.1.1" {
 		t.Errorf("probes = %+v", p)
+	}
+}
+
+func TestEnvironments(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	// A hand-built environment: no vsno label, but it has a builder.
+	if _, err := w.kube.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "hand-built"}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.kube.CoreV1().Pods("hand-built").Create(ctx,
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "hand-built", Name: "builder-2", Labels: map[string]string{"app": "builder"}}},
+		metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// An unrelated namespace, and a labeled one with no builder.
+	for _, o := range []*corev1.Namespace{
+		{ObjectMeta: metav1.ObjectMeta{Name: "plain"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "labeled-only", Labels: map[string]string{cluster.ManagedByLabel: "vsno"}}},
+	} {
+		if _, err := w.kube.CoreV1().Namespaces().Create(ctx, o, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := Environments(context.Background(), w.kube)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ns is both labeled and has a builder: once.
+	if want := []string{"hand-built", "labeled-only", ns}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Environments = %v, want %v", got, want)
+	}
+	w.kube.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, errBoom })
+	if _, err := Environments(context.Background(), w.kube); err == nil || !strings.Contains(err.Error(), "finding the builders") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestListAll(t *testing.T) {
+	w := newWorld(t, vm("b", "Running"), vm("a", "Stopped"))
+	other := vm("c", "Stopped")
+	other.SetNamespace("other")
+	if _, err := w.dyn.Resource(cluster.GVRVirtualMachine).Namespace("other").Create(context.Background(), other, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.kube.CoreV1().Namespaces().Create(context.Background(),
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "other"}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.kube.CoreV1().Pods("other").Create(context.Background(),
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "builder-3", Labels: map[string]string{"app": "builder"}}},
+		metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ListAll(context.Background(), w.kube, func(string) (Env, error) { return w.env(), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, g := range got {
+		keys = append(keys, g.Namespace+"/"+g.Name)
+	}
+	if want := []string{"other/c", ns + "/a", ns + "/b"}; !reflect.DeepEqual(keys, want) {
+		t.Errorf("ListAll = %v, want %v", keys, want)
 	}
 }
 

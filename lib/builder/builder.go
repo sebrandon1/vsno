@@ -23,6 +23,10 @@ import (
 // Container is the builder Deployment's container.
 const Container = "builder"
 
+// LabelSelector finds the builder pod, and so the namespaces that are vsno
+// environments.
+const LabelSelector = "app=builder"
+
 // IO wires a script's streams. Any may be nil; a non-nil TTY size queue asks
 // for a terminal.
 type IO struct {
@@ -50,7 +54,7 @@ var ErrNotReady = errors.New("no ready builder pod")
 
 // Pod returns the ready builder pod's name.
 func Pod(ctx context.Context, kube kubernetes.Interface, ns string) (string, error) {
-	pods, err := kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: "app=builder"})
+	pods, err := kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: LabelSelector})
 	if err != nil {
 		return "", fmt.Errorf("finding the builder pod: %w", err)
 	}

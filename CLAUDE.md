@@ -71,8 +71,10 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   one output stream.
 - `lib/guest`: vSNOs. `templates/` (install-config, agent-config, the `/var/lib/containers`
   MachineConfig, and the Service, ISO DataVolume and VM) and `scripts/` (`iso.sh`, `probe.sh`,
-  `rm.sh`, run in the builder) are embedded. `Create`, `List`, `Delete`, `SetRunning`,
-  `WaitState`, and the `Oc`/`SSH`/`Kubeconfig`/`Screenshot` helpers. `Classify` turns
+  `rm.sh`, run in the builder) are embedded. `Create`, `List`, `ListAll`, `Delete`, `SetRunning`,
+  `WaitState`, and the `Oc`/`SSH`/`Kubeconfig`/`Screenshot` helpers. `Environments` finds the
+  environments for `ListAll`: namespaces labeled `app.kubernetes.io/managed-by=vsno`, plus any
+  holding the `app=builder` pod, so hand-built environments are included. `Classify` turns
   observations (VM status, ISO DataVolume, probe) into a `State`; create's wait and list share it.
   Golden files in `testdata/` (`go test ./lib/guest -update`).
 - `lib/seed`: Image Based Upgrade seed images. `Create` drives the Lifecycle Agent on a vSNO

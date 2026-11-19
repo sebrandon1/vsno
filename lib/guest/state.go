@@ -121,7 +121,7 @@ func classifyProbe(p *Probe) (State, string) {
 	case p.CV != nil:
 		return Finishing, p.CV.Message
 	case p.Agent == nil:
-		return Unknown, "booting or rebooting"
+		return Unknown, "no answer from the installer or API"
 	case slices.Contains(agentFailed, p.Agent.Status):
 		return Failed, "install " + p.Agent.Status + ": " + p.Agent.Info
 	case p.Agent.Status == "insufficient":

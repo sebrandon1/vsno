@@ -69,13 +69,18 @@ func guestEnv(ctx context.Context, c *kube.Clients, timeout time.Duration) (gues
 	if err := useEnvironment(ctx, c.Kube); err != nil {
 		return guest.Env{}, err
 	}
+	return guestEnvFor(c, namespace, timeout)
+}
+
+// guestEnvFor wires the guest package to one environment's namespace.
+func guestEnvFor(c *kube.Clients, ns string, timeout time.Duration) (guest.Env, error) {
 	dc, err := discovery.NewDiscoveryClientForConfig(c.Config)
 	if err != nil {
 		return guest.Env{}, err
 	}
 	return guest.Env{
 		Kube: c.Kube, Dyn: c.Dyn, Applier: apply.NewSSA(dc, c.Dyn),
-		Builder:  builder.Exec{Config: c.Config, Kube: c.Kube, Namespace: namespace},
+		Builder:  builder.Exec{Config: c.Config, Kube: c.Kube, Namespace: ns},
 		Resolver: release.Resolver{},
 		Progress: precheckProgress{newProgress()},
 		Timeout:  timeout,

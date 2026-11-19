@@ -24,12 +24,12 @@ import (
 var now = time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 
 func testListing() *listing {
-	return &listing{Namespace: "vsno",
+	return &listing{
 		VSNOs: []guest.Guest{
-			{Name: "a", State: guest.Ready, Version: "4.20.46", Cores: 16, MemoryGiB: 32, DiskGiB: 200, ServiceIP: "172.30.1.1", Created: now.Add(-3 * time.Hour)},
-			{Name: "b", State: guest.Installing, Detail: "installing 40%", Requested: "4.22-nightly", Cores: 8, MemoryGiB: 16, DiskGiB: 120, Created: now.Add(-10 * time.Minute)},
+			{Namespace: "vsno", Name: "a", State: guest.Ready, Version: "4.20.46", Cores: 16, MemoryGiB: 32, DiskGiB: 200, ServiceIP: "172.30.1.1", Node: "worker-1", Created: now.Add(-3 * time.Hour)},
+			{Namespace: "vsno-dev", Name: "b", State: guest.Installing, Detail: "installing 40%", Requested: "4.22-nightly", Cores: 8, MemoryGiB: 16, DiskGiB: 120, Created: now.Add(-10 * time.Minute)},
 		},
-		Capacity: &guest.Capacity{Node: "worker-1", FreeMemoryGiB: 46, FitDefault: 1},
+		Capacity: []guest.Capacity{{Node: "worker-1", FreeMemoryGiB: 46, FitDefault: 1}},
 	}
 }
 
@@ -40,9 +40,8 @@ func TestRenderList(t *testing.T) {
 	}
 	out := b.String()
 	for _, want := range []string{
-		"NAME  STATE       VERSION       AGE  CPU  MEMORY  DISK   API                 DETAIL\n",
-		"a     ready       4.20.46       3h   16   32Gi    200Gi  api.a (172.30.1.1)\n",
-		"b     installing  4.22-nightly  10m  8    16Gi    120Gi  -                   installing 40%\n",
+		"NAMESPACE", "NAME", "STATE", "VERSION", "AGE", "CPU", "MEMORY", "DISK", "API", "DETAIL",
+		"vsno", "vsno-dev", "api.a (172.30.1.1)", "4.22-nightly", "installing 40%",
 		"node worker-1: 46 GiB memory free, room for 1 more default-size vSNO(s) (16 GiB each)",
 	} {
 		if !strings.Contains(out, want) {
@@ -54,6 +53,11 @@ func TestRenderList(t *testing.T) {
 	if !strings.Contains(b.String(), "No vSNOs in vsno") {
 		t.Errorf("empty: %q", b.String())
 	}
+	b.Reset()
+	_ = renderList(&b, &listing{}, now, plain)
+	if !strings.Contains(b.String(), "No vSNOs in any vsno environment") {
+		t.Errorf("empty all: %q", b.String())
+	}
 }
 
 func TestRenderListJSON(t *testing.T) {
@@ -64,7 +68,8 @@ func TestRenderListJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got listing
-	if err := json.Unmarshal(b.Bytes(), &got); err != nil || len(got.VSNOs) != 2 || got.Capacity.FitDefault != 1 {
+	if err := json.Unmarshal(b.Bytes(), &got); err != nil || len(got.VSNOs) != 2 ||
+		len(got.Capacity) != 1 || got.Capacity[0].FitDefault != 1 || got.VSNOs[1].Namespace != "vsno-dev" {
 		t.Fatalf("json = %s (%v)", b.String(), err)
 	}
 }
