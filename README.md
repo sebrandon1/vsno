@@ -127,7 +127,7 @@ have a `node`, and `nodes` lists each evaluated worker with `eligible`.
 ```bash
 vsno precheck --write-config vsno.yaml   # review the suggested node and disk
 vsno setup --config vsno.yaml
-vsno setup --dry-run                     # print the manifests, change nothing
+vsno setup --dry-run                     # list what setup would do, change nothing
 ```
 
 `setup` installs what the vSNOs need on the host cluster:
@@ -147,6 +147,15 @@ precheck's suggestion. If `--node` names a different node than `--config`, the c
 dropped, since it belongs to the other node. A rerun reuses everything and reports each object as `unchanged`.
 Progress and the result are recorded in ConfigMap `<namespace>/vsno-state`.
 
+`--dry-run` lists each step (reuse what is installed, or apply) and each object, with what applying
+it would do:
+- `create`: it doesn't exist yet
+- `reapply`: vsno applied it before; usually nothing changes
+- `take over`: it exists but vsno didn't create it. Setup would overwrite it, so the plan ends with a
+  warning. Run it before pointing setup at a namespace you made by hand.
+
+Every object setup applies carries the label `app.kubernetes.io/managed-by=vsno`.
+
 If no worker has room for the VMs, precheck can't suggest a node and you must pass `--node`. Only
 memory used by the same namespace counts as free, so a second environment on a node that already
 runs one (for example `-n vsno-dev` next to `vsno`) usually needs `--node`.
@@ -156,7 +165,8 @@ runs one (for example `-n vsno-dev` next to `vsno`) usually needs `--node`.
 | `--node`, `--disk` | Worker for the VMs and the `/dev/disk/by-id` path for LVMS |
 | `--config <file>` | Settings written by `precheck --write-config` |
 | `--yes` | Approve taking over the disk without asking |
-| `--dry-run` | Print the manifests (Secret values redacted) and change nothing |
+| `--dry-run` | List what setup would do and change nothing (see below) |
+| `--manifests` | With `--dry-run`, also print the manifests, Secret values redacted (implies `--dry-run`) |
 | `--no-probe` | Skip the hardware probe (then `--node` is required) |
 | `--timeout <duration>` | How long to wait for each component (default `20m`) |
 | `-n <namespace>` | Environment namespace (default `vsno`) |
@@ -203,13 +213,18 @@ It refuses, unless you pass `--force`, when:
 With `--force` the problems are still listed, marked `(ignored: --force)`, and the JSON output
 has `"forced": true`.
 
-It lists the objects and asks you to type the namespace (or `host` with `--host`), unless you
+Its output mirrors `setup`: the same steps in reverse (host steps show `kept` without `--host`), and
+the same objects in reverse, each marked `delete` or `absent`. It adds what setup's manifests
+don't include but teardown also deletes, such as the operators' CSVs. If deleting the namespace would
+also delete VMs or PVCs that setup didn't create, the plan warns about them.
+
+It shows that plan and asks you to type the namespace (or `host` with `--host`), unless you
 pass `--yes`.
 
 | Flag | Meaning |
 |---|---|
 | `--host` | Also remove the host components |
-| `--dry-run` | List what would be deleted and change nothing |
+| `--dry-run` | Show the plan and change nothing |
 | `--yes` | Don't ask for confirmation |
 | `--force` | Skip the safety checks above |
 | `--timeout <duration>` | How long to wait for each deletion (default `10m`) |

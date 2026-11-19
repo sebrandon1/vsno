@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
@@ -140,7 +141,7 @@ func TestRunNamespace(t *testing.T) {
 	if tg := res.Targets[0]; tg.Outcome != Deleted || tg.Detail != "1 VM(s) (seed), 1 PVC(s)" {
 		t.Errorf("target = %+v", tg)
 	}
-	if c.answer != ns || c.shown != 1 || !strings.Contains(c.asked, "1 object(s)") {
+	if c.answer != ns || c.shown != 1 || !strings.Contains(c.asked, "This deletes 19 object(s)") {
 		t.Errorf("confirm: answer %q shown %d q %q", c.answer, c.shown, c.asked)
 	}
 	if exists(t, d, cluster.GVRNamespace, "", ns) || !exists(t, d, precheck.GVRHyperConverged, cluster.CNVNamespace, cluster.HyperConvergedName) {
@@ -253,6 +254,141 @@ func TestRunHostDeletes(t *testing.T) {
 	if !exists(t, d, cluster.GVRSubscription, cluster.CNVNamespace, "unrelated") {
 		t.Error("deleted a Subscription for another package")
 	}
+	// Every step is done, and its objects with it.
+	for _, s := range res.Steps {
+		if s.Outcome != Deleted || !strings.HasSuffix(s.Detail, " deleted") {
+			t.Errorf("step %s = %s %q", s.Name, s.Outcome, s.Detail)
+		}
+	}
+	if n := apply.Count(res.Changes(), Removed); n != len(res.Objects) {
+		t.Errorf("%d of %d objects marked deleted", n, len(res.Objects))
+	}
+	// A CSV isn't among setup's objects but is in its operator's step.
+	if !slices.ContainsFunc(res.Objects, func(o Object) bool { return o.Kind == "ClusterServiceVersion" && o.Step == "cnv" }) {
+		t.Error("the CNV CSV is missing from the cnv step")
+	}
+}
+
+// fakePlanner reports the refs in absent as missing and everything else as vsno's.
+type fakePlanner struct {
+	absent map[string]bool
+	err    error
+}
+
+func (f fakePlanner) Plan(_ context.Context, objs []*unstructured.Unstructured) ([]apply.Change, error) {
+	ch := make([]apply.Change, 0, len(objs))
+	for _, o := range objs {
+		c := apply.Change{Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName(), Action: apply.Reapply}
+		if f.absent[c.Ref()] {
+			c.Action = apply.Create
+		}
+		ch = append(ch, c)
+	}
+	return ch, f.err
+}
+
+func TestRunStepsMirrorSetup(t *testing.T) {
+	e := (&confirmer{}).env(newKube(lvmsPVC(ns, "seed-root")), newDyn(host()...))
+	e.Planner = fakePlanner{absent: map[string]bool{ns + "/Secret/registry-ca": true}}
+	res, err := Run(context.Background(), e, Options{Namespace: ns, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, s := range manifests.Steps {
+		names = append(names, s.Name)
+	}
+	slices.Reverse(names)
+	var got []string
+	for _, s := range res.Steps {
+		got = append(got, s.Name)
+		if s.Name == "cnv" && (s.Outcome != Kept || s.Detail != "pass --host to remove") {
+			t.Errorf("without --host, cnv = %+v", s)
+		}
+	}
+	if !slices.Equal(got, names) {
+		t.Errorf("steps = %v, want setup's reversed: %v", got, names)
+	}
+	if s := res.Steps[0]; s.Name != "support" || s.Outcome != Planned || s.Detail != "15 to delete, 1 absent" {
+		t.Errorf("support = %+v", s)
+	}
+	if first, last := res.Objects[0], res.Objects[len(res.Objects)-1]; first.Ref() != ns+"/Deployment/registry" || last.Ref() != "Namespace/"+ns {
+		t.Errorf("objects run %s .. %s, want setup's order reversed", first.Ref(), last.Ref())
+	}
+	// setup's builder-work PVC is expected; the VM and the other PVC are not.
+	if want := []string{"VM seed", "PVC seed-root"}; !slices.Equal(res.Unmanaged, want) {
+		t.Errorf("unmanaged = %v, want %v", res.Unmanaged, want)
+	}
+}
+
+// With the namespace already gone, its steps have nothing to delete, while
+// --host still has work.
+func TestRunStepWithNothingToDeleteIsGone(t *testing.T) {
+	absent := map[string]bool{}
+	for _, st := range manifests.Steps {
+		objs, err := st.Objects(manifests.NamesConfig("gone-env"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, o := range objs {
+			if !st.Host {
+				absent[apply.Change{Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName()}.Ref()] = true
+			}
+		}
+	}
+	e := (&confirmer{}).env(newKube(), newDyn(host()...))
+	e.Planner = fakePlanner{absent: absent}
+	res, err := Run(context.Background(), e, Options{Namespace: "gone-env", Host: true, DryRun: true, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"support": "gone 16 absent", "namespace": "gone 3 absent", "storage": "planned 1 to delete"}
+	for _, s := range res.Steps {
+		if w, ok := want[s.Name]; ok && string(s.Outcome)+" "+s.Detail != w {
+			t.Errorf("%s = %s %q, want %s", s.Name, s.Outcome, s.Detail, w)
+		}
+	}
+}
+
+func TestRunPlannerError(t *testing.T) {
+	e := (&confirmer{}).env(newKube(), newDyn(host()...))
+	e.Planner = fakePlanner{err: errors.New("api down")}
+	if _, err := Run(context.Background(), e, Options{Namespace: ns, DryRun: true}); err == nil || !strings.Contains(err.Error(), "api down") {
+		t.Errorf("planner error = %v", err)
+	}
+}
+
+func TestRunMarksOnlyFinishedSteps(t *testing.T) {
+	d := newDyn(host()...)
+	d.PrependReactor("delete", "lvmclusters", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("denied")
+	})
+	res, err := Run(context.Background(), (&confirmer{}).env(newKube(), d), Options{Namespace: ns, Host: true, Yes: true})
+	if err == nil {
+		t.Fatal("want the LVMCluster deletion to fail")
+	}
+	want := map[string]Outcome{"support": Deleted, "namespace": Deleted, "hyperconverged": Deleted, "cnv": Deleted, "storage": Planned, "lvms": Planned}
+	for _, s := range res.Steps {
+		if s.Outcome != want[s.Name] {
+			t.Errorf("%s = %s, want %s", s.Name, s.Outcome, want[s.Name])
+		}
+	}
+}
+
+func TestPlanDetail(t *testing.T) {
+	c := func(a apply.Action) apply.Change { return apply.Change{Action: a} }
+	for _, tc := range []struct {
+		ch   []apply.Change
+		want string
+	}{
+		{nil, "nothing to delete"},
+		{[]apply.Change{c(Delete)}, "1 to delete"},
+		{[]apply.Change{c(Absent), c(Delete), c(Absent)}, "1 to delete, 2 absent"},
+	} {
+		if got := PlanDetail(tc.ch); got != tc.want {
+			t.Errorf("PlanDetail = %q, want %q", got, tc.want)
+		}
+	}
 }
 
 func TestRunHostBlockers(t *testing.T) {
@@ -311,7 +447,7 @@ func TestRunPlanErrors(t *testing.T) {
 	for _, r := range []struct{ verb, res string }{
 		{"get", "namespaces"}, {"list", "virtualmachines"}, {"list", "persistentvolumeclaims"},
 		{"list", "storageclasses"}, {"list", "subscriptions"}, {"list", "clusterserviceversions"},
-		{"list", "lvmclusters"}, {"get", "hyperconvergeds"},
+		{"list", "lvmclusters"}, {"get", "lvmclusters"}, {"get", "hyperconvergeds"},
 	} {
 		// Without the environment namespace, the host checks make the first call.
 		for _, envNS := range []string{ns, "absent"} {

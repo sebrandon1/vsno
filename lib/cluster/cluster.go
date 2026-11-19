@@ -23,7 +23,7 @@ const (
 	OSImagesNamespace = "openshift-virtualization-os-images"
 	// TopoLVM is the LVMS CSI provisioner.
 	TopoLVM = "topolvm.io"
-	// ManagedByLabel marks the namespaces vsno creates.
+	// ManagedByLabel marks every object vsno creates.
 	ManagedByLabel = "app.kubernetes.io/managed-by"
 )
 

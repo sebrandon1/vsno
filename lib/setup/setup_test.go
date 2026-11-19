@@ -501,10 +501,17 @@ func TestRunDryRun(t *testing.T) {
 	if len(s.applied) != 0 {
 		t.Fatalf("dry run applied %v", s.applied)
 	}
-	for _, st := range res.Steps {
+	for i, st := range res.Steps {
 		if st.Outcome != Planned {
 			t.Errorf("%s = %s", st.Name, st.Outcome)
 		}
+		// teardown mirrors manifests.Steps, so setup's steps must match it.
+		if st.Name != manifests.Steps[i].Name {
+			t.Errorf("step %d is %s, manifests.Steps has %s", i, st.Name, manifests.Steps[i].Name)
+		}
+	}
+	if len(res.Steps) != len(manifests.Steps) {
+		t.Errorf("%d steps, manifests.Steps has %d", len(res.Steps), len(manifests.Steps))
 	}
 	if _, found, _ := state.Load(context.Background(), s.kube, ns); found {
 		t.Error("dry run saved state")
@@ -524,6 +531,52 @@ func TestRunDryRun(t *testing.T) {
 	}
 	if secrets != 4 {
 		t.Errorf("dry run rendered %d secrets, want 4", secrets)
+	}
+}
+
+// planner reports every object as taken over, standing in for apply.SSA.Plan.
+type planner struct{ *sim }
+
+func (p planner) Plan(_ context.Context, objs []*unstructured.Unstructured) ([]apply.Change, error) {
+	ch := make([]apply.Change, 0, len(objs))
+	for _, o := range objs {
+		ch = append(ch, apply.Change{Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName(), Action: apply.TakeOver})
+	}
+	return ch, nil
+}
+
+func TestRunDryRunAsksThePlanner(t *testing.T) {
+	s := newSim()
+	s.existingHost(t)
+	o := opts()
+	o.DryRun = true
+	e := s.env(report())
+	e.Applier = planner{s}
+	res, err := Run(context.Background(), e, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.applied) != 0 || apply.Count(res.Changes, apply.TakeOver) != len(res.Changes) || len(res.Changes) == 0 {
+		t.Fatalf("applied %v, changes %v", s.applied, res.Changes)
+	}
+	if got := res.Steps[len(res.Steps)-1].Detail; !strings.HasSuffix(got, " to take over") {
+		t.Errorf("support detail = %q", got)
+	}
+}
+
+func TestPlanDetail(t *testing.T) {
+	c := func(a apply.Action) apply.Change { return apply.Change{Action: a} }
+	for _, tc := range []struct {
+		ch   []apply.Change
+		want string
+	}{
+		{nil, "nothing to apply"},
+		{[]apply.Change{c(apply.Create), c(apply.Create)}, "2 to create"},
+		{[]apply.Change{c(apply.TakeOver), c(apply.Create), c(apply.Reapply)}, "1 to create, 1 to reapply, 1 to take over"},
+	} {
+		if got := PlanDetail(tc.ch); got != tc.want {
+			t.Errorf("PlanDetail = %q, want %q", got, tc.want)
+		}
 	}
 }
 

@@ -42,7 +42,7 @@ type Options struct {
 	// Settings from --config and flags. Empty fields come from the precheck.
 	Settings precheck.Suggested
 	Yes      bool // approve taking over the LVMS disk
-	DryRun   bool // render and report, change nothing
+	DryRun   bool // plan and report, change nothing
 	Images   manifests.Images
 }
 
@@ -84,6 +84,7 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 	res := &Result{Namespace: o.Namespace}
 	rec := &recorder{}
 	if o.DryRun {
+		rec.plan, _ = e.Applier.(apply.Planner) // without one, every object is planned as created
 		e.Applier = rec
 	}
 	s, warnings, err := resolve(e.Precheck(ctx, o.Settings.Node), o.Settings)
@@ -183,10 +184,10 @@ func (r *runner) applyTemplate(ctx context.Context, name string, keep func(*unst
 	return r.detail(ch), nil
 }
 
-// detail summarizes changes; a dry run only knows how many objects it would apply.
+// detail summarizes changes, or in a dry run the planned actions.
 func (r *runner) detail(ch []apply.Change) string {
 	if r.o.DryRun {
-		return fmt.Sprintf("%d object(s)", len(ch))
+		return PlanDetail(ch)
 	}
 	return countDetail(ch)
 }
@@ -194,6 +195,14 @@ func (r *runner) detail(ch []apply.Change) string {
 func countDetail(ch []apply.Change) string {
 	return fmt.Sprintf("%d created, %d updated, %d unchanged",
 		apply.Count(ch, apply.Created), apply.Count(ch, apply.Updated), apply.Count(ch, apply.Unchanged))
+}
+
+// PlanDetail is "n to create, n to reapply, n to take over", leaving out zeros.
+func PlanDetail(ch []apply.Change) string {
+	return apply.Tally(ch, "nothing to apply",
+		apply.Label{Action: apply.Create, Text: "to create"},
+		apply.Label{Action: apply.Reapply, Text: "to reapply"},
+		apply.Label{Action: apply.TakeOver, Text: "to take over"})
 }
 
 // outcome is Planned in a dry run, Applied otherwise.
@@ -230,14 +239,23 @@ func summary(res *Result) string {
 	return strings.Join(parts, ", ")
 }
 
-// recorder is the dry-run Applier: it keeps the objects and changes nothing.
-type recorder struct{ objs []*unstructured.Unstructured }
+// recorder is the dry-run Applier: it keeps the objects, asks plan (if any)
+// what applying them would do, and changes nothing.
+type recorder struct {
+	objs []*unstructured.Unstructured
+	plan apply.Planner
+}
 
-func (d *recorder) Apply(_ context.Context, objs []*unstructured.Unstructured) ([]apply.Change, error) {
-	ch := make([]apply.Change, 0, len(objs))
+func (d *recorder) Apply(ctx context.Context, objs []*unstructured.Unstructured) ([]apply.Change, error) {
 	for _, o := range objs {
 		d.objs = append(d.objs, redact(o))
-		ch = append(ch, apply.Change{Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName(), Action: apply.Created})
+	}
+	if d.plan != nil {
+		return d.plan.Plan(ctx, objs)
+	}
+	ch := make([]apply.Change, 0, len(objs))
+	for _, o := range objs {
+		ch = append(ch, apply.Change{Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName(), Action: apply.Create})
 	}
 	return ch, nil
 }

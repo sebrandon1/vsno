@@ -23,17 +23,17 @@ const (
 func (r *runner) namespace(ctx context.Context, _ precheck.ProgressStep) (Step, error) {
 	detail, err := r.applyTemplate(ctx, manifests.Namespace, nil)
 	if err != nil {
-		return Step{Name: "namespace"}, err
+		return Step{Name: manifests.StepNamespace}, err
 	}
 	r.nsSet = !r.o.DryRun
-	return Step{Name: "namespace", Outcome: r.outcome(), Detail: detail}, nil
+	return Step{Name: manifests.StepNamespace, Outcome: r.outcome(), Detail: detail}, nil
 }
 
 // support applies dnsmasq, builder, S3 and the registry, reusing generated
 // credentials and the registry certificate when they are still valid, then
 // waits for the Deployments.
 func (r *runner) support(ctx context.Context, ps precheck.ProgressStep) (Step, error) {
-	step := Step{Name: "support"}
+	step := Step{Name: manifests.StepSupport}
 	start := len(r.res.Changes)
 	applyAll := func(names ...string) error {
 		for _, n := range names {

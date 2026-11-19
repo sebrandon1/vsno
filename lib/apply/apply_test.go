@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -183,5 +184,73 @@ func TestNewSSA(t *testing.T) {
 	s := NewSSA(kubefake.NewClientset().Discovery(), newClient())
 	if s.Dyn == nil || s.Mapper == nil {
 		t.Fatal("NewSSA left a field nil")
+	}
+}
+
+func TestPlan(t *testing.T) {
+	ctx := context.Background()
+	c := newClient()
+	s := &SSA{Dyn: c, Mapper: newMapper()}
+	ours := obj("ConfigMap", "vsno", "ours", nil)
+	ours.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "kube-controller-manager"}, {Manager: FieldManager}})
+	theirs := obj("ConfigMap", "vsno", "theirs", nil)
+	theirs.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "kubectl"}})
+	for _, o := range []*unstructured.Unstructured{ours, theirs} {
+		if _, err := c.Resource(cmGVR).Namespace("vsno").Create(ctx, o, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ch, err := s.Plan(ctx, []*unstructured.Unstructured{
+		obj("ConfigMap", "vsno", "new", nil),
+		obj("ConfigMap", "vsno", "ours", nil),
+		obj("ConfigMap", "vsno", "theirs", nil),
+		obj("Widget", "vsno", "w", nil), // its CRD isn't installed yet
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []Action
+	for _, x := range ch {
+		got = append(got, x.Action)
+	}
+	if want := []Action{Create, Reapply, TakeOver, Create}; !reflect.DeepEqual(got, want) {
+		t.Errorf("actions = %v, want %v", got, want)
+	}
+	for _, a := range c.Actions() {
+		if v := a.GetVerb(); v != "get" && v != "create" {
+			t.Errorf("Plan must only read, but did %s %s", v, a.GetResource().Resource)
+		}
+	}
+}
+
+func TestPlanErrors(t *testing.T) {
+	c := newClient()
+	c.PrependReactor("get", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("api down")
+	})
+	s := &SSA{Dyn: c, Mapper: errMapper{}}
+	if _, err := s.Plan(context.Background(), []*unstructured.Unstructured{obj("ConfigMap", "vsno", "a", nil)}); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("a mapping error other than no-match must stop: %v", err)
+	}
+	s.Mapper = newMapper()
+	if _, err := s.Plan(context.Background(), []*unstructured.Unstructured{obj("ConfigMap", "vsno", "a", nil)}); err == nil || !strings.Contains(err.Error(), "getting vsno/ConfigMap/a: api down") {
+		t.Errorf("a failed GET other than NotFound must stop: %v", err)
+	}
+}
+
+type errMapper struct{}
+
+func (errMapper) RESTMapping(schema.GroupKind, ...string) (*meta.RESTMapping, error) {
+	return nil, errors.New("boom")
+}
+func (errMapper) Reset() {}
+
+func TestTally(t *testing.T) {
+	ch := []Change{{Action: Create}, {Action: TakeOver}, {Action: Create}}
+	if got := Tally(ch, "none", Label{Create, "to create"}, Label{Reapply, "to reapply"}, Label{TakeOver, "to take over"}); got != "2 to create, 1 to take over" {
+		t.Errorf("Tally = %q", got)
+	}
+	if got := Tally(ch, "none", Label{Unchanged, "unchanged"}); got != "none" {
+		t.Errorf("no labeled action: %q", got)
 	}
 }

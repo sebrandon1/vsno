@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,6 +33,8 @@ type Env struct {
 	Confirm func(question, answer string) bool
 	// ShowPlan, if set, is called with the planned targets right before Confirm.
 	ShowPlan func(*Result)
+	// Planner says which of setup's objects exist (apply.SSA). Nil assumes all do.
+	Planner  apply.Planner
 	Progress precheck.Progress // nil = silent
 	Poll     time.Duration     // 0 = 5s
 	Timeout  time.Duration     // limit for each wait; 0 = 10m
@@ -62,7 +66,8 @@ type Target struct {
 	Detail    string  `json:"detail,omitempty"`
 	Outcome   Outcome `json:"outcome,omitempty"`
 	gvr       schema.GroupVersionResource
-	wait      bool // wait until the object is gone before the next target
+	wait      bool   // wait until the object is gone before the next target
+	step      string // the setup step (manifests.Steps) it belongs to
 }
 
 // Ref is "Kind namespace/name", or "Kind name" for cluster-scoped objects.
@@ -80,7 +85,14 @@ type Result struct {
 	// Blockers are why teardown refused (or would refuse without Force).
 	Blockers []string `json:"blockers,omitempty"`
 	// Forced is true when Force overrode the Blockers.
-	Forced  bool     `json:"forced,omitempty"`
+	Forced bool `json:"forced,omitempty"`
+	// Steps mirror setup's steps in reverse; Objects are their objects.
+	Steps   []Step   `json:"steps"`
+	Objects []Object `json:"objects"`
+	// Unmanaged are VMs and PVCs in the namespace that setup didn't create;
+	// deleting the namespace deletes them too.
+	Unmanaged []string `json:"unmanaged,omitempty"`
+	// Targets are what teardown deletes itself, in order.
 	Targets []Target `json:"targets"`
 }
 
@@ -91,6 +103,9 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 	res := &Result{Namespace: o.Namespace, Host: o.Host}
 	p := &planner{Env: e, o: o, res: res}
 	if err := p.plan(ctx); err != nil {
+		return res, err
+	}
+	if err := p.planSteps(ctx); err != nil {
 		return res, err
 	}
 	for i := range res.Targets {
@@ -113,11 +128,13 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 		if e.ShowPlan != nil {
 			e.ShowPlan(res)
 		}
-		q := fmt.Sprintf("This deletes %d object(s), listed above, and everything in them. Type %q to continue", len(res.Targets), answer)
+		q := fmt.Sprintf("This deletes %d object(s), listed above, and everything else in the namespace. Type %q to continue",
+			apply.Count(res.Changes(), Delete), answer)
 		if e.Confirm == nil || !e.Confirm(q, answer) {
 			return res, errors.New("not confirmed; rerun with --yes to skip the question")
 		}
 	}
+	defer res.markDeleted()
 	for i := range res.Targets {
 		if err := p.delete(ctx, &res.Targets[i]); err != nil {
 			return res, err
@@ -172,8 +189,8 @@ func (p *planner) plan(ctx context.Context) error {
 		return err
 	}
 	for _, t := range []Target{
-		{Kind: "HyperConverged", Namespace: cluster.CNVNamespace, Name: cluster.HyperConvergedName, gvr: precheck.GVRHyperConverged, wait: true},
-		{Kind: "Namespace", Name: cluster.OSImagesNamespace, Detail: "boot-source images", gvr: cluster.GVRNamespace, wait: true},
+		{Kind: "HyperConverged", Namespace: cluster.CNVNamespace, Name: cluster.HyperConvergedName, gvr: precheck.GVRHyperConverged, wait: true, step: manifests.StepHyperConverged},
+		{Kind: "Namespace", Name: cluster.OSImagesNamespace, Detail: "boot-source images", gvr: cluster.GVRNamespace, wait: true, step: manifests.StepHyperConverged},
 	} {
 		if err := p.add(ctx, t); err != nil {
 			return err
@@ -183,7 +200,7 @@ func (p *planner) plan(ctx context.Context) error {
 		return err
 	}
 	lc := Target{Kind: "LVMCluster", Namespace: cluster.StorageNamespace, Name: cluster.LVMClusterName,
-		Detail: "releases the disk", gvr: precheck.GVRLVMCluster, wait: true}
+		Detail: "releases the disk", gvr: precheck.GVRLVMCluster, wait: true, step: manifests.StepStorage}
 	if err := p.add(ctx, lc); err != nil {
 		return err
 	}
@@ -218,8 +235,17 @@ func (p *planner) planNamespace(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listing PVCs in %s: %w", ns, err)
 	}
-	p.res.Targets = append(p.res.Targets, Target{Kind: "Namespace", Name: ns, gvr: cluster.GVRNamespace, wait: true,
+	p.res.Targets = append(p.res.Targets, Target{Kind: "Namespace", Name: ns, gvr: cluster.GVRNamespace, wait: true, step: manifests.StepNamespace,
 		Detail: fmt.Sprintf("%d VM(s)%s, %d PVC(s)", len(vms), names(vms), len(pvcs.Items))})
+	ours := setupPVCs(ns)
+	for _, vm := range vms {
+		p.res.Unmanaged = append(p.res.Unmanaged, "VM "+vm.GetName())
+	}
+	for _, pvc := range pvcs.Items {
+		if !ours[pvc.Name] {
+			p.res.Unmanaged = append(p.res.Unmanaged, "PVC "+pvc.Name)
+		}
+	}
 	return nil
 }
 
@@ -303,7 +329,7 @@ func (p *planner) planOperator(ctx context.Context, op cluster.Operator) error {
 	}
 	for _, s := range subs {
 		if pkg, _, _ := unstructured.NestedString(s.Object, "spec", "name"); pkg == op.Package {
-			p.res.Targets = append(p.res.Targets, Target{Kind: "Subscription", Namespace: op.Namespace, Name: s.GetName(), gvr: cluster.GVRSubscription})
+			p.res.Targets = append(p.res.Targets, Target{Kind: "Subscription", Namespace: op.Namespace, Name: s.GetName(), gvr: cluster.GVRSubscription, step: op.Key})
 		}
 	}
 	csvs, err := cluster.CSVs(ctx, p.Dyn, op)
@@ -311,9 +337,9 @@ func (p *planner) planOperator(ctx context.Context, op cluster.Operator) error {
 		return fmt.Errorf("listing %s CSVs: %w", op.Key, err)
 	}
 	for _, c := range csvs {
-		p.res.Targets = append(p.res.Targets, Target{Kind: "ClusterServiceVersion", Namespace: op.Namespace, Name: c.GetName(), gvr: precheck.GVRCSV, wait: true})
+		p.res.Targets = append(p.res.Targets, Target{Kind: "ClusterServiceVersion", Namespace: op.Namespace, Name: c.GetName(), gvr: precheck.GVRCSV, wait: true, step: op.Key})
 	}
-	return p.add(ctx, Target{Kind: "Namespace", Name: op.Namespace, gvr: cluster.GVRNamespace})
+	return p.add(ctx, Target{Kind: "Namespace", Name: op.Namespace, gvr: cluster.GVRNamespace, step: op.Key})
 }
 
 // list returns the objects of gvr in ns ("" = all); a missing CRD means none.
@@ -375,4 +401,21 @@ func short(items []string) string {
 		return strings.Join(items, ", ")
 	}
 	return strings.Join(items[:5], ", ") + fmt.Sprintf(", and %d more", len(items)-5)
+}
+
+// setupPVCs are the names of the PVCs setup creates in ns.
+func setupPVCs(ns string) map[string]bool {
+	names := map[string]bool{}
+	for _, st := range manifests.Steps {
+		objs, err := st.Objects(manifests.NamesConfig(ns))
+		if err != nil {
+			continue // the templates are tested to render
+		}
+		for _, o := range objs {
+			if o.GetKind() == "PersistentVolumeClaim" {
+				names[o.GetName()] = true
+			}
+		}
+	}
+	return names
 }

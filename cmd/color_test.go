@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/sebrandon1/vsno/lib/precheck"
-	"github.com/sebrandon1/vsno/lib/setup"
 	"github.com/sebrandon1/vsno/lib/status"
 	"github.com/sebrandon1/vsno/lib/teardown"
 	"github.com/sebrandon1/vsno/lib/ui"
@@ -34,11 +33,10 @@ func TestColorKeepsLayout(t *testing.T) {
 		Nodes:     []precheck.NodeSummary{{Name: "bm-worker", Eligible: true}, {Name: "vm-worker"}},
 		Suggested: precheck.Suggested{Node: "bm-worker"},
 	}
-	targets := &teardown.Result{Namespace: "vsno", Blockers: []string{"VMs elsewhere"}, Forced: true, Targets: []teardown.Target{
-		{Kind: "Namespace", Name: "vsno", Outcome: teardown.Deleted},
-		{Kind: "LVMCluster", Namespace: "openshift-storage", Name: "vsno-lvmcluster", Outcome: teardown.Planned, Detail: "releases the disk"},
-		{Kind: "Namespace", Name: "openshift-cnv", Outcome: teardown.Gone},
-	}}
+	targets := tdResult()
+	targets.Blockers, targets.Forced = []string{"VMs elsewhere"}, true
+	done := tdResult()
+	done.Steps[0].Outcome, done.Objects[0].Action = teardown.Deleted, teardown.Removed
 	stuck := statusReport()
 	stuck.VMs = append(stuck.VMs, status.VM{Name: "target", Status: "Provisioning", Node: "worker-1"})
 	stuck.Stages[len(stuck.Stages)-1].Status = "failed"
@@ -49,12 +47,10 @@ func TestColorKeepsLayout(t *testing.T) {
 		"precheck failing": func(b *bytes.Buffer, p ui.Palette) {
 			renderReport(b, &precheck.Report{Results: []precheck.Result{{Check: "Eligible node", Status: precheck.Fail, Group: precheck.GroupWorkers}}}, p)
 		},
-		"status": func(b *bytes.Buffer, p ui.Palette) { _ = renderStatus(b, stuck, p) },
-		"setup":  func(b *bytes.Buffer, p ui.Palette) { _ = renderSetup(b, setupResult(), false, p) },
-		"setup dry run": func(b *bytes.Buffer, p ui.Palette) {
-			_ = renderSetup(b, &setup.Result{Steps: []setup.Step{{Name: "cnv", Outcome: setup.Planned}}}, true, p)
-		},
-		"teardown": func(b *bytes.Buffer, p ui.Palette) { _ = renderTeardown(b, targets, errors.New("x"), false, p) },
+		"status":        func(b *bytes.Buffer, p ui.Palette) { _ = renderStatus(b, stuck, p) },
+		"setup":         func(b *bytes.Buffer, p ui.Palette) { _ = renderSetup(b, setupResult(), false, p) },
+		"setup dry run": func(b *bytes.Buffer, p ui.Palette) { _ = renderSetup(b, dryRunResult(), true, p) },
+		"teardown":      func(b *bytes.Buffer, p ui.Palette) { _ = renderTeardown(b, targets, errors.New("x"), false, p) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			var p, c bytes.Buffer

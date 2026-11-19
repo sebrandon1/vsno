@@ -4,9 +4,11 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 )
@@ -209,4 +211,49 @@ func TestRenderUnknownTemplate(t *testing.T) {
 func yamlOf(o *unstructured.Unstructured) (string, error) {
 	b, err := yaml.Marshal(o.Object)
 	return string(b), err
+}
+
+func TestRenderLabelsEveryObject(t *testing.T) {
+	for _, name := range []string{Operators, HyperConverged, LVMCluster, Namespace, DNSMasq, Builder, RegistryService, S3, Registry} {
+		objs, err := Render(name, testConfig())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, o := range objs {
+			if !cluster.ManagedByVsno(o.GetLabels()) {
+				t.Errorf("%s: %s/%s has no managed-by=vsno label", name, o.GetKind(), o.GetName())
+			}
+		}
+	}
+}
+
+func TestStepsObjects(t *testing.T) {
+	want := map[string][]string{
+		"cnv":            {"Namespace/openshift-cnv", "OperatorGroup/kubevirt-hyperconverged-group", "Subscription/hco-operatorhub"},
+		"lvms":           {"Namespace/openshift-storage", "OperatorGroup/openshift-storage-operatorgroup", "Subscription/lvms"},
+		"hyperconverged": {"HyperConverged/kubevirt-hyperconverged"},
+		"storage":        {"LVMCluster/vsno-lvmcluster"},
+		"namespace":      {"Namespace/vsno-x", "ServiceAccount/vsno", "RoleBinding/vsno-anyuid"},
+	}
+	total := 0
+	for _, s := range Steps {
+		objs, err := s.Objects(NamesConfig("vsno-x"))
+		if err != nil {
+			t.Fatalf("%s: %v", s.Name, err)
+		}
+		total += len(objs)
+		var got []string
+		for _, o := range objs {
+			got = append(got, o.GetKind()+"/"+o.GetName())
+			if !s.Host && o.GetKind() != "Namespace" && o.GetNamespace() != "vsno-x" {
+				t.Errorf("%s: %s is outside the environment namespace", s.Name, o.GetName())
+			}
+		}
+		if w, ok := want[s.Name]; ok && !slices.Equal(got, w) {
+			t.Errorf("%s = %v, want %v", s.Name, got, w)
+		}
+	}
+	if total != 27 {
+		t.Errorf("%d objects in all steps, want 27 (19 in the namespace, 8 on the host)", total)
+	}
 }

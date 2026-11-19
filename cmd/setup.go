@@ -15,6 +15,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/setup"
+	"github.com/sebrandon1/vsno/lib/teardown"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -23,13 +24,14 @@ import (
 )
 
 var (
-	suNode    string
-	suDisk    string
-	suConfig  string
-	suYes     bool
-	suDryRun  bool
-	suNoProbe bool
-	suTimeout time.Duration
+	suNode      string
+	suDisk      string
+	suConfig    string
+	suYes       bool
+	suDryRun    bool
+	suManifests bool
+	suNoProbe   bool
+	suTimeout   time.Duration
 )
 
 var setupCmd = &cobra.Command{
@@ -48,7 +50,12 @@ shortfalls on the node only warn. Settings come from flags, then --config (the
 file 'vsno precheck --write-config' writes), then the precheck's suggestion.
 
 Taking over a disk asks you to type the node name, unless --yes. Reruns reuse
-generated credentials and report "unchanged" for objects that didn't change.`,
+generated credentials and report "unchanged" for objects that didn't change.
+
+--dry-run lists what setup would do and changes nothing: each step, and each
+object it would create, reapply (vsno applied it before) or take over (it
+exists but vsno didn't create it, so setup would overwrite it). Add
+--manifests to also print the manifests, with Secret values redacted.`,
 	RunE: runSetup,
 }
 
@@ -58,13 +65,17 @@ func init() {
 	f.StringVar(&suDisk, "disk", "", "disk for LVMS, a /dev/disk/by-id path (default: precheck's suggestion)")
 	f.StringVar(&suConfig, "config", "", "settings file written by 'vsno precheck --write-config'")
 	f.BoolVar(&suYes, "yes", false, "approve taking over the LVMS disk without asking")
-	f.BoolVar(&suDryRun, "dry-run", false, "print the manifests setup would apply and change nothing")
+	f.BoolVar(&suDryRun, "dry-run", false, "list what setup would do and change nothing")
+	f.BoolVar(&suManifests, "manifests", false, "with --dry-run, also print the manifests (Secret values redacted); implies --dry-run")
 	f.BoolVar(&suNoProbe, "no-probe", false, "skip the precheck hardware probe (then --node is required)")
 	f.DurationVar(&suTimeout, "timeout", 20*time.Minute, "how long to wait for each component")
 	rootCmd.AddCommand(setupCmd)
 }
 
 func runSetup(cmd *cobra.Command, _ []string) error {
+	if suManifests {
+		suDryRun = true
+	}
 	settings, err := setupSettings()
 	if err != nil {
 		return err
@@ -145,16 +156,26 @@ func confirm(in io.Reader, w io.Writer, question, answer string) bool {
 	return strings.TrimSpace(line) == answer
 }
 
-// outcomeIcon marks a setup step: = reused, ✓ applied, ~ planned (dry run).
-func outcomeIcon(pal ui.Palette, o setup.Outcome) string {
-	switch o {
-	case setup.Reused:
+// stepIcon marks a setup or teardown step: = left alone (reused, kept,
+// already gone), ✓ done (applied, deleted), ~ planned.
+func stepIcon(pal ui.Palette, outcome string) string {
+	switch outcome {
+	case string(setup.Reused), string(teardown.Kept), string(teardown.Gone):
 		return pal.Dim("=")
-	case setup.Applied:
+	case string(setup.Applied), string(teardown.Deleted):
 		return pal.Green("✓")
 	default:
 		return pal.Yellow("~")
 	}
+}
+
+// renderSteps prints the step table of setup or teardown.
+func renderSteps(w io.Writer, pal ui.Palette, rows [][3]string) {
+	var t ui.Table
+	for _, r := range rows {
+		t.Row(stepIcon(pal, r[1]), r[0], r[1], r[2])
+	}
+	t.Write(w)
 }
 
 // renderSetup prints the setup report, or the dry-run manifests.
@@ -167,7 +188,7 @@ func renderSetup(w io.Writer, res *setup.Result, dryRun bool, pal ui.Palette) er
 		enc.SetIndent("", "  ")
 		return enc.Encode(res)
 	}
-	if dryRun {
+	if dryRun && suManifests {
 		for _, o := range res.Objects {
 			b, err := yaml.Marshal(o.Object)
 			if err != nil {
@@ -180,23 +201,63 @@ func renderSetup(w io.Writer, res *setup.Result, dryRun bool, pal ui.Palette) er
 	for _, warn := range res.Warnings {
 		fmt.Fprintf(w, "%s %s\n", pal.Icon("!"), warn)
 	}
-	var t ui.Table
+	rows := make([][3]string, 0, len(res.Steps))
 	for _, s := range res.Steps {
-		t.Row(outcomeIcon(pal, s.Outcome), s.Name, string(s.Outcome), s.Detail)
+		rows = append(rows, [3]string{s.Name, string(s.Outcome), s.Detail})
 	}
-	t.Write(w)
+	renderSteps(w, pal, rows)
 	if len(res.Steps) == 0 {
 		return nil
 	}
-	ch := res.Changes
 	if dryRun {
-		fmt.Fprintf(w, "\nnode %s: %d object(s) would be applied; dry run, nothing was changed\n", res.Settings.Node, len(ch))
+		renderPlan(w, res, pal)
 		return nil
 	}
+	ch := res.Changes
 	fmt.Fprintf(w, "\nnode %s, %d object(s): %d created, %d updated, %d unchanged\n", res.Settings.Node, len(ch),
 		apply.Count(ch, apply.Created), apply.Count(ch, apply.Updated), apply.Count(ch, apply.Unchanged))
 	if res.Registry != "" {
 		fmt.Fprintf(w, "registry %s (credentials in secret %s/registry-auth, CA in %s/registry-ca)\n", res.Registry, res.Namespace, res.Namespace)
 	}
 	return nil
+}
+
+// renderPlan lists each object a dry run would apply and what would happen
+// to it, and warns about objects setup would take over.
+func renderPlan(w io.Writer, res *setup.Result, pal ui.Palette) {
+	renderObjects(w, res.Changes, pal)
+	fmt.Fprintf(w, "\nnode %s, %d object(s): %s. Dry run: nothing was changed.\n", res.Settings.Node, len(res.Changes), setup.PlanDetail(res.Changes))
+	if n := apply.Count(res.Changes, apply.TakeOver); n > 0 {
+		fmt.Fprintf(w, "%s %s\n", pal.Icon("!"), pal.Yellow(fmt.Sprintf(
+			"%d object(s) exist but were not created by vsno; setup would overwrite them. To keep them, use another namespace (-n).", n)))
+	}
+}
+
+// renderObjects lists objects with what setup or teardown does to them.
+func renderObjects(w io.Writer, changes []apply.Change, pal ui.Palette) {
+	fmt.Fprintf(w, "\n%s\n", pal.Bold("Objects"))
+	var t ui.Table
+	for _, c := range changes {
+		name := c.Name
+		if c.Namespace != "" {
+			name = c.Namespace + "/" + c.Name
+		}
+		t.Row("  "+planAction(pal, c.Action), c.Kind, name)
+	}
+	t.Write(w)
+}
+
+// planAction colors an object's action: create and deleted green, delete
+// red, take over yellow, reapply and absent dim.
+func planAction(pal ui.Palette, a apply.Action) string {
+	switch a {
+	case apply.Create, teardown.Removed:
+		return pal.Green(string(a))
+	case teardown.Delete:
+		return pal.Red(string(a))
+	case apply.TakeOver:
+		return pal.Yellow(string(a))
+	default:
+		return pal.Dim(string(a))
+	}
 }

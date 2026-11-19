@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
+	"strings"
 	"time"
 
+	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/teardown"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
+	"k8s.io/client-go/discovery"
 )
 
 var (
@@ -58,10 +60,14 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 	w := cmd.OutOrStdout()
 	o := teardown.Options{Namespace: namespace, Host: tdHost, Force: tdForce, Yes: tdYes, DryRun: tdDryRun}
 	planShown := false
-	env := teardown.Env{Kube: c.Kube, Dyn: c.Dyn, Progress: precheckProgress{newProgress()}, Timeout: tdTimeout,
+	dc, err := discovery.NewDiscoveryClientForConfig(c.Config)
+	if err != nil {
+		return err
+	}
+	env := teardown.Env{Kube: c.Kube, Dyn: c.Dyn, Planner: apply.NewSSA(dc, c.Dyn), Progress: precheckProgress{newProgress()}, Timeout: tdTimeout,
 		Confirm: confirmOnTerminal(os.Stdin, cmd.ErrOrStderr()),
 		ShowPlan: func(r *teardown.Result) {
-			renderTargets(cmd.ErrOrStderr(), r, palette(cmd.ErrOrStderr()))
+			renderTeardownPlan(cmd.ErrOrStderr(), r, palette(cmd.ErrOrStderr()))
 			fmt.Fprintln(cmd.ErrOrStderr())
 			planShown = true
 		},
@@ -76,8 +82,9 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 	return err
 }
 
-// renderTeardown prints the blockers and the targets. planShown means the
-// confirmation prompt already listed the targets; they are not repeated unless
+// renderTeardown prints the blockers and, mirroring setup, the steps, then
+// either the plan (nothing deleted yet) or what was deleted. planShown means
+// the confirmation prompt already showed the plan; it is not repeated unless
 // something was deleted since.
 func renderTeardown(w io.Writer, res *teardown.Result, runErr error, planShown bool, pal ui.Palette) error {
 	if outputFormat == "json" {
@@ -98,30 +105,40 @@ func renderTeardown(w io.Writer, res *teardown.Result, runErr error, planShown b
 		}
 		return nil
 	}
-	if planShown && !slices.ContainsFunc(res.Targets, func(t teardown.Target) bool { return t.Outcome != teardown.Planned }) {
+	deleted := apply.Count(res.Changes(), teardown.Removed)
+	if planShown && deleted == 0 {
 		return nil
 	}
-	renderTargets(w, res, pal)
+	if deleted == 0 {
+		renderTeardownPlan(w, res, pal)
+		return nil
+	}
+	renderTeardownSteps(w, res, pal)
+	fmt.Fprintf(w, "\n%d object(s) deleted, and everything else in namespace %s.\n", deleted, res.Namespace)
 	return nil
 }
 
-func renderTargets(w io.Writer, res *teardown.Result, pal ui.Palette) {
-	var t ui.Table
-	for _, tg := range res.Targets {
-		t.Row(targetOutcome(pal, tg.Outcome), tg.Ref(), tg.Detail)
+func renderTeardownSteps(w io.Writer, res *teardown.Result, pal ui.Palette) {
+	rows := make([][3]string, 0, len(res.Steps))
+	for _, s := range res.Steps {
+		rows = append(rows, [3]string{s.Name, string(s.Outcome), s.Detail})
 	}
-	t.Write(w)
+	renderSteps(w, pal, rows)
 }
 
-// targetOutcome colors a teardown target: planned yellow, deleted green,
-// already gone dim.
-func targetOutcome(pal ui.Palette, o teardown.Outcome) string {
-	switch o {
-	case teardown.Deleted:
-		return pal.Green(string(o))
-	case teardown.Gone:
-		return pal.Dim(string(o))
-	default:
-		return pal.Yellow(string(o))
+// renderTeardownPlan prints the steps and objects teardown would delete, and
+// warns about what setup didn't create but the namespace deletion removes too.
+func renderTeardownPlan(w io.Writer, res *teardown.Result, pal ui.Palette) {
+	renderTeardownSteps(w, res, pal)
+	ch := res.Changes()
+	renderObjects(w, ch, pal)
+	note := "Nothing was changed."
+	if tdDryRun {
+		note = "Dry run: nothing was changed."
+	}
+	fmt.Fprintf(w, "\n%d object(s): %s. %s\n", len(ch), teardown.PlanDetail(ch), note)
+	if n := len(res.Unmanaged); n > 0 {
+		fmt.Fprintf(w, "%s %s\n", pal.Icon("!"), pal.Yellow(fmt.Sprintf(
+			"Deleting namespace %s also deletes %d object(s) setup didn't create: %s.", res.Namespace, n, strings.Join(res.Unmanaged, ", "))))
 	}
 }

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 )
@@ -27,6 +29,63 @@ const (
 	RegistryService = "registry-service"
 	Registry        = "registry"
 )
+
+// Step is one step of setup and the templates it applies, in order. Teardown
+// mirrors the same steps in reverse.
+type Step struct {
+	Name      string
+	Templates []string
+	// Namespace, if set, keeps only the objects in it and the Namespace itself
+	// (the operators template holds both operators).
+	Namespace string
+	// Host steps install on the host cluster; teardown removes them only with --host.
+	Host bool
+}
+
+// Step names, shared by setup's report and teardown's mirror of it. StepCNV
+// and StepLVMS equal the operators' cluster.Operator keys.
+const (
+	StepCNV            = "cnv"
+	StepLVMS           = "lvms"
+	StepHyperConverged = "hyperconverged"
+	StepStorage        = "storage"
+	StepNamespace      = "namespace"
+	StepSupport        = "support"
+)
+
+// Steps are setup's steps, in order.
+var Steps = []Step{
+	{Name: StepCNV, Templates: []string{Operators}, Namespace: "openshift-cnv", Host: true},
+	{Name: StepLVMS, Templates: []string{Operators}, Namespace: "openshift-storage", Host: true},
+	{Name: StepHyperConverged, Templates: []string{HyperConverged}, Host: true},
+	{Name: StepStorage, Templates: []string{LVMCluster}, Host: true},
+	{Name: StepNamespace, Templates: []string{Namespace}},
+	{Name: StepSupport, Templates: []string{DNSMasq, Builder, RegistryService, S3, Registry}},
+}
+
+// Objects renders the step's templates and keeps the step's objects.
+func (s Step) Objects(cfg Config) ([]*unstructured.Unstructured, error) {
+	var out []*unstructured.Unstructured
+	for _, t := range s.Templates {
+		objs, err := Render(t, cfg)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range objs {
+			if s.Namespace == "" || o.GetNamespace() == s.Namespace || (o.GetKind() == "Namespace" && o.GetName() == s.Namespace) {
+				out = append(out, o)
+			}
+		}
+	}
+	return out, nil
+}
+
+// NamesConfig is enough Config to render every object's kind, namespace and
+// name for ns, e.g. to find what setup created there.
+func NamesConfig(ns string) Config {
+	return Config{Namespace: ns, BaseDomain: DefaultBaseDomain, Guests: []string{"seed", "target"},
+		StorageClass: DefaultStorageClass, Images: DefaultImages(), S3Bucket: DefaultS3Bucket}
+}
 
 // Defaults shared with the commands that consume these manifests.
 const (
@@ -121,7 +180,11 @@ func RenderYAML(name string, cfg Config) (string, error) {
 	return b.String(), nil
 }
 
-// Render renders one template and parses it into objects.
+// Render renders one template and parses it into objects, each labeled
+// app.kubernetes.io/managed-by=vsno. Owning that label keeps vsno's field
+// manager on every object it applies, even one whose only other fields are
+// set by controllers (a ServiceAccount, for example), so a later dry run can
+// tell vsno's objects from someone else's.
 func Render(name string, cfg Config) ([]*unstructured.Unstructured, error) {
 	s, err := RenderYAML(name, cfg)
 	if err != nil {
@@ -140,6 +203,12 @@ func Render(name string, cfg Config) ([]*unstructured.Unstructured, error) {
 		if err := u.UnmarshalJSON(j); err != nil {
 			return nil, fmt.Errorf("parsing %s document %d: %w", name, i, err)
 		}
+		labels := u.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels[cluster.ManagedByLabel] = "vsno"
+		u.SetLabels(labels)
 		objs = append(objs, u)
 	}
 	return objs, nil

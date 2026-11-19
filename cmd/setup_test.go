@@ -11,6 +11,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/setup"
+	"github.com/sebrandon1/vsno/lib/teardown"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -117,17 +118,69 @@ func TestRenderSetupTable(t *testing.T) {
 	}
 }
 
-func TestRenderSetupDryRun(t *testing.T) {
+func dryRunResult() *setup.Result {
 	res := setupResult()
 	res.Registry = ""
+	res.Steps = []setup.Step{{Name: "support", Outcome: setup.Planned, Detail: "1 to create, 1 to take over"}}
+	res.Changes = []apply.Change{
+		{Kind: "Service", Namespace: "vsno", Name: "s3", Action: apply.Create},
+		{Kind: "Deployment", Namespace: "vsno", Name: "builder", Action: apply.TakeOver},
+		{Kind: "Namespace", Name: "vsno", Action: apply.Reapply},
+	}
 	res.Objects = []*unstructured.Unstructured{{Object: map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "vsno"}}}}
+	return res
+}
+
+func TestRenderSetupDryRun(t *testing.T) {
 	var b bytes.Buffer
-	if err := renderSetup(&b, res, true, plain); err != nil {
+	if err := renderSetup(&b, dryRunResult(), true, plain); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
-	if !strings.HasPrefix(out, "---\napiVersion: v1\nkind: Namespace\n") || !strings.Contains(out, "2 object(s) would be applied; dry run, nothing was changed") {
-		t.Errorf("dry run output:\n%s", out)
+	for _, want := range []string{
+		"~  support  planned  1 to create, 1 to take over\n",
+		"Objects\n  create     Service     vsno/s3\n  take over  Deployment  vsno/builder\n  reapply    Namespace   vsno\n",
+		"node worker-1, 3 object(s): 1 to create, 1 to reapply, 1 to take over. Dry run: nothing was changed.",
+		"! 1 object(s) exist but were not created by vsno; setup would overwrite them.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "apiVersion") {
+		t.Error("manifests are printed only with --manifests")
+	}
+
+	// No take-overs, no warning.
+	res := dryRunResult()
+	res.Changes = res.Changes[:1]
+	b.Reset()
+	_ = renderSetup(&b, res, true, plain)
+	if strings.Contains(b.String(), "were not created by vsno") {
+		t.Errorf("warning without take-overs:\n%s", b.String())
+	}
+}
+
+func TestRenderSetupManifests(t *testing.T) {
+	suManifests = true
+	t.Cleanup(func() { suManifests = false })
+	var b bytes.Buffer
+	if err := renderSetup(&b, dryRunResult(), true, plain); err != nil {
+		t.Fatal(err)
+	}
+	if out := b.String(); !strings.HasPrefix(out, "---\napiVersion: v1\nkind: Namespace\n") || !strings.Contains(out, "Objects") {
+		t.Errorf("--manifests output:\n%s", out)
+	}
+}
+
+func TestPlanAction(t *testing.T) {
+	for a, want := range map[apply.Action]string{
+		apply.Create: colored.Green("create"), apply.Reapply: colored.Dim("reapply"), apply.TakeOver: colored.Yellow("take over"),
+		teardown.Delete: colored.Red("delete"), teardown.Absent: colored.Dim("absent"), teardown.Removed: colored.Green("deleted"),
+	} {
+		if got := planAction(colored, a); got != want {
+			t.Errorf("%s = %q, want %q", a, got, want)
+		}
 	}
 }
 

@@ -75,7 +75,7 @@ func inNamespace(ns string) func(*unstructured.Unstructured) bool {
 }
 
 func (r *runner) hyperConverged(ctx context.Context, ps precheck.ProgressStep) (Step, error) {
-	step := Step{Name: "hyperconverged"}
+	step := Step{Name: manifests.StepHyperConverged}
 	hc := r.Dyn.Resource(precheck.GVRHyperConverged).Namespace(cnvNS)
 	cur, err := hc.Get(ctx, hcoName, metav1.GetOptions{})
 	switch {
@@ -108,7 +108,7 @@ func (r *runner) hyperConverged(ctx context.Context, ps precheck.ProgressStep) (
 // storage reuses StorageClass lvms-vg-vsno when TopoLVM serves the node,
 // otherwise creates an LVMCluster on the chosen disk after confirmation.
 func (r *runner) storage(ctx context.Context, ps precheck.ProgressStep) (Step, error) {
-	step := Step{Name: "storage"}
+	step := Step{Name: manifests.StepStorage}
 	node, sc := r.cfg.Node, r.cfg.StorageClass
 	_, err := r.Kube.StorageV1().StorageClasses().Get(ctx, sc, metav1.GetOptions{})
 	switch {

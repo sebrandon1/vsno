@@ -44,18 +44,25 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   review the diff.
 - `lib/pki`: registry CA, server cert (`Covers` decides whether to reissue), htpasswd.
 - `lib/apply`: server-side apply (field manager `vsno`); it reports created, updated or unchanged
-  for each object.
+  for each object. `Plan` (the `Planner` interface) only reads, and says create, reapply (vsno's
+  field manager owns fields in it) or take over (it exists, but vsno doesn't manage it).
 - `lib/state`: environment state in ConfigMap `<ns>/vsno-state`.
 - `lib/setup`: `Run` resolves settings from the precheck, then runs the steps: operators, HyperConverged,
   storage, namespace, support services. Each step either reuses what it finds or applies the manifests
-  and waits for them. In a dry run a recording Applier replaces SSA and the waits are skipped.
+  and waits for them. In a dry run a recording Applier replaces SSA, asks the SSA's `Plan` what
+  each object would do, and the waits are skipped.
 - `lib/cluster`: names of the host objects (operator namespaces, HyperConverged, LVMCluster,
   support Deployments), extra GVRs, and helpers shared by setup, status and teardown: `CSVs`,
   `SucceededCSV`, `Condition`, `RolledOut`, `Ready`.
 - `lib/status`: `Collect` reads the host components, support services, VMs and state. A broken
   component becomes a Fail or Warn row; only namespace or state read errors fail it.
 - `lib/teardown`: `Run` plans the targets in order, checks the safety rules, confirms, then
-  deletes each target and waits for those marked `wait`.
+  deletes each target and waits for those marked `wait`. `plan.go` mirrors setup for the report:
+  `manifests.Steps` in reverse, each step's rendered objects (reversed; `Planner` says delete or
+  absent) plus that step's extra targets. `markDeleted` marks a step deleted once all its targets
+  are; `support` follows `namespace`.
+- `lib/manifests`: `Steps` (with `Step*` name constants) is setup's step list and is the single
+  source teardown mirrors. `NamesConfig(ns)` renders object names without real settings.
 - `lib/ui/color.go`: `Palette` (ANSI colors when `On`; status icons via `Icon`), `ColorEnabled`
   (terminal, no `NO_COLOR`, `TERM` not `dumb`), and `Table`, which aligns columns by visible width.
 - `lib/ui`: step progress. On a terminal it shows a spinner, elapsed time and an optional bar
@@ -99,11 +106,15 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - setup reuses generated credentials: S3 keys and the registry CA and login are read back from their
   Secrets. The registry cert is reissued only when `pki.Covers` fails, for example because the
   Service IP changed. Reruns must report every object `unchanged`.
+- `manifests.Render` labels every object `app.kubernetes.io/managed-by=vsno`. Owning that label
+  keeps vsno's field manager on objects whose other fields belong to controllers (a ServiceAccount),
+  which `Plan` relies on to tell vsno's objects from someone else's.
 - setup never creates a second LVMCluster (LVMS supports one), and asks before it takes over a disk.
 - A support pod in CrashLoopBackOff for 3 or more restarts ends the rollout wait early (`errStuck`).
 - The builder installs RPMs with `tsflags=nocaps`, because the anyuid SCC can't set file
   capabilities.
 - setup waits for an existing HyperConverged that isn't Available instead of reusing it as is.
+- setup's step names must match `manifests.Steps` (`TestRunDryRun` checks the order).
 - teardown only deletes a namespace with the `app.kubernetes.io/managed-by=vsno` label or a
   `vsno-state` ConfigMap. `--host` refuses while any of these exist: VMs elsewhere, PVCs on a
   TopoLVM StorageClass elsewhere, or an LVMCluster vsno didn't create. PVCs in
