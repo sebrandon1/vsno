@@ -45,7 +45,10 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `lib/pki`: registry CA, server cert (`Covers` decides whether to reissue), htpasswd.
 - `lib/apply`: server-side apply (field manager `vsno`); it reports created, updated or unchanged
   for each object. `Plan` (the `Planner` interface) only reads, and says create, reapply (vsno's
-  field manager owns fields in it) or take over (it exists, but vsno doesn't manage it).
+  field manager owns fields in it) or take over (it exists, but vsno doesn't manage it). When the API
+  rejects an apply with 422 because another manager's fields collide with ours (two `readinessProbe`
+  handlers, say), `Apply` replaces the object, carrying the Service addresses, PVC binding and
+  Namespace finalizers a replace must keep. Other errors are reported, never retried as a replace.
 - `lib/state`: environment state in ConfigMap `<ns>/vsno-state`.
 - `lib/setup`: `Run` resolves settings from the precheck, then runs the steps: operators, HyperConverged,
   storage, namespace, support services. Each step either reuses what it finds or applies the manifests
@@ -150,9 +153,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - setup creates the builder's SSH key (Secret `vsno-ssh`) once and reuses it; create reads the
   cluster pull secret directly.
 - setup's step names must match `manifests.Steps` (`TestRunDryRun` checks the order).
-- setup refuses, and teardown only deletes, a namespace that `cluster.CreatedByVsno` accepts: it has
-  the `app.kubernetes.io/managed-by=vsno` label or a `vsno-state` ConfigMap. `--force` overrides
-  either. setup checks this first, before precheck. Per-object "take over" in the dry-run plan is
+- setup asks before taking over (and teardown only deletes) a namespace that `cluster.CreatedByVsno`
+  accepts: it has the `app.kubernetes.io/managed-by=vsno` label or a `vsno-state` ConfigMap. setup
+  makes you type the namespace name to confirm; `--force` skips the prompt. A foreign namespace that
+  holds vSNOs is refused without a prompt, so only `--force` overrides it. setup checks this first,
+  before precheck. Per-object "take over" in the dry-run plan is
   only reported, not enforced: vsno objects from before every object was labeled can lack vsno's
   field manager, so enforcing it would refuse old environments.
 - teardown `--host` refuses while any of these exist: VMs elsewhere, PVCs on a TopoLVM StorageClass

@@ -131,20 +131,31 @@ func (s *SSA) applyOne(ctx context.Context, o *unstructured.Unstructured) (Chang
 	if err != nil {
 		return c, err
 	}
-	before := ""
 	cur, err := ri.Get(ctx, o.GetName(), metav1.GetOptions{})
-	switch {
-	case err == nil:
-		before = cur.GetResourceVersion()
-	case !apierrors.IsNotFound(err):
+	exists := err == nil
+	if !exists && !apierrors.IsNotFound(err) {
 		return c, fmt.Errorf("getting %s: %w", c.Ref(), err)
+	}
+	before := ""
+	if exists {
+		before = cur.GetResourceVersion()
 	}
 	got, err := ri.Apply(ctx, o.GetName(), o, metav1.ApplyOptions{FieldManager: FieldManager, Force: true})
 	if err != nil {
-		return c, fmt.Errorf("applying %s: %w", c.Ref(), err)
+		if !exists || managedBy(cur, FieldManager) || !invalid(err) {
+			return c, fmt.Errorf("applying %s: %w", c.Ref(), err)
+		}
+		// Another manager owns fields in this object, and the API rejected the
+		// merged object: server-side apply keeps their fields ours don't
+		// replace, so a readinessProbe ends up with two handlers, say. Taking
+		// an object over means replacing it, so do that.
+		carryOver(o, cur)
+		if got, err = ri.Update(ctx, o, metav1.UpdateOptions{FieldManager: FieldManager}); err != nil {
+			return c, fmt.Errorf("taking over %s: %w", c.Ref(), err)
+		}
 	}
 	switch {
-	case before == "":
+	case !exists:
 		c.Action = Created
 	case got.GetResourceVersion() != before:
 		c.Action = Updated
@@ -152,6 +163,30 @@ func (s *SSA) applyOne(ctx context.Context, o *unstructured.Unstructured) (Chang
 		c.Action = Unchanged
 	}
 	return c, nil
+}
+
+// invalid reports whether the API rejected an object as invalid (422), as it
+// does when a merge leaves two handlers on one probe.
+func invalid(err error) bool {
+	var se *apierrors.StatusError
+	return errors.As(err, &se) && se.ErrStatus.Reason == metav1.StatusReasonInvalid
+}
+
+// carryOver copies the fields a replace has to keep: the addresses a Service
+// was assigned, the PersistentVolume a PVC is bound to, and a Namespace's
+// finalizers. The manifest doesn't set them, and the API rejects a replace
+// that changes or drops them.
+func carryOver(o, cur *unstructured.Unstructured) {
+	o.SetResourceVersion(cur.GetResourceVersion())
+	for _, p := range [][]string{
+		{"spec", "clusterIP"}, {"spec", "clusterIPs"}, {"spec", "ipFamilies"},
+		{"spec", "ipFamilyPolicy"}, {"spec", "healthCheckNodePort"},
+		{"spec", "volumeName"}, {"spec", "finalizers"},
+	} {
+		if v, found, _ := unstructured.NestedFieldCopy(cur.Object, p...); found {
+			_ = unstructured.SetNestedField(o.Object, v, p...)
+		}
+	}
 }
 
 // Plan implements Planner. It only reads: an object is Create when it or its

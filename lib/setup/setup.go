@@ -15,6 +15,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
@@ -141,10 +142,12 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 	return res, nil
 }
 
-// checkNamespace refuses an existing namespace that vsno didn't create (see
-// cluster.CreatedByVsno), because setup would overwrite objects in it, such as
-// a hand-built environment's dnsmasq or builder. --force applies anyway; a dry
-// run only warns, so its plan shows what would be taken over.
+// checkNamespace asks before taking over an existing namespace that vsno
+// didn't create (see cluster.CreatedByVsno), because setup would overwrite
+// objects in it, such as a hand-built environment's dnsmasq or builder.
+// --force takes it over without asking. A namespace holding vSNOs is refused
+// even with a prompt, since setup would fight the VMs already there; a dry run
+// only warns, so its plan shows what would be taken over.
 func checkNamespace(ctx context.Context, e Env, o Options, res *Result) error {
 	ns, err := e.Kube.CoreV1().Namespaces().Get(ctx, o.Namespace, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -158,15 +161,42 @@ func checkNamespace(ctx context.Context, e Env, o Options, res *Result) error {
 		return err
 	}
 	msg := fmt.Sprintf("namespace %s exists but was not created by vsno, so setup would overwrite objects in it", o.Namespace)
-	switch {
-	case o.Force:
+	if o.Force {
 		res.Warnings = append(res.Warnings, msg+" (--force)")
-	case o.DryRun:
-		res.Warnings = append(res.Warnings, msg+"; without --force, setup refuses")
-	default:
-		return fmt.Errorf("%s. See `vsno setup --dry-run`, use another namespace (-n), or pass --force", msg)
+		return nil
 	}
+	vms, err := vsnos(ctx, e, o.Namespace)
+	if err != nil {
+		return err
+	}
+	if vms > 0 && !o.DryRun {
+		return fmt.Errorf("%s, and it holds %d vSNO(s). Delete them, use another namespace (-n), or pass --force", msg, vms)
+	}
+	if o.DryRun {
+		what := "setup would ask before taking it over"
+		if vms > 0 {
+			what = fmt.Sprintf("it holds %d vSNO(s), so without --force, setup refuses", vms)
+		}
+		res.Warnings = append(res.Warnings, msg+"; "+what)
+		return nil
+	}
+	if e.Confirm == nil || !e.Confirm(msg+". Type the namespace name to take it over", o.Namespace) {
+		return fmt.Errorf("not confirmed; pass --force to take over %s, or use another namespace (-n)", o.Namespace)
+	}
+	res.Warnings = append(res.Warnings, msg+" (confirmed)")
 	return nil
+}
+
+// vsnos counts the vSNOs in ns. Without KubeVirt there are none.
+func vsnos(ctx context.Context, e Env, ns string) (int, error) {
+	l, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).List(ctx, metav1.ListOptions{})
+	if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("listing the vSNOs in %s: %w", ns, err)
+	}
+	return len(l.Items), nil
 }
 
 func (e *Env) defaults() {

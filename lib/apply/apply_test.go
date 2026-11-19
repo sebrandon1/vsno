@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -252,5 +253,123 @@ func TestTally(t *testing.T) {
 	}
 	if got := Tally(ch, "none", Label{Unchanged, "unchanged"}); got != "none" {
 		t.Errorf("no labeled action: %q", got)
+	}
+}
+
+func TestTakeOverReplacesWhenApplyIsRejected(t *testing.T) {
+	// Server-side apply merges another manager's fields with ours, and the API
+	// rejects the result when they conflict (two readinessProbe handlers, say).
+	// Taking the object over replaces it instead.
+	ctx := context.Background()
+	c := newClient()
+	s := &SSA{Dyn: c, Mapper: newMapper()}
+	cur := obj("ConfigMap", "vsno", "theirs", map[string]any{"k": "old"})
+	cur.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "kubectl"}, {Manager: "unrelated"}})
+	if _, err := c.Resource(cmGVR).Namespace("vsno").Create(ctx, cur, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	c.PrependReactor("patch", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, invalidErr("merge rejected")
+	})
+	// A replace bumps the resourceVersion, as the API server does.
+	c.PrependReactor("update", "configmaps", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		u := a.(k8stesting.UpdateAction).GetObject().(*unstructured.Unstructured)
+		u.SetResourceVersion("2")
+		return true, u, c.Tracker().Update(cmGVR, u, u.GetNamespace())
+	})
+	ch, err := s.Apply(ctx, []*unstructured.Unstructured{obj("ConfigMap", "vsno", "theirs", map[string]any{"k": "new"})})
+	if err != nil || len(ch) != 1 || ch[0].Action != Updated {
+		t.Fatalf("%v %v", err, ch)
+	}
+	got, err := c.Resource(cmGVR).Namespace("vsno").Get(ctx, "theirs", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k, _, _ := unstructured.NestedString(got.Object, "data", "k"); k != "new" {
+		t.Errorf("data = %v", got.Object["data"])
+	}
+
+	// Our own object's rejected apply is still just an error: there is no
+	// takeover to fall back to.
+	c = newClient()
+	s = &SSA{Dyn: c, Mapper: newMapper()}
+	ours := obj("ConfigMap", "vsno", "ours", map[string]any{"k": "old"})
+	ours.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: FieldManager}})
+	if _, err := c.Resource(cmGVR).Namespace("vsno").Create(ctx, ours, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	c.PrependReactor("patch", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, invalidErr("merge rejected")
+	})
+	if _, err := s.Apply(ctx, []*unstructured.Unstructured{obj("ConfigMap", "vsno", "ours", nil)}); err == nil || !strings.Contains(err.Error(), "applying vsno/ConfigMap/ours: merge rejected") {
+		t.Errorf("err = %v", err)
+	}
+
+	// A failed replace says it was taking the object over.
+	c = newClient()
+	s = &SSA{Dyn: c, Mapper: newMapper()}
+	theirs := obj("ConfigMap", "vsno", "theirs", nil)
+	theirs.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "kubectl"}})
+	if _, err := c.Resource(cmGVR).Namespace("vsno").Create(ctx, theirs, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	c.PrependReactor("patch", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, invalidErr("merge rejected")
+	})
+	c.PrependReactor("update", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("replace rejected")
+	})
+	if _, err := s.Apply(ctx, []*unstructured.Unstructured{obj("ConfigMap", "vsno", "theirs", nil)}); err == nil || !strings.Contains(err.Error(), "taking over vsno/ConfigMap/theirs: replace rejected") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestCarryOver(t *testing.T) {
+	cur := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "Service",
+		"metadata": map[string]any{"name": "registry", "namespace": "vsno", "resourceVersion": "7"},
+		"spec":     map[string]any{"clusterIP": "172.30.0.9", "clusterIPs": []any{"172.30.0.9"}, "type": "ClusterIP"},
+	}}
+	o := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "Service",
+		"metadata": map[string]any{"name": "registry", "namespace": "vsno"},
+		"spec":     map[string]any{"ports": []any{}},
+	}}
+	carryOver(o, cur)
+	ip, _, _ := unstructured.NestedString(o.Object, "spec", "clusterIP")
+	ips, _, _ := unstructured.NestedStringSlice(o.Object, "spec", "clusterIPs")
+	if ip != "172.30.0.9" || len(ips) != 1 || o.GetResourceVersion() != "7" {
+		t.Errorf("carried %v, rv %q", o.Object["spec"], o.GetResourceVersion())
+	}
+	if _, found, _ := unstructured.NestedString(o.Object, "spec", "type"); found {
+		t.Error("carryOver copied a field the manifest sets")
+	}
+}
+
+// invalidErr is the 422 the API returns for a rejected object.
+func invalidErr(msg string) error {
+	return &apierrors.StatusError{ErrStatus: metav1.Status{Reason: metav1.StatusReasonInvalid, Message: msg}}
+}
+
+func TestTakeOverOnlyReplacesOnInvalid(t *testing.T) {
+	// A transient failure must not be papered over with a replace.
+	ctx := context.Background()
+	c := newClient()
+	s := &SSA{Dyn: c, Mapper: newMapper()}
+	cur := obj("ConfigMap", "vsno", "theirs", nil)
+	cur.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "kubectl"}})
+	if _, err := c.Resource(cmGVR).Namespace("vsno").Create(ctx, cur, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	c.PrependReactor("patch", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("api down")
+	})
+	if _, err := s.Apply(ctx, []*unstructured.Unstructured{obj("ConfigMap", "vsno", "theirs", nil)}); err == nil || !strings.Contains(err.Error(), "applying vsno/ConfigMap/theirs: api down") {
+		t.Errorf("err = %v", err)
+	}
+	for _, a := range c.Actions() {
+		if a.GetVerb() == "update" {
+			t.Error("replaced the object after a non-422 error")
+		}
 	}
 }

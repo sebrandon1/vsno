@@ -70,9 +70,10 @@ type sim struct {
 func newSim(objs ...runtime.Object) *sim {
 	s := &sim{kube: kfake.NewClientset(), ips: map[string]string{"registry": regIP}}
 	s.dyn = dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		precheck.GVRCSV:        "ClusterServiceVersionList",
-		precheck.GVRLVMCluster: "LVMClusterList",
-		cluster.GVRSecret:      "SecretList",
+		precheck.GVRCSV:           "ClusterServiceVersionList",
+		precheck.GVRLVMCluster:    "LVMClusterList",
+		cluster.GVRSecret:         "SecretList",
+		cluster.GVRVirtualMachine: "VirtualMachineList",
 	}, objs...)
 	return s
 }
@@ -257,17 +258,26 @@ func simWithNamespace(t *testing.T, labels map[string]string) *sim {
 	return s
 }
 
-func TestRunRefusesForeignNamespace(t *testing.T) {
-	// A namespace vsno didn't create is refused before precheck, and nothing is applied.
+func TestRunPromptsForForeignNamespace(t *testing.T) {
+	// A namespace vsno didn't create is confirmed before precheck; without a
+	// yes, nothing is applied.
 	s := simWithNamespace(t, nil)
 	e := s.env(report())
 	prechecked := false
 	e.Precheck = func(context.Context, string) *precheck.Report { prechecked = true; return report() }
-	if _, err := Run(context.Background(), e, opts()); err == nil || !strings.Contains(err.Error(), "not created by vsno") || !strings.Contains(err.Error(), "--force") {
-		t.Fatalf("err = %v", err)
+	if _, err := Run(context.Background(), e, opts()); err == nil || !strings.Contains(err.Error(), "not confirmed") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("no prompt: err = %v", err)
+	}
+	asked := ""
+	e.Confirm = func(q, answer string) bool { asked = q; return false }
+	if _, err := Run(context.Background(), e, opts()); err == nil || !strings.Contains(err.Error(), "not confirmed") {
+		t.Errorf("declined: err = %v", err)
+	}
+	if !strings.Contains(asked, "not created by vsno") || !strings.Contains(asked, ns) {
+		t.Errorf("question = %q", asked)
 	}
 	if prechecked || len(s.applied) != 0 {
-		t.Errorf("refused run prechecked=%v applied %v", prechecked, s.applied)
+		t.Fatalf("unconfirmed run prechecked=%v applied %v", prechecked, s.applied)
 	}
 
 	// A failed read stops setup too.
@@ -277,6 +287,65 @@ func TestRunRefusesForeignNamespace(t *testing.T) {
 	})
 	if _, err := Run(context.Background(), s.env(report()), opts()); err == nil || !strings.Contains(err.Error(), "reading namespace "+ns+": api down") {
 		t.Errorf("read error = %v", err)
+	}
+}
+
+func TestRunConfirmsForeignNamespace(t *testing.T) {
+	// A yes takes the namespace over.
+	s := simWithNamespace(t, nil)
+	e := s.env(report())
+	e.Confirm = func(_, answer string) bool { return answer == ns }
+	res, err := Run(context.Background(), e, opts())
+	if err != nil || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "(confirmed)") || len(s.applied) == 0 {
+		t.Errorf("confirmed: %v %v applied %d", err, res.Warnings, len(s.applied))
+	}
+}
+
+func TestRunRefusesForeignNamespaceWithVSNOs(t *testing.T) {
+	// A namespace holding vSNOs is refused even when confirmed.
+	s := simWithNamespace(t, nil)
+	vm := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "kubevirt.io/v1", "kind": "VirtualMachine",
+		"metadata": map[string]any{"name": "seed", "namespace": ns},
+	}}
+	if _, err := s.dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Create(context.Background(), vm, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	e := s.env(report())
+	e.Confirm = func(string, string) bool { return true }
+	if _, err := Run(context.Background(), e, opts()); err == nil || !strings.Contains(err.Error(), "1 vSNO") || !strings.Contains(err.Error(), "--force") {
+		t.Errorf("err = %v", err)
+	}
+	if len(s.applied) != 0 {
+		t.Errorf("applied %v", s.applied)
+	}
+
+	// A dry run only warns about the vSNOs, so its plan still shows the takeover.
+	s = simWithNamespace(t, nil)
+	if _, err := s.dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Create(context.Background(), vm, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	o := opts()
+	o.DryRun = true
+	res, err := Run(context.Background(), s.env(report()), o)
+	if err != nil || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "holds 1 vSNO") {
+		t.Errorf("dry run: %v %v", err, res.Warnings)
+	}
+
+	// --force takes it over anyway.
+	o = opts()
+	o.Force = true
+	if res, err := Run(context.Background(), s.env(report()), o); err != nil || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "(--force)") {
+		t.Errorf("forced: %v %v", err, res.Warnings)
+	}
+
+	// A failed VM list stops setup.
+	s = simWithNamespace(t, nil)
+	s.dyn.PrependReactor("list", "virtualmachines", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("boom")
+	})
+	if _, err := Run(context.Background(), s.env(report()), opts()); err == nil || !strings.Contains(err.Error(), "listing the vSNOs in "+ns+": boom") {
+		t.Errorf("list error = %v", err)
 	}
 }
 
@@ -295,7 +364,7 @@ func TestRunForeignNamespaceForceAndDryRun(t *testing.T) {
 	o = opts()
 	o.DryRun = true
 	res, err = Run(context.Background(), s.env(report(precheck.Result{Node: node, Check: "memory", Status: precheck.Fail, Detail: "8 GiB schedulable"})), o)
-	if err != nil || len(res.Warnings) != 2 || !strings.Contains(res.Warnings[0], "without --force, setup refuses") || !strings.Contains(res.Warnings[1], "8 GiB") {
+	if err != nil || len(res.Warnings) != 2 || !strings.Contains(res.Warnings[0], "setup would ask before taking it over") || !strings.Contains(res.Warnings[1], "8 GiB") {
 		t.Errorf("dry run: %v %q", err, res.Warnings)
 	}
 }

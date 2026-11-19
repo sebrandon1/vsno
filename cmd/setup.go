@@ -53,9 +53,11 @@ file 'vsno precheck --write-config' writes), then the precheck's suggestion.
 Taking over a disk asks you to type the node name, unless --yes. Reruns reuse
 generated credentials and report "unchanged" for objects that didn't change.
 
-setup refuses an existing namespace it didn't create (no
+setup asks before taking over an existing namespace it didn't create (no
 app.kubernetes.io/managed-by=vsno label and no vsno-state ConfigMap), because it
-would overwrite objects there; --force applies anyway.
+would overwrite objects there; --force takes it over without asking. A
+namespace that holds vSNOs isn't even asked about: setup would fight the VMs in
+it, so only --force takes it over.
 
 --dry-run lists what setup would do and changes nothing: each step, and each
 object it would create, reapply (vsno applied it before) or take over (it
@@ -70,7 +72,7 @@ func init() {
 	f.StringVar(&suDisk, "disk", "", "disk for LVMS, a /dev/disk/by-id path (default: precheck's suggestion)")
 	f.StringVar(&suConfig, "config", "", "settings file written by 'vsno precheck --write-config'")
 	f.BoolVar(&suYes, "yes", false, "approve taking over the LVMS disk without asking")
-	f.BoolVar(&suForce, "force", false, "set up in an existing namespace vsno didn't create, overwriting objects in it")
+	f.BoolVar(&suForce, "force", false, "take over an existing namespace vsno didn't create without asking, overwriting objects in it")
 	f.BoolVar(&suDryRun, "dry-run", false, "list what setup would do and change nothing")
 	f.BoolVar(&suManifests, "manifests", false, "with --dry-run, also print the manifests (Secret values redacted); implies --dry-run")
 	f.BoolVar(&suNoProbe, "no-probe", false, "skip the precheck hardware probe (then --node is required)")
