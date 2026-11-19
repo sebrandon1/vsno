@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dnsmasq
+  namespace: {{ .Namespace }}
+data:
+  dnsmasq.conf: |
+    no-resolv
+    no-hosts
+    keep-in-foreground
+    log-queries
+    # Each guest reaches itself at the masquerade address {{ .GuestIP }}.
+    # Only api, api-int and apps: a wildcard on the whole cluster domain fails
+    # the agent installer's dns-wildcard-not-configured validation.
+{{- range .Guests }}
+    address=/api.{{ . }}.{{ $.BaseDomain }}/{{ $.GuestIP }}
+    address=/api-int.{{ . }}.{{ $.BaseDomain }}/{{ $.GuestIP }}
+    address=/apps.{{ . }}.{{ $.BaseDomain }}/{{ $.GuestIP }}
+{{- end }}
+    # Everything else goes to the host cluster DNS.
+    server={{ .HostDNS }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dnsmasq
+  namespace: {{ .Namespace }}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: dnsmasq}}
+  template:
+    metadata: {labels: {app: dnsmasq}}
+    spec:
+      serviceAccountName: vsno
+      containers:
+      - name: dnsmasq
+        image: {{ quote .Images.Base }}
+        command: [bash, -c, "dnf -y -q install dnsmasq && exec dnsmasq -C /etc/vsno/dnsmasq.conf"]
+        securityContext: {runAsUser: 0}
+        ports:
+        - {containerPort: 53, protocol: UDP}
+        - {containerPort: 53, protocol: TCP}
+        readinessProbe: {tcpSocket: {port: 53}, periodSeconds: 5}
+        volumeMounts: [{name: conf, mountPath: /etc/vsno}]
+      volumes: [{name: conf, configMap: {name: dnsmasq}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dnsmasq
+  namespace: {{ .Namespace }}
+spec:
+  selector: {app: dnsmasq}
+  ports:
+  - {name: dns-udp, port: 53, protocol: UDP}
+  - {name: dns-tcp, port: 53, protocol: TCP}

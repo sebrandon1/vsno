@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: s3-config
+  namespace: {{ .Namespace }}
+type: Opaque
+stringData:
+  accessKey: {{ quote .S3AccessKey }}
+  secretKey: {{ quote .S3SecretKey }}
+  s3.json: {{ quote .S3ConfigJSON }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: s3-data
+  namespace: {{ .Namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 100Gi}}
+  storageClassName: {{ .StorageClass }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: s3
+  namespace: {{ .Namespace }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: s3}}
+  template:
+    metadata: {labels: {app: s3}}
+    spec:
+      serviceAccountName: vsno
+      containers:
+      - name: seaweedfs
+        image: {{ quote .Images.SeaweedFS }}
+        command:
+        - sh
+        - -c
+        - |
+          weed server -dir=/data -s3 -s3.port=9000 -s3.config=/etc/s3/s3.json -master.volumeSizeLimitMB=1024 &
+          pid=$!
+          trap 'kill $pid' TERM INT
+          until echo s3.bucket.list | weed shell >/tmp/buckets 2>&1; do sleep 2; done
+          grep -qw {{ .S3Bucket }} /tmp/buckets || echo "s3.bucket.create -name {{ .S3Bucket }} -owner vsno" | weed shell
+          touch /tmp/ready
+          wait $pid
+        securityContext: {runAsUser: 0}
+        ports: [{containerPort: 9000}]
+        readinessProbe: {exec: {command: [test, -f, /tmp/ready]}, periodSeconds: 5}
+        volumeMounts:
+        - {name: data, mountPath: /data}
+        - {name: conf, mountPath: /etc/s3}
+      volumes:
+      - {name: data, persistentVolumeClaim: {claimName: s3-data}}
+      - {name: conf, secret: {secretName: s3-config, items: [{key: s3.json, path: s3.json}]}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: s3
+  namespace: {{ .Namespace }}
+spec:
+  selector: {app: s3}
+  ports: [{name: s3, port: 9000}]

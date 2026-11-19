@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-ca
+  namespace: {{ .Namespace }}
+type: Opaque
+stringData:
+  ca.crt: {{ quote .Registry.CACert }}
+  ca.key: {{ quote .Registry.CAKey }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-tls
+  namespace: {{ .Namespace }}
+type: kubernetes.io/tls
+stringData:
+  tls.crt: {{ quote .Registry.Cert }}
+  tls.key: {{ quote .Registry.Key }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-auth
+  namespace: {{ .Namespace }}
+type: Opaque
+stringData:
+  username: {{ quote .Registry.User }}
+  password: {{ quote .Registry.Password }}
+  htpasswd: {{ quote .Registry.Htpasswd }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-data
+  namespace: {{ .Namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 100Gi}}
+  storageClassName: {{ .StorageClass }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: {{ .Namespace }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: registry}}
+  template:
+    metadata: {labels: {app: registry}}
+    spec:
+      serviceAccountName: vsno
+      containers:
+      - name: registry
+        image: {{ quote .Images.Registry }}
+        env:
+        - {name: REGISTRY_HTTP_TLS_CERTIFICATE, value: /certs/tls.crt}
+        - {name: REGISTRY_HTTP_TLS_KEY, value: /certs/tls.key}
+        - {name: REGISTRY_AUTH, value: htpasswd}
+        - {name: REGISTRY_AUTH_HTPASSWD_REALM, value: vsno}
+        - {name: REGISTRY_AUTH_HTPASSWD_PATH, value: /auth/htpasswd}
+        - {name: REGISTRY_STORAGE_DELETE_ENABLED, value: "true"}
+        ports: [{containerPort: 5000}]
+        readinessProbe: {tcpSocket: {port: 5000}, periodSeconds: 5}
+        volumeMounts:
+        - {name: data, mountPath: /var/lib/registry}
+        - {name: certs, mountPath: /certs}
+        - {name: auth, mountPath: /auth}
+      volumes:
+      - {name: data, persistentVolumeClaim: {claimName: registry-data}}
+      - {name: certs, secret: {secretName: registry-tls}}
+      - {name: auth, secret: {secretName: registry-auth, items: [{key: htpasswd, path: htpasswd}]}}

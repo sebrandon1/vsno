@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: builder-work
+  namespace: {{ .Namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 60Gi}}
+  storageClassName: {{ .StorageClass }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: builder
+  namespace: {{ .Namespace }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: builder}}
+  template:
+    metadata: {labels: {app: builder}}
+    spec:
+      serviceAccountName: vsno
+      containers:
+      - name: builder
+        image: {{ quote .Images.Base }}
+        workingDir: /work
+        command:
+        - bash
+        - -c
+        - |
+          set -e
+          dnf -y -q install nmstate nmstate-libs jq tar gzip python3 openssh-clients bind-utils skopeo >/dev/null
+          if [ ! -x /work/bin/oc ]; then
+            mkdir -p /work/bin
+            curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar -xz -C /work/bin oc
+          fi
+          mkdir -p /work/www
+          touch /tmp/ready
+          exec python3 -m http.server 8080 --directory /work/www
+        env: [{name: PATH, value: "/work/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"}]
+        securityContext: {runAsUser: 0}
+        readinessProbe: {exec: {command: [test, -f, /tmp/ready]}, periodSeconds: 5}
+        ports: [{containerPort: 8080}]
+        volumeMounts: [{name: work, mountPath: /work}]
+      volumes: [{name: work, persistentVolumeClaim: {claimName: builder-work}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: builder
+  namespace: {{ .Namespace }}
+spec:
+  selector: {app: builder}
+  ports: [{name: http, port: 8080}]

@@ -33,6 +33,13 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `lib/kube`: builds client-go typed and dynamic clients from a kubeconfig (explicit path, then
   `$KUBECONFIG`, then `~/.kube/config`).
 - `lib/precheck`: the cluster checks.
+- `lib/manifests`: embedded `templates/*.yaml.tmpl` rendered with `text/template` (`quote` for every
+  value). Golden files are in `testdata/`; regenerate them with `go test ./lib/manifests -update` and
+  review the diff.
+- `lib/pki`: registry CA, server cert (`Covers` decides whether to reissue), htpasswd.
+- `lib/apply`: server-side apply (field manager `vsno`); it reports created, updated or unchanged
+  for each object.
+- `lib/state`: environment state in ConfigMap `<ns>/vsno-state`.
 - `lib/ui`: step progress. On a terminal it shows a spinner, elapsed time and an optional bar
   (`Bar`, `FormatElapsed`). Elsewhere it prints one line when a step starts and one when it ends.
 
@@ -59,6 +66,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - Without `--seed-repo`, the "Seed registry" row is `info` (the in-cluster registry is the
   default) and no auth files are read.
 - Progress goes to stderr and is turned off for `-o json`, so stdout stays machine-readable.
+- dnsmasq publishes only `api`, `api-int` and `apps` for each guest, never a wildcard on the cluster
+  domain.
+- Guests reach the in-cluster registry by its ClusterIP, which is also an IP SAN on the cert. The
+  guest's own `cluster.local` hides the host's Service names. Trusting the CA with
+  `additionalTrustedCA` doesn't reboot the guest (spike in #3).
 - This repo is public. Docs, fixtures and tests must contain no lab hostnames, hardware models,
   real disk IDs or credentials.
 
