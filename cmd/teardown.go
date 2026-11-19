@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"text/tabwriter"
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/kube"
+	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/teardown"
 	"github.com/spf13/cobra"
 )
@@ -55,33 +57,48 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 	}
 	w := cmd.OutOrStdout()
 	o := teardown.Options{Namespace: namespace, Host: tdHost, Force: tdForce, Yes: tdYes, DryRun: tdDryRun}
+	planShown := false
 	env := teardown.Env{Kube: c.Kube, Dyn: c.Dyn, Progress: precheckProgress{newProgress()}, Timeout: tdTimeout,
-		Confirm:  confirmOnTerminal(os.Stdin, cmd.ErrOrStderr()),
-		ShowPlan: func(r *teardown.Result) { renderTargets(cmd.ErrOrStderr(), r); fmt.Fprintln(cmd.ErrOrStderr()) },
+		Confirm: confirmOnTerminal(os.Stdin, cmd.ErrOrStderr()),
+		ShowPlan: func(r *teardown.Result) {
+			renderTargets(cmd.ErrOrStderr(), r)
+			fmt.Fprintln(cmd.ErrOrStderr())
+			planShown = true
+		},
 	}
 	if outputFormat == "table" {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Tearing down %s in %s (context %q)...\n\n", namespace, c.Config.Host, c.Context)
 	}
 	res, err := teardown.Run(cmd.Context(), env, o)
-	if rerr := renderTeardown(w, res, err); rerr != nil && err == nil {
+	if rerr := renderTeardown(w, res, err, planShown); rerr != nil && err == nil {
 		err = rerr
 	}
 	return err
 }
 
-func renderTeardown(w io.Writer, res *teardown.Result, runErr error) error {
+// renderTeardown prints the blockers and the targets. planShown means the
+// confirmation prompt already listed the targets; they are not repeated unless
+// something was deleted since.
+func renderTeardown(w io.Writer, res *teardown.Result, runErr error, planShown bool) error {
 	if outputFormat == "json" {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(res)
 	}
 	for _, b := range res.Blockers {
-		fmt.Fprintf(w, "✗ %s\n", b)
+		if res.Forced {
+			fmt.Fprintf(w, "%s  %s (ignored: --force)\n", statusIcon[precheck.Warn], b)
+		} else {
+			fmt.Fprintf(w, "%s  %s\n", statusIcon[precheck.Fail], b)
+		}
 	}
 	if len(res.Targets) == 0 {
 		if runErr == nil {
 			fmt.Fprintf(w, "Nothing to delete: namespace %s does not exist.\n", res.Namespace)
 		}
+		return nil
+	}
+	if planShown && !slices.ContainsFunc(res.Targets, func(t teardown.Target) bool { return t.Outcome != teardown.Planned }) {
 		return nil
 	}
 	renderTargets(w, res)

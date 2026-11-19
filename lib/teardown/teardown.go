@@ -79,7 +79,9 @@ type Result struct {
 	Host      bool   `json:"host"`
 	// Blockers are why teardown refused (or would refuse without Force).
 	Blockers []string `json:"blockers,omitempty"`
-	Targets  []Target `json:"targets"`
+	// Forced is true when Force overrode the Blockers.
+	Forced  bool     `json:"forced,omitempty"`
+	Targets []Target `json:"targets"`
 }
 
 // Run plans the teardown, checks it is safe, confirms, and deletes the targets
@@ -94,8 +96,11 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 	for i := range res.Targets {
 		res.Targets[i].Outcome = Planned // until deleted
 	}
-	if len(res.Blockers) > 0 && !o.Force {
-		return res, fmt.Errorf("refusing to tear down (%d problem(s)): %s; pass --force to override", len(res.Blockers), res.Blockers[0]+more(len(res.Blockers)-1))
+	if len(res.Blockers) > 0 {
+		if !o.Force {
+			return res, fmt.Errorf("refusing to tear down (%d problem(s)): %s; pass --force to override", len(res.Blockers), strings.Join(res.Blockers, "; "))
+		}
+		res.Forced = true
 	}
 	if len(res.Targets) == 0 || o.DryRun {
 		return res, nil
@@ -362,13 +367,6 @@ func names(objs []unstructured.Unstructured) string {
 		n = append(n, o.GetName())
 	}
 	return " (" + short(n) + ")"
-}
-
-func more(n int) string {
-	if n == 0 {
-		return ""
-	}
-	return fmt.Sprintf(" and %d more", n)
 }
 
 // short lists up to 5 items.

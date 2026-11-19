@@ -185,7 +185,7 @@ func TestRunNamespaceOwnership(t *testing.T) {
 
 	// --force overrides.
 	res, err = Run(ctx, c.env(newKube(), d), Options{Namespace: ns, Force: true, Yes: true})
-	if err != nil || res.Targets[0].Outcome != Deleted || len(res.Blockers) != 1 {
+	if err != nil || res.Targets[0].Outcome != Deleted || len(res.Blockers) != 1 || !res.Forced {
 		t.Errorf("forced: %v %+v", err, res)
 	}
 }
@@ -261,7 +261,7 @@ func TestRunHostBlockers(t *testing.T) {
 	d := newDyn(objs...)
 	c := &confirmer{ok: true}
 	res, err := Run(context.Background(), c.env(k, d), Options{Namespace: ns, Host: true})
-	if err == nil || !strings.Contains(err.Error(), "3 problem(s)") || !strings.Contains(err.Error(), "and 2 more") {
+	if err == nil || !strings.Contains(err.Error(), "3 problem(s)") || !strings.Contains(err.Error(), "other/web; 1 PVC(s)") || !strings.Contains(err.Error(), "; LVMCluster openshift-storage/theirs") {
 		t.Fatalf("err = %v", err)
 	}
 	want := []string{
@@ -272,7 +272,7 @@ func TestRunHostBlockers(t *testing.T) {
 	if !slices.Equal(res.Blockers, want) {
 		t.Errorf("blockers = %q", res.Blockers)
 	}
-	if c.asked != "" || !exists(t, d, cluster.GVRNamespace, "", ns) {
+	if c.asked != "" || !exists(t, d, cluster.GVRNamespace, "", ns) || res.Forced {
 		t.Error("blocked run asked or deleted")
 	}
 }
