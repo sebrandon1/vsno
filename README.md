@@ -64,7 +64,7 @@ It checks:
 | Access | You are cluster-admin, and the cluster is OpenShift (its version is reported) |
 | Networks | The guest networks (`10.0.2.0/24`, `10.132.0.0/14`, `172.31.0.0/16`) don't overlap the host's pod and service networks |
 | Catalog | `kubevirt-hyperconverged` and `lvms-operator` are available. It picks the LVMS channel that matches the host's version. |
-| Existing state | OpenShift Virtualization or LVMS already installed, an existing `lvms-vg-vsno` StorageClass, an existing environment namespace (`-n`, default `vsno`) |
+| Existing state | OpenShift Virtualization or LVMS already installed (and whether their channel offers a newer CSV: `up to date` or `update available`), an existing `lvms-vg-vsno` StorageClass, an existing environment namespace (`-n`, default `vsno`) |
 | Hub | Whether the cluster is managed by an ACM hub (hub policies may revert operators vsno installs) |
 | Registry | The seed image goes to an in-cluster registry by default, so nothing is needed. Only if you pass the optional `--seed-repo` (e.g. `quay.io/<you>/ibu-seed`) does it check your local podman/docker auth files for push credentials. |
 | Each worker | `/dev/kvm`, bare metal or nested virtualization, CPU threads, schedulable memory, and an empty disk of at least 600 GB for LVMS |
@@ -154,6 +154,18 @@ precheck's suggestion. If `--node` names a different node than `--config`, the c
 dropped, since it belongs to the other node. A rerun reuses everything and reports each object as `unchanged`.
 Progress and the result are recorded in ConfigMap `<namespace>/vsno-state`.
 
+Before installing anything, setup checks the two operators it manages. An operator is out of date
+when its channel offers a newer CSV than the one it runs, when a `Manual` Subscription has an
+InstallPlan waiting for approval, or when its Subscription is on an older channel than the one
+precheck picks for this OpenShift version. Setup lists each one with the CSV it runs and the one it
+would install, then asks `Upgrade <operator> from <installed> to <available>?` and upgrades the ones
+you accept: it moves the Subscription to the channel, approves the InstallPlan and waits for the new
+CSV to reach `Succeeded` (and, for OpenShift Virtualization, for HyperConverged to be `Available`
+again). The step then reports `upgraded`. `--upgrade-operators` answers yes to all of them; `--yes`
+only approves the disk. A CNV upgrade restarts OpenShift Virtualization, so the running VMs it would
+affect are named first. Without a terminal setup warns and keeps the installed version, and a rerun
+reports the operators as `reused`.
+
 Setup asks before taking over an existing namespace that vsno didn't create: one with neither the
 `app.kubernetes.io/managed-by=vsno` label nor a `vsno-state` ConfigMap. It would overwrite objects
 there, such as an environment built by hand, so it shows that warning and asks you to type the
@@ -161,8 +173,8 @@ namespace name to continue. Pass `--force` to take it over without asking, or us
 namespace with `-n`. If the namespace holds vSNOs, setup refuses without asking, since it would
 fight the VMs already in it; only `--force` takes it over.
 
-`--dry-run` lists each step (reuse what is installed, or apply) and each object, with what applying
-it would do:
+`--dry-run` lists each step (reuse what is installed, apply, or upgrade an operator) and each
+object, with what applying it would do:
 - `create`: it doesn't exist yet
 - `reapply`: vsno applied it before; usually nothing changes
 - `take over`: it exists but vsno didn't create it. Setup would overwrite it, so the plan ends with a
@@ -179,6 +191,7 @@ runs one (for example `-n vsno-dev` next to `vsno`) usually needs `--node`.
 | `--node`, `--disk` | Worker for the VMs and the `/dev/disk/by-id` path for LVMS |
 | `--config <file>` | Settings written by `precheck --write-config` |
 | `--yes` | Approve taking over the disk without asking |
+| `--upgrade-operators` | Upgrade the operators that have an update available without asking |
 | `--force` | Take over an existing namespace vsno didn't create without asking (see below) |
 | `--dry-run` | List what setup would do and change nothing (see below) |
 | `--manifests` | With `--dry-run`, also print the manifests, Secret values redacted (implies `--dry-run`) |
@@ -289,6 +302,7 @@ vsno status -o json
 
 `status` only reads. It shows:
 - the host components: both operators, HyperConverged, the LVMCluster and StorageClass
+- each operator with an update available, as a warning that still exits 0
 - each support service with its readiness and Service IP
 - the registry endpoint
 - the VMs in the namespace

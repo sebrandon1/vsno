@@ -4,12 +4,13 @@ package cluster
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/sebrandon1/vsno/lib/state"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/sebrandon1/vsno/lib/precheck"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -28,6 +29,9 @@ const (
 	TopoLVM = "topolvm.io"
 	// ManagedByLabel marks every object vsno creates.
 	ManagedByLabel = "app.kubernetes.io/managed-by"
+	// MarketplaceNamespace holds the PackageManifests OLM publishes the
+	// operators' channels in.
+	MarketplaceNamespace = "openshift-marketplace"
 )
 
 // ManagedByVsno reports whether labels carry ManagedByLabel=vsno.
@@ -48,16 +52,19 @@ func CreatedByVsno(ctx context.Context, kube kubernetes.Interface, ns string, la
 	return found, nil
 }
 
-// GVRs of the resources setup, status and teardown use, besides precheck's.
+// GVRs of the resources setup, status, teardown and precheck use.
 var (
-	GVRNamespace      = schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
-	GVRSecret         = schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
-	GVRService        = schema.GroupVersionResource{Version: "v1", Resource: "services"}
-	GVRDeployment     = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
-	GVRSubscription   = schema.GroupVersionResource{Group: "operators.coreos.com", Version: "v1alpha1", Resource: "subscriptions"}
-	GVROperatorGroup  = schema.GroupVersionResource{Group: "operators.coreos.com", Version: "v1", Resource: "operatorgroups"}
-	GVRVirtualMachine = schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}
-	GVRVMI            = schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachineinstances"}
+	GVRNamespace       = schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
+	GVRSecret          = schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
+	GVRService         = schema.GroupVersionResource{Version: "v1", Resource: "services"}
+	GVRDeployment      = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	GVRSubscription    = schema.GroupVersionResource{Group: "operators.coreos.com", Version: "v1alpha1", Resource: "subscriptions"}
+	GVROperatorGroup   = schema.GroupVersionResource{Group: "operators.coreos.com", Version: "v1", Resource: "operatorgroups"}
+	GVRInstallPlan     = schema.GroupVersionResource{Group: "operators.coreos.com", Version: "v1alpha1", Resource: "installplans"}
+	GVRCSV             = schema.GroupVersionResource{Group: "operators.coreos.com", Version: "v1alpha1", Resource: "clusterserviceversions"}
+	GVRPackageManifest = schema.GroupVersionResource{Group: "packages.operators.coreos.com", Version: "v1", Resource: "packagemanifests"}
+	GVRVirtualMachine  = schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}
+	GVRVMI             = schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachineinstances"}
 )
 
 // Deployments are the support Deployments (and Services) in the vsno namespace.
@@ -81,7 +88,7 @@ var (
 
 // CSVs lists op's ClusterServiceVersions.
 func CSVs(ctx context.Context, dyn dynamic.Interface, op Operator) ([]unstructured.Unstructured, error) {
-	l, err := dyn.Resource(precheck.GVRCSV).Namespace(op.Namespace).List(ctx, metav1.ListOptions{})
+	l, err := dyn.Resource(GVRCSV).Namespace(op.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +116,20 @@ func SucceededCSV(ctx context.Context, dyn dynamic.Interface, op Operator) (stri
 func Phase(u *unstructured.Unstructured) string {
 	p, _, _ := unstructured.NestedString(u.Object, "status", "phase")
 	return p
+}
+
+// CSVPhase returns the phase of op's CSV name, or "" when it doesn't exist yet.
+// An upgrade waits on this rather than on SucceededCSV, which keeps returning
+// the old CSV until OLM deletes it.
+func CSVPhase(ctx context.Context, dyn dynamic.Interface, op Operator, name string) (string, error) {
+	u, err := dyn.Resource(GVRCSV).Namespace(op.Namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("reading CSV %s/%s: %w", op.Namespace, name, err)
+	}
+	return Phase(u), nil
 }
 
 // Condition returns the status of condition t, or "Unknown".

@@ -70,10 +70,13 @@ type sim struct {
 func newSim(objs ...runtime.Object) *sim {
 	s := &sim{kube: kfake.NewClientset(), ips: map[string]string{"registry": regIP}}
 	s.dyn = dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		precheck.GVRCSV:           "ClusterServiceVersionList",
-		precheck.GVRLVMCluster:    "LVMClusterList",
-		cluster.GVRSecret:         "SecretList",
-		cluster.GVRVirtualMachine: "VirtualMachineList",
+		cluster.GVRCSV:             "ClusterServiceVersionList",
+		cluster.GVRSubscription:    "SubscriptionList",
+		cluster.GVRInstallPlan:     "InstallPlanList",
+		cluster.GVRPackageManifest: "PackageManifestList",
+		precheck.GVRLVMCluster:     "LVMClusterList",
+		cluster.GVRSecret:          "SecretList",
+		cluster.GVRVirtualMachine:  "VirtualMachineList",
 	}, objs...)
 	return s
 }
@@ -141,13 +144,13 @@ func (s *sim) simulate(o *unstructured.Unstructured) {
 			if o.GetNamespace() == storageNS {
 				name = lvmsCSV
 			}
-			_ = s.dyn.Tracker().Create(precheck.GVRCSV, csv(o.GetNamespace(), name, "Succeeded"), o.GetNamespace())
+			_ = s.dyn.Tracker().Create(cluster.GVRCSV, csv(o.GetNamespace(), name), o.GetNamespace())
 		}
 	}
 }
 
-func csv(namespace, name, phase string) *unstructured.Unstructured {
-	u := &unstructured.Unstructured{Object: map[string]any{"status": map[string]any{"phase": phase}}}
+func csv(namespace, name string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{Object: map[string]any{"status": map[string]any{"phase": "Succeeded"}}}
 	u.SetAPIVersion("operators.coreos.com/v1alpha1")
 	u.SetKind("ClusterServiceVersion")
 	u.SetNamespace(namespace)
@@ -164,8 +167,8 @@ func csiNode() *storagev1.CSINode {
 func (s *sim) existingHost(t *testing.T) {
 	t.Helper()
 	tr := s.dyn.Tracker()
-	for _, o := range []*unstructured.Unstructured{csv(cnvNS, cnvCSV, "Succeeded"), csv(storageNS, lvmsCSV, "Succeeded")} {
-		if err := tr.Create(precheck.GVRCSV, o, o.GetNamespace()); err != nil {
+	for _, o := range []*unstructured.Unstructured{csv(cnvNS, cnvCSV), csv(storageNS, lvmsCSV)} {
+		if err := tr.Create(cluster.GVRCSV, o, o.GetNamespace()); err != nil {
 			t.Fatal(err)
 		}
 	}

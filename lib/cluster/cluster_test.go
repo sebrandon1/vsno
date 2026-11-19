@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,8 +24,12 @@ func csv(ns, name, phase string) *unstructured.Unstructured {
 }
 
 func fakeDyn(objs ...runtime.Object) *dynfake.FakeDynamicClient {
-	return dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{precheck.GVRCSV: "ClusterServiceVersionList"}, objs...)
+	return dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		GVRCSV:             "ClusterServiceVersionList",
+		GVRSubscription:    "SubscriptionList",
+		GVRInstallPlan:     "InstallPlanList",
+		GVRPackageManifest: "PackageManifestList",
+	}, objs...)
 }
 
 func TestSucceededCSV(t *testing.T) {

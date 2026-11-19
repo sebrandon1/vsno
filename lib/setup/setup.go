@@ -48,7 +48,10 @@ type Options struct {
 	Yes      bool // approve taking over the LVMS disk
 	Force    bool // apply into an existing namespace vsno didn't create
 	DryRun   bool // plan and report, change nothing
-	Images   manifests.Images
+	// UpgradeOperators accepts every operator update without asking. --yes
+	// alone does not: it only approves the disk.
+	UpgradeOperators bool
+	Images           manifests.Images
 }
 
 // Outcome says what a step did.
@@ -59,6 +62,8 @@ const (
 	Reused Outcome = "reused"
 	// Applied means vsno applied its manifests (which may all be unchanged).
 	Applied Outcome = "applied"
+	// Upgraded means the step brought the component to the CSV its channel offers.
+	Upgraded Outcome = "upgraded"
 	// Planned is Applied in a dry run.
 	Planned Outcome = "planned"
 )
@@ -77,6 +82,8 @@ type Result struct {
 	Warnings  []string           `json:"warnings,omitempty"`
 	Steps     []Step             `json:"steps"`
 	Changes   []apply.Change     `json:"changes"`
+	// Updates are the operator updates setup found, applied or not.
+	Updates []cluster.Update `json:"updates,omitempty"`
 	// Registry is the in-cluster registry endpoint guests use (ClusterIP:port).
 	Registry string `json:"registry,omitempty"`
 	// Objects are the rendered objects of a dry run, with Secret values redacted.
@@ -95,7 +102,8 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 		rec.plan, _ = e.Applier.(apply.Planner) // without one, every object is planned as created
 		e.Applier = rec
 	}
-	s, warnings, err := resolve(e.Precheck(ctx, o.Settings.Node), o.Settings)
+	rep := e.Precheck(ctx, o.Settings.Node)
+	s, warnings, err := resolve(rep, o.Settings)
 	res.Settings, res.Warnings = s, append(res.Warnings, warnings...)
 	if err != nil {
 		return res, err
@@ -111,7 +119,8 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 		StorageClass: manifests.DefaultStorageClass,
 		Images:       o.Images,
 		S3Bucket:     manifests.DefaultS3Bucket,
-	}, st: &state.State{Versions: map[string]string{}, Services: map[string]string{}}}
+	}, st: &state.State{Versions: map[string]string{}, Services: map[string]string{}}, upgrades: map[string]*cluster.Update{}}
+	r.offerUpdates(ctx, rep)
 
 	steps := []struct {
 		title string
@@ -222,6 +231,8 @@ type runner struct {
 	cfg   manifests.Config
 	st    *state.State
 	nsSet bool // the namespace exists, so state can be saved
+	// upgrades are the operator updates to apply, by operator key.
+	upgrades map[string]*cluster.Update
 }
 
 // applyTemplate renders a template, keeps the objects keep selects (nil = all),

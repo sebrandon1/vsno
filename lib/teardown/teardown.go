@@ -340,7 +340,7 @@ func (p *planner) planOperator(ctx context.Context, op cluster.Operator) error {
 		return fmt.Errorf("listing %s CSVs: %w", op.Key, err)
 	}
 	for _, c := range csvs {
-		p.res.Targets = append(p.res.Targets, Target{Kind: "ClusterServiceVersion", Namespace: op.Namespace, Name: c.GetName(), gvr: precheck.GVRCSV, wait: true, step: op.Key})
+		p.res.Targets = append(p.res.Targets, Target{Kind: "ClusterServiceVersion", Namespace: op.Namespace, Name: c.GetName(), gvr: cluster.GVRCSV, wait: true, step: op.Key})
 	}
 	return p.add(ctx, Target{Kind: "Namespace", Name: op.Namespace, gvr: cluster.GVRNamespace, step: op.Key})
 }

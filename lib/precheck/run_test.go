@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -70,14 +71,25 @@ func packageManifest(name, def string, channels ...string) *unstructured.Unstruc
 	for _, c := range channels {
 		chs = append(chs, map[string]interface{}{"name": c})
 	}
-	return obj(GVRPackageManifest, "PackageManifest", marketplaceNS, name,
+	return obj(cluster.GVRPackageManifest, "PackageManifest", cluster.MarketplaceNamespace, name,
+		map[string]interface{}{"status": map[string]interface{}{"defaultChannel": def, "channels": chs}})
+}
+
+// packageManifestCSV is packageManifest with each channel's currentCSV set.
+func packageManifestCSV(name, def string, csvs map[string]string, channels ...string) *unstructured.Unstructured {
+	var chs []interface{}
+	for _, c := range channels {
+		chs = append(chs, map[string]interface{}{"name": c, "currentCSV": csvs[c]})
+	}
+	return obj(cluster.GVRPackageManifest, "PackageManifest", cluster.MarketplaceNamespace, name,
 		map[string]interface{}{"status": map[string]interface{}{"defaultChannel": def, "channels": chs}})
 }
 
 func newDyn(objs ...runtime.Object) *dynfake.FakeDynamicClient {
 	listKinds := map[schema.GroupVersionResource]string{
 		GVRClusterVersion: "ClusterVersionList", GVRNetwork: "NetworkList",
-		GVRPackageManifest: "PackageManifestList", GVRCSV: "ClusterServiceVersionList",
+		cluster.GVRPackageManifest: "PackageManifestList", cluster.GVRCSV: "ClusterServiceVersionList",
+		cluster.GVRSubscription: "SubscriptionList", cluster.GVRInstallPlan: "InstallPlanList",
 		GVRHyperConverged: "HyperConvergedList", GVRLVMCluster: "LVMClusterList",
 	}
 	return dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objs...)
@@ -223,6 +235,69 @@ func TestRunExistingLVMSDiskIsFineWhenStorageClassExists(t *testing.T) {
 	}
 	if got := find(r, "Existing: vsno environment"); got == nil {
 		t.Error("existing vsno namespace should be reported")
+	}
+}
+
+func TestRunReportsOperatorUpdates(t *testing.T) {
+	env := labEnv(t, "probe-baremetal-empty-disk.txt")
+	// CNV's channel offers a newer CSV than the one it runs; LVMS is current.
+	const cnvCSV, wantCSV, lvmsCSV = "kubevirt-hyperconverged-operator.v1", "kubevirt-hyperconverged-operator.v2", "lvms-operator.v1"
+	tr := env.Dyn.(*dynfake.FakeDynamicClient).Tracker()
+	pm := packageManifestCSV(cluster.CNV.Package, "stable", map[string]string{"stable": wantCSV}, "candidate", "stable")
+	if err := tr.Update(cluster.GVRPackageManifest, pm, cluster.MarketplaceNamespace); err != nil {
+		t.Fatal(err)
+	}
+	// Each object gets its own map: obj() writes the name into it.
+	csvObj := func(ns, name string) *unstructured.Unstructured {
+		return obj(cluster.GVRCSV, "ClusterServiceVersion", ns, name,
+			map[string]interface{}{"status": map[string]interface{}{"phase": "Succeeded"}})
+	}
+	objs := []struct {
+		gvr schema.GroupVersionResource
+		obj *unstructured.Unstructured
+	}{
+		{cluster.GVRSubscription, obj(cluster.GVRSubscription, "Subscription", cluster.CNVNamespace, "hco-operatorhub", map[string]interface{}{
+			"spec":   map[string]interface{}{"name": cluster.CNV.Package, "channel": "stable"},
+			"status": map[string]interface{}{"installedCSV": cnvCSV, "currentCSV": cnvCSV, "state": "UpgradeAvailable"},
+		})},
+		{cluster.GVRSubscription, obj(cluster.GVRSubscription, "Subscription", cluster.StorageNamespace, "lvms", map[string]interface{}{
+			"spec":   map[string]interface{}{"name": cluster.LVMS.Package, "channel": "stable-4.22"},
+			"status": map[string]interface{}{"installedCSV": lvmsCSV, "currentCSV": lvmsCSV, "state": "AtLatestKnown"},
+		})},
+		{cluster.GVRCSV, csvObj(cluster.CNVNamespace, cnvCSV)},
+		{cluster.GVRCSV, csvObj(cluster.StorageNamespace, lvmsCSV)},
+	}
+	for _, c := range objs {
+		if err := tr.Create(c.gvr, c.obj, c.obj.GetNamespace()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := Run(context.Background(), env, DefaultRequirements(), Options{})
+
+	if r.Failed() != 0 {
+		t.Errorf("an operator update only warns; got %d failure(s)", r.Failed())
+	}
+	cnv := find(r, "Existing: OpenShift Virtualization")
+	if cnv == nil || cnv.Status != Warn || cnv.Detail != "update available ("+cnvCSV+" → "+wantCSV+")" {
+		t.Errorf("cnv = %+v", cnv)
+	}
+	if cnv != nil && !strings.Contains(cnv.Hint, "vsno setup") {
+		t.Errorf("cnv hint = %q", cnv.Hint)
+	}
+	if lvms := find(r, "Existing: LVM Storage operator"); lvms == nil || lvms.Status != Info || !strings.Contains(lvms.Detail, "up to date") {
+		t.Errorf("lvms = %+v", lvms)
+	}
+}
+
+func TestChannels(t *testing.T) {
+	env := labEnv(t, "probe-baremetal-empty-disk.txt")
+	if cnv, lvms := Channels(context.Background(), env.Dyn); cnv != "stable" || lvms != "stable-4.22" {
+		t.Errorf("channels = %q, %q", cnv, lvms)
+	}
+	// Without a catalog or a version, callers fall back to the Subscription's
+	// own channel.
+	if cnv, lvms := Channels(context.Background(), newDyn()); cnv != "" || lvms != "" {
+		t.Errorf("channels = %q, %q", cnv, lvms)
 	}
 }
 

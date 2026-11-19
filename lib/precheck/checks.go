@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -17,22 +18,19 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// GVRs of the OpenShift / OLM / operator resources precheck reads.
+// GVRs of the OpenShift / operator resources precheck reads.
 var (
-	GVRClusterVersion  = schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "clusterversions"}
-	GVRNetwork         = schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "networks"}
-	GVRPackageManifest = schema.GroupVersionResource{Group: "packages.operators.coreos.com", Version: "v1", Resource: "packagemanifests"}
-	GVRCSV             = schema.GroupVersionResource{Group: "operators.coreos.com", Version: "v1alpha1", Resource: "clusterserviceversions"}
-	GVRHyperConverged  = schema.GroupVersionResource{Group: "hco.kubevirt.io", Version: "v1beta1", Resource: "hyperconvergeds"}
-	GVRLVMCluster      = schema.GroupVersionResource{Group: "lvm.topolvm.io", Version: "v1alpha1", Resource: "lvmclusters"}
+	GVRClusterVersion = schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "clusterversions"}
+	GVRNetwork        = schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "networks"}
+	GVRHyperConverged = schema.GroupVersionResource{Group: "hco.kubevirt.io", Version: "v1beta1", Resource: "hyperconvergeds"}
+	GVRLVMCluster     = schema.GroupVersionResource{Group: "lvm.topolvm.io", Version: "v1alpha1", Resource: "lvmclusters"}
 )
 
 const (
-	marketplaceNS = "openshift-marketplace"
-	cnvNS         = "openshift-cnv"
-	storageNS     = "openshift-storage"
-	ztpAgentNS    = "open-cluster-management-agent"
-	vsnoSC        = "lvms-vg-vsno"
+	cnvNS      = "openshift-cnv"
+	storageNS  = "openshift-storage"
+	ztpAgentNS = "open-cluster-management-agent"
+	vsnoSC     = "lvms-vg-vsno"
 )
 
 // Prober collects NodeHardware from nodes. The real implementation runs a
@@ -146,15 +144,16 @@ func (e *Env) checkHostDNS(ctx context.Context, r *Report) {
 	r.add(Result{Check: "Host DNS service", Status: Pass, Detail: "openshift-dns/dns-default " + svc.Spec.ClusterIP})
 }
 
-// channels returns (defaultChannel, channel names) of a package manifest.
-func (e *Env) channels(ctx context.Context, pkg string) (string, []string, error) {
-	pm, err := e.Dyn.Resource(GVRPackageManifest).Namespace(marketplaceNS).Get(ctx, pkg, metav1.GetOptions{})
+// pickChannel returns the channel to use for pkg, the package's default channel
+// and all its channel names. With a minor version, it picks LVMS's
+// stable-<minor> channel when the catalog lists it.
+func pickChannel(ctx context.Context, dyn dynamic.Interface, pkg, minor string) (picked, def string, names []string, err error) {
+	pm, err := dyn.Resource(cluster.GVRPackageManifest).Namespace(cluster.MarketplaceNamespace).Get(ctx, pkg, metav1.GetOptions{})
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
-	def, _, _ := unstructured.NestedString(pm.Object, "status", "defaultChannel")
+	def, _, _ = unstructured.NestedString(pm.Object, "status", "defaultChannel")
 	chs, _, _ := unstructured.NestedSlice(pm.Object, "status", "channels")
-	var names []string
 	for _, c := range chs {
 		if m, ok := c.(map[string]interface{}); ok {
 			if n, ok := m["name"].(string); ok {
@@ -162,36 +161,50 @@ func (e *Env) channels(ctx context.Context, pkg string) (string, []string, error
 			}
 		}
 	}
-	return def, names, nil
+	picked = def
+	if want := "stable-" + minor; minor != "" && slices.Contains(names, want) {
+		picked = want
+	}
+	return picked, def, names, nil
+}
+
+// Channels returns the channels precheck would pick for this cluster: the CNV
+// package's default channel, and the LVMS channel matching the host's minor
+// version. Either is "" when it can't be read, so a caller falls back to the
+// operator's current channel.
+func Channels(ctx context.Context, dyn dynamic.Interface) (cnv, lvms string) {
+	minor := ""
+	if cv, err := dyn.Resource(GVRClusterVersion).Get(ctx, "version", metav1.GetOptions{}); err == nil {
+		v, _, _ := unstructured.NestedString(cv.Object, "status", "desired", "version")
+		minor = hostMinor(v)
+	}
+	cnv, _, _, _ = pickChannel(ctx, dyn, cluster.CNV.Package, "")
+	lvms, _, _, _ = pickChannel(ctx, dyn, cluster.LVMS.Package, minor)
+	return cnv, lvms
 }
 
 func (e *Env) checkCatalog(ctx context.Context, r *Report) {
-	def, chs, err := e.channels(ctx, "kubevirt-hyperconverged")
+	ch, def, names, err := pickChannel(ctx, e.Dyn, cluster.CNV.Package, "")
 	if err != nil {
 		r.add(Result{Check: "Catalog: OpenShift Virtualization", Status: Fail, Detail: err.Error(),
 			Hint: "kubevirt-hyperconverged must be available in openshift-marketplace (redhat-operators catalog)."})
 	} else {
-		r.Suggested.CNVChannel = def
+		r.Suggested.CNVChannel = ch
 		r.add(Result{Check: "Catalog: OpenShift Virtualization", Status: Pass,
-			Detail: fmt.Sprintf("kubevirt-hyperconverged (default %s; %s)", def, strings.Join(chs, ","))})
+			Detail: fmt.Sprintf("%s (default %s; %s)", cluster.CNV.Package, def, strings.Join(names, ","))})
 	}
 
-	def, chs, err = e.channels(ctx, "lvms-operator")
+	minor := hostMinor(r.Suggested.HostVersion)
+	ch, def, _, err = pickChannel(ctx, e.Dyn, cluster.LVMS.Package, minor)
 	if err != nil {
 		r.add(Result{Check: "Catalog: LVM Storage", Status: Fail, Detail: err.Error(),
 			Hint: "lvms-operator must be available in openshift-marketplace (redhat-operators catalog)."})
 		return
 	}
-	want := "stable-" + hostMinor(r.Suggested.HostVersion)
-	ch := def
-	for _, c := range chs {
-		if c == want {
-			ch = want
-		}
-	}
 	r.Suggested.LVMSChannel = ch
-	status, detail := Pass, fmt.Sprintf("lvms-operator channel %s", ch)
-	if ch != want && hostMinor(r.Suggested.HostVersion) != "" {
+	want := "stable-" + minor
+	status, detail := Pass, fmt.Sprintf("%s channel %s", cluster.LVMS.Package, ch)
+	if ch != want && minor != "" {
 		status = Warn
 		detail = fmt.Sprintf("no %s channel; falling back to default %s", want, def)
 	}
@@ -200,10 +213,8 @@ func (e *Env) checkCatalog(ctx context.Context, r *Report) {
 
 // existing reports what is already installed. Returns true if LVMS already provides vsno storage.
 func (e *Env) checkExisting(ctx context.Context, r *Report) (lvmsReady bool) {
-	if csvs, err := e.Dyn.Resource(GVRCSV).Namespace(cnvNS).List(ctx, metav1.ListOptions{}); err == nil && len(csvs.Items) > 0 {
-		r.add(Result{Check: "Existing: OpenShift Virtualization", Status: Info,
-			Detail: "already installed (" + csvs.Items[0].GetName() + "); setup will reuse it"})
-	}
+	e.existingOperator(ctx, r, cluster.CNV, r.Suggested.CNVChannel, "Existing: OpenShift Virtualization")
+	e.existingOperator(ctx, r, cluster.LVMS, r.Suggested.LVMSChannel, "Existing: LVM Storage operator")
 	if lc, err := e.Dyn.Resource(GVRLVMCluster).Namespace(storageNS).List(ctx, metav1.ListOptions{}); err == nil && len(lc.Items) > 0 {
 		r.add(Result{Check: "Existing: LVM Storage", Status: Info,
 			Detail: fmt.Sprintf("%d LVMCluster(s) present (%s)", len(lc.Items), lc.Items[0].GetName())})
@@ -221,9 +232,36 @@ func (e *Env) checkExisting(ctx context.Context, r *Report) (lvmsReady bool) {
 	return lvmsReady
 }
 
+// existingOperator adds check's row: up to date, or an update setup can apply.
+func (e *Env) existingOperator(ctx context.Context, r *Report, op cluster.Operator, channel, check string) {
+	u, err := cluster.OperatorUpdate(ctx, e.Dyn, op, channel)
+	switch {
+	case err != nil:
+		r.add(Result{Check: check, Status: Warn, Detail: "cannot tell whether it is up to date: " + err.Error()})
+	case u != nil:
+		r.add(Result{Check: check, Status: Warn, Detail: UpdateDetail(u),
+			Hint: "run `vsno setup` to upgrade it"})
+	default:
+		if csv, err := cluster.SucceededCSV(ctx, e.Dyn, op); err == nil && csv != "" {
+			r.add(Result{Check: check, Status: Info, Detail: "up to date (" + csv + ")"})
+		}
+	}
+}
+
+// UpdateDetail is "update available (<installed> → <available>)", naming a
+// channel change when the upgrade needs one.
+func UpdateDetail(u *cluster.Update) string {
+	detail := "update available (" + u.String() + ")"
+	if u.Suggested != "" {
+		detail += fmt.Sprintf(", channel %s → %s", u.Channel, u.Suggested)
+	}
+	return detail
+}
+
 func (e *Env) checkZTP(ctx context.Context, r *Report) {
 	_, err := e.Kube.CoreV1().Namespaces().Get(ctx, ztpAgentNS, metav1.GetOptions{})
 	if err == nil {
+		r.HubManaged = true
 		r.add(Result{Check: "Hub-managed cluster", Status: Warn,
 			Detail: "ACM klusterlet present (" + ztpAgentNS + ")",
 			Hint:   "Hub policies may flag or revert operators vsno installs. Check the cluster's policies before running setup."})

@@ -77,8 +77,11 @@ type Suggested struct {
 type Report struct {
 	Results []Result `json:"results"`
 	// Nodes are the evaluated workers, eligible first, best first.
-	Nodes     []NodeSummary `json:"nodes,omitempty"`
-	Suggested Suggested     `json:"suggested"`
+	Nodes []NodeSummary `json:"nodes,omitempty"`
+	// HubManaged is true when an ACM klusterlet manages this cluster, whose
+	// policies can revert what vsno installs or upgrades.
+	HubManaged bool      `json:"hubManaged,omitempty"`
+	Suggested  Suggested `json:"suggested"`
 }
 
 // Failed counts results with Status Fail.

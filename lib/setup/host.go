@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -40,6 +42,9 @@ func (r *runner) operator(op operatorSpec) func(context.Context, precheck.Progre
 		if err != nil {
 			return step, err
 		}
+		if u := r.upgrades[op.Key]; u != nil {
+			return r.upgradeOperator(ctx, ps, op, u)
+		}
 		if csv != "" {
 			r.st.Versions[op.Key] = csv
 			step.Outcome, step.Detail = Reused, csv
@@ -65,6 +70,170 @@ func (r *runner) operator(op operatorSpec) func(context.Context, precheck.Progre
 		step.Detail += "; " + csv
 		return step, err
 	}
+}
+
+// offerUpdates lists the operators with an update available and, unless this is
+// a dry run or --upgrade-operators answered, asks about each. The accepted ones
+// land in r.upgrades, for the operator steps to apply.
+func (r *runner) offerUpdates(ctx context.Context, rep *precheck.Report) {
+	for _, op := range []operatorSpec{cnv, lvms} {
+		u, err := cluster.OperatorUpdate(ctx, r.Dyn, op.Operator, op.channel(r.cfg))
+		switch {
+		case err != nil:
+			r.res.Warnings = append(r.res.Warnings, "cannot tell whether "+op.Key+" is up to date: "+err.Error())
+			continue
+		case u == nil:
+			continue
+		}
+		r.res.Updates = append(r.res.Updates, *u)
+		q := "Upgrade " + op.Key + " from " + u.Installed + " to " + updateTarget(u)
+		if u.Suggested != "" {
+			q += " (channel " + u.Channel + " → " + u.Suggested + ")"
+		}
+		if op.Key == cluster.CNV.Key {
+			if vms := r.runningVMs(ctx); len(vms) > 0 {
+				m := fmt.Sprintf("%d running VM(s)", len(vms)) + ": " + summarize(vms)
+				q += "; this restarts OpenShift Virtualization and affects " + m
+				r.res.Warnings = append(r.res.Warnings, "upgrading cnv restarts OpenShift Virtualization and affects "+m)
+			}
+		}
+		switch {
+		case r.o.DryRun, r.o.UpgradeOperators:
+		case r.Confirm == nil || !r.Confirm(q, "y"):
+			r.res.Warnings = append(r.res.Warnings,
+				op.Key+" update "+u.String()+" not applied; pass --upgrade-operators to upgrade it")
+			continue
+		}
+		r.upgrades[op.Key] = u
+	}
+	if rep.HubManaged && len(r.upgrades) > 0 {
+		r.res.Warnings = append(r.res.Warnings, "an ACM hub manages this cluster: its policies may revert an operator upgrade")
+	}
+}
+
+// updateTarget is what an upgrade installs, for a question.
+func updateTarget(u *cluster.Update) string {
+	if u.Available == "" {
+		return "the pending upgrade"
+	}
+	return u.Available
+}
+
+// runningVMs names the running VirtualMachines on the cluster as ns/name: a CNV
+// upgrade restarts them wherever they live.
+func (r *runner) runningVMs(ctx context.Context) []string {
+	l, err := r.Dyn.Resource(cluster.GVRVirtualMachine).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil // no KubeVirt, or no access: the upgrade's own checks report it
+	}
+	var out []string
+	for i := range l.Items {
+		vm := &l.Items[i]
+		if on, _, _ := unstructured.NestedBool(vm.Object, "spec", "running"); !on {
+			continue
+		}
+		out = append(out, vm.GetNamespace()+"/"+vm.GetName())
+	}
+	slices.Sort(out)
+	return out
+}
+
+// summarize lists the first five of names and counts the rest.
+func summarize(names []string) string {
+	if len(names) <= 5 {
+		return strings.Join(names, ", ")
+	}
+	return strings.Join(names[:5], ", ") + fmt.Sprintf(" and %d more", len(names)-5)
+}
+
+// upgradeOperator applies an accepted update: it moves the Subscription to the
+// channel precheck picked and approves an InstallPlan waiting for approval,
+// then waits for the new CSV to succeed and, for CNV, for HyperConverged to be
+// Available again.
+func (r *runner) upgradeOperator(ctx context.Context, ps precheck.ProgressStep, op operatorSpec, u *cluster.Update) (Step, error) {
+	step := Step{Name: op.Key, Outcome: Upgraded, Detail: u.String()}
+	if r.o.DryRun {
+		step.Outcome, step.Detail = Planned, "upgrade "+u.String()
+		return step, nil
+	}
+	sub, err := cluster.Subscription(ctx, r.Dyn, op.Operator)
+	if err != nil {
+		return step, err
+	}
+	if sub == nil {
+		return step, fmt.Errorf("%s has no Subscription, so OLM has nothing to upgrade", op.Key)
+	}
+	if u.Suggested != "" {
+		ps.Update("moving to channel " + u.Suggested)
+		if err := cluster.SetChannel(ctx, r.Dyn, sub, u.Suggested); err != nil {
+			return step, err
+		}
+	}
+	if u.Plan != "" {
+		ps.Update("approving " + u.Plan)
+		if err := cluster.Approve(ctx, r.Dyn, op.Namespace, u.Plan); err != nil {
+			return step, err
+		}
+	}
+	ps.Update("waiting for the new CSV to succeed")
+	csv, err := r.waitForUpgrade(ctx, op, u.Installed)
+	if csv != "" {
+		r.st.Versions[op.Key] = csv
+		step.Detail += "; " + csv
+	}
+	if err != nil {
+		return step, err
+	}
+	if op.Key == cluster.CNV.Key {
+		err = r.waitHyperConverged(ctx)
+	}
+	return step, err
+}
+
+// waitForUpgrade waits for the Subscription to settle on a new CSV: OLM has
+// moved currentCSV off old, and the CSV it points at is installed and
+// Succeeded. A Manual Subscription's next InstallPlan is approved on the way,
+// since a channel change makes OLM create a new one.
+func (r *runner) waitForUpgrade(ctx context.Context, op operatorSpec, old string) (string, error) {
+	var csv string
+	err := r.wait(ctx, op.Key+" upgrade", func(ctx context.Context) (bool, error) {
+		sub, err := cluster.Subscription(ctx, r.Dyn, op.Operator)
+		if err != nil || sub == nil {
+			return false, err
+		}
+		st := cluster.SubscriptionStatusOf(sub)
+		if st.Approval == "Manual" {
+			if _, err := cluster.ApprovePending(ctx, r.Dyn, op.Operator, st.Installed); err != nil {
+				return false, errStuck{err}
+			}
+		}
+		if st.Current == "" || st.Current == old || st.Installed != st.Current {
+			return false, nil
+		}
+		phase, err := cluster.CSVPhase(ctx, r.Dyn, op.Operator, st.Installed)
+		if err != nil {
+			return false, err
+		}
+		csv = st.Installed
+		return phase == "Succeeded", nil
+	})
+	return csv, err
+}
+
+// waitHyperConverged waits for HyperConverged to report Available after a CNV
+// upgrade. Without the object, or its CRD, there is nothing to wait for.
+func (r *runner) waitHyperConverged(ctx context.Context) error {
+	hc := r.Dyn.Resource(precheck.GVRHyperConverged).Namespace(cnvNS)
+	if _, err := hc.Get(ctx, hcoName, metav1.GetOptions{}); err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return nil
+		}
+		return err
+	}
+	return r.wait(ctx, "HyperConverged Available", func(ctx context.Context) (bool, error) {
+		cur, err := hc.Get(ctx, hcoName, metav1.GetOptions{})
+		return err == nil && cluster.Condition(cur, "Available") == "True", err
+	})
 }
 
 // inNamespace keeps the objects in ns, and the Namespace object ns itself.

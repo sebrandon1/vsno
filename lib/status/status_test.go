@@ -77,9 +77,13 @@ func healthy() []runtime.Object {
 }
 
 var listKinds = map[schema.GroupVersionResource]string{
-	precheck.GVRCSV:           "ClusterServiceVersionList",
-	precheck.GVRLVMCluster:    "LVMClusterList",
-	cluster.GVRVirtualMachine: "VirtualMachineList",
+	cluster.GVRCSV:             "ClusterServiceVersionList",
+	cluster.GVRSubscription:    "SubscriptionList",
+	cluster.GVRInstallPlan:     "InstallPlanList",
+	cluster.GVRPackageManifest: "PackageManifestList",
+	precheck.GVRClusterVersion: "ClusterVersionList",
+	precheck.GVRLVMCluster:     "LVMClusterList",
+	cluster.GVRVirtualMachine:  "VirtualMachineList",
 }
 
 func kube(withState, managed bool) *kfake.Clientset {
@@ -198,6 +202,38 @@ func TestCollectUnmanagedNamespace(t *testing.T) {
 	}
 	if d := byName(r.Host)["storage"].Detail; d != "StorageClass "+manifests.DefaultStorageClass {
 		t.Errorf("storage without a known node = %q", d)
+	}
+}
+
+func TestCollectReportsOperatorUpdate(t *testing.T) {
+	const wantCSV = "kubevirt-hyperconverged-operator.v2"
+	objs := append(healthy(),
+		obj("packages.operators.coreos.com/v1", "PackageManifest", cluster.MarketplaceNamespace, cluster.CNV.Package,
+			map[string]any{"status": map[string]any{"defaultChannel": "stable",
+				"channels": []any{map[string]any{"name": "stable", "currentCSV": wantCSV}}}}),
+		obj("operators.coreos.com/v1alpha1", "Subscription", cluster.CNVNamespace, "hco-operatorhub",
+			map[string]any{"spec": map[string]any{"name": cluster.CNV.Package, "channel": "stable"},
+				"status": map[string]any{
+					"installedCSV": "kubevirt-hyperconverged-operator.v1",
+					"currentCSV":   "kubevirt-hyperconverged-operator.v1",
+					"state":        "UpgradeAvailable",
+				}}),
+	)
+	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objs...)
+	r, err := Collect(context.Background(), kube(true, true), dyn, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cnv := byName(r.Host)["cnv"]
+	if cnv.Status != precheck.Warn || !strings.Contains(cnv.Detail, "update available (") || !strings.Contains(cnv.Detail, wantCSV) {
+		t.Errorf("cnv = %+v", cnv)
+	}
+	// A warning keeps status exiting 0.
+	if !r.Healthy() {
+		t.Error("an operator update must not make the environment unhealthy")
+	}
+	if lvms := byName(r.Host)["lvms"]; lvms.Status != precheck.Pass {
+		t.Errorf("lvms = %+v", lvms)
 	}
 }
 

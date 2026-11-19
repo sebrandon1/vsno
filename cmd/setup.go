@@ -29,6 +29,7 @@ var (
 	suConfig    string
 	suYes       bool
 	suForce     bool
+	suUpgrade   bool
 	suDryRun    bool
 	suManifests bool
 	suNoProbe   bool
@@ -53,6 +54,15 @@ file 'vsno precheck --write-config' writes), then the precheck's suggestion.
 Taking over a disk asks you to type the node name, unless --yes. Reruns reuse
 generated credentials and report "unchanged" for objects that didn't change.
 
+Before the operator steps, setup lists the operators it manages (OpenShift
+Virtualization and LVM Storage) that OLM can update: a newer CSV in the
+channel, a Manual Subscription waiting for approval, or a channel older than
+this OCP version's. For each it asks "Upgrade <operator> from <installed> to
+<available>?"; --upgrade-operators says yes to all, while --yes only approves
+the disk. Upgrading OpenShift Virtualization restarts it, so the running VMs it
+would affect are named first. Without a terminal, setup warns and keeps the
+installed version. A rerun reports the operators as reused.
+
 setup asks before taking over an existing namespace it didn't create (no
 app.kubernetes.io/managed-by=vsno label and no vsno-state ConfigMap), because it
 would overwrite objects there; --force takes it over without asking. A
@@ -73,6 +83,7 @@ func init() {
 	f.StringVar(&suConfig, "config", "", "settings file written by 'vsno precheck --write-config'")
 	f.BoolVar(&suYes, "yes", false, "approve taking over the LVMS disk without asking")
 	f.BoolVar(&suForce, "force", false, "take over an existing namespace vsno didn't create without asking, overwriting objects in it")
+	f.BoolVar(&suUpgrade, "upgrade-operators", false, "upgrade operators that have an update available without asking")
 	f.BoolVar(&suDryRun, "dry-run", false, "list what setup would do and change nothing")
 	f.BoolVar(&suManifests, "manifests", false, "with --dry-run, also print the manifests (Secret values redacted); implies --dry-run")
 	f.BoolVar(&suNoProbe, "no-probe", false, "skip the precheck hardware probe (then --node is required)")
@@ -114,7 +125,8 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Setting up %s in %s (context %q)...\n\n", namespace, c.Config.Host, c.Context)
 	}
 	res, err := setup.Run(cmd.Context(), env, setup.Options{
-		Namespace: namespace, Settings: settings, Yes: suYes, Force: suForce, DryRun: suDryRun, Images: manifests.DefaultImages(),
+		Namespace: namespace, Settings: settings, Yes: suYes, Force: suForce,
+		UpgradeOperators: suUpgrade, DryRun: suDryRun, Images: manifests.DefaultImages(),
 	})
 	if outputFormat == formatTable {
 		fmt.Fprintln(cmd.ErrOrStderr())
@@ -170,7 +182,7 @@ func stepIcon(pal ui.Palette, outcome string) string {
 	switch outcome {
 	case string(setup.Reused), string(teardown.Kept), string(teardown.Gone):
 		return pal.Dim("=")
-	case string(setup.Applied), string(teardown.Deleted):
+	case string(setup.Applied), string(setup.Upgraded), string(teardown.Deleted):
 		return pal.Green("✓")
 	default:
 		return pal.Yellow("~")

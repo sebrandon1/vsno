@@ -75,7 +75,7 @@ func host() []runtime.Object {
 
 func newDyn(objs ...runtime.Object) *dynfake.FakeDynamicClient {
 	return dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		precheck.GVRCSV:           "ClusterServiceVersionList",
+		cluster.GVRCSV:            "ClusterServiceVersionList",
 		precheck.GVRLVMCluster:    "LVMClusterList",
 		cluster.GVRVirtualMachine: "VirtualMachineList",
 		cluster.GVRSubscription:   "SubscriptionList",

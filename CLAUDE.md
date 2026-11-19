@@ -53,12 +53,18 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `lib/setup`: `Run` resolves settings from the precheck, then runs the steps: operators, HyperConverged,
   storage, namespace, support services. Each step either reuses what it finds or applies the manifests
   and waits for them. In a dry run a recording Applier replaces SSA, asks the SSA's `Plan` what
-  each object would do, and the waits are skipped.
+  each object would do, and the waits are skipped. Before the steps, `offerUpdates` asks about the
+  operators `cluster.OperatorUpdate` finds behind (a newer CSV in the channel, a Manual InstallPlan,
+  or a channel older than the precheck's): accepted ones are applied by the operator step, which
+  patches the Subscription channel, approves the InstallPlan, then waits for the new CSV.
 - `lib/cluster`: names of the host objects (operator namespaces, HyperConverged, LVMCluster,
-  support Deployments), extra GVRs, and helpers shared by setup, status and teardown: `CSVs`,
-  `SucceededCSV`, `Condition`, `RolledOut`, `Ready`.
+  support Deployments), the OLM GVRs, and helpers shared by precheck, setup, status and teardown:
+  `CSVs`, `SucceededCSV`, `CSVPhase`, `Condition`, `RolledOut`, `Ready`, and the operator update
+  detection (`OperatorUpdate`, `Subscription`, `Approve`, `SetChannel`). It imports no other vsno
+  package but `state`, so precheck can use it.
 - `lib/status`: `Collect` reads the host components, support services, VMs and state. A broken
-  component becomes a Fail or Warn row; only namespace or state read errors fail it.
+  component becomes a Fail or Warn row; only namespace or state read errors fail it. An operator
+  with an update available is a Warn row, so status still exits 0.
 - `lib/teardown`: `Run` plans the targets in order, checks the safety rules, confirms, then
   deletes each target and waits for those marked `wait`. `plan.go` mirrors setup for the report:
   `manifests.Steps` in reverse, each step's rendered objects (reversed; `Planner` says delete or

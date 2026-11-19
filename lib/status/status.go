@@ -88,9 +88,10 @@ func Collect(ctx context.Context, kube kubernetes.Interface, dyn dynamic.Interfa
 		r.Node, r.Disk, r.Stages = st.Node, st.Disk, st.Stages
 	}
 
+	cnvChannel, lvmsChannel := precheck.Channels(ctx, dyn)
 	r.Host = []Component{
-		operator(ctx, dyn, cluster.CNV),
-		operator(ctx, dyn, cluster.LVMS),
+		operator(ctx, dyn, cluster.CNV, cnvChannel),
+		operator(ctx, dyn, cluster.LVMS, lvmsChannel),
 		hyperConverged(ctx, dyn),
 		lvmCluster(ctx, dyn),
 		storageClass(ctx, kube, r.Node),
@@ -114,7 +115,10 @@ func missing(name, what string) Component {
 	return Component{Name: name, Status: precheck.Fail, Detail: what + " not found; run `vsno setup`"}
 }
 
-func operator(ctx context.Context, dyn dynamic.Interface, op cluster.Operator) Component {
+// operator reports op's CSV and phase, and warns when its channel offers a
+// newer one. channel is the one precheck would use, so a Subscription behind
+// the cluster's version shows up too.
+func operator(ctx context.Context, dyn dynamic.Interface, op cluster.Operator, channel string) Component {
 	csvs, err := cluster.CSVs(ctx, dyn, op)
 	switch {
 	case apierrors.IsNotFound(err) || (err == nil && len(csvs) == 0):
@@ -133,7 +137,11 @@ func operator(ctx context.Context, dyn dynamic.Interface, op cluster.Operator) C
 	if phase != "Succeeded" {
 		st = precheck.Warn
 	}
-	return Component{Name: op.Key, Status: st, Detail: c.GetName() + " " + phase}
+	row := Component{Name: op.Key, Status: st, Detail: c.GetName() + " " + phase}
+	if u, err := cluster.OperatorUpdate(ctx, dyn, op, channel); err == nil && u != nil {
+		row.Status, row.Detail = precheck.Warn, row.Detail+"; "+precheck.UpdateDetail(u)
+	}
+	return row
 }
 
 func hyperConverged(ctx context.Context, dyn dynamic.Interface) Component {
