@@ -137,13 +137,17 @@ func OperatorUpdate(ctx context.Context, dyn dynamic.Interface, op Operator, sug
 }
 
 // targetCSV returns the CSV an upgrade would install and the channel to move to
-// when the Subscription is behind the suggested one. The channel stays "" when
-// the catalog doesn't list it: patching one it doesn't have would fail in OLM.
+// when the Subscription is behind the suggested one. The suggestion is only
+// used for a version channel, the one precheck judges against the cluster
+// version (stable-4.22): a maturity channel such as CNV's stable or candidate
+// is the user's choice, so the Subscription is left alone. The channel stays
+// "" too when the catalog doesn't list it, since patching one it doesn't have
+// would fail in OLM.
 func targetCSV(ctx context.Context, dyn dynamic.Interface, pkg string, st SubscriptionStatus, suggested string) (csv, move string, err error) {
 	if csv, _, err = channelCSV(ctx, dyn, pkg, st.Channel); err != nil {
 		return "", "", err
 	}
-	if suggested == "" || suggested == st.Channel {
+	if suggested == "" || suggested == st.Channel || !versioned(suggested) || !versioned(st.Channel) {
 		return csv, "", nil
 	}
 	other, ok, err := channelCSV(ctx, dyn, pkg, suggested)
@@ -151,6 +155,11 @@ func targetCSV(ctx context.Context, dyn dynamic.Interface, pkg string, st Subscr
 		return csv, "", err
 	}
 	return other, suggested, nil
+}
+
+// versioned reports whether channel pins an OCP minor, as stable-4.22 does.
+func versioned(channel string) bool {
+	return strings.HasPrefix(channel, "stable-")
 }
 
 // channelCSV returns the CSV at the head of pkg's channel, and whether the

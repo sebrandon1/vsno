@@ -136,6 +136,15 @@ func TestOperatorUpdate(t *testing.T) {
 			suggested: "stable-4.22",
 		},
 		{
+			// CNV's stable and candidate are maturity channels: precheck's pick
+			// must not drag a Subscription off the one the user chose.
+			name: "a maturity channel is left alone",
+			objs: []runtime.Object{csv(CNV.Namespace, csvV1, "Succeeded"),
+				subscription("candidate", "", csvV1, csvV1, "AtLatestKnown"),
+				manifest(map[string]string{"candidate": csvV1, "stable": csvV1})},
+			suggested: "stable",
+		},
+		{
 			name: "no subscription",
 			objs: []runtime.Object{csv(CNV.Namespace, csvV1, "Succeeded")},
 		},
