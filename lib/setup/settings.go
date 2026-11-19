@@ -8,9 +8,6 @@ import (
 	"github.com/sebrandon1/vsno/lib/precheck"
 )
 
-// nodeChecks are the per-node precheck rows ("<node>: <check>").
-var nodeChecks = map[string]bool{"virtualization": true, "cpu": true, "memory": true, "disk": true, "probe": true}
-
 // capacityChecks only warn: `vsno create` enforces capacity per VM later, and
 // an existing environment may hold the memory now.
 var capacityChecks = map[string]bool{"cpu": true, "memory": true}
@@ -24,17 +21,15 @@ func resolve(rep *precheck.Report, user precheck.Suggested) (precheck.Suggested,
 		if r.Status != precheck.Fail {
 			continue
 		}
-		node, check, scoped := strings.Cut(r.Check, ": ")
-		scoped = scoped && nodeChecks[check]
 		switch {
-		case scoped && node != s.Node:
+		case r.Node != "" && r.Node != s.Node:
 			// Another node; not used.
-		case scoped && capacityChecks[check]:
-			warnings = append(warnings, r.Check+": "+r.Detail)
+		case r.Node != "" && capacityChecks[r.Check]:
+			warnings = append(warnings, r.Name()+": "+r.Detail)
 		case r.Check == "Eligible node" && s.Node != "":
 			// The user picked a node.
 		default:
-			hard = append(hard, r.Check+": "+r.Detail)
+			hard = append(hard, r.Name()+": "+r.Detail)
 		}
 	}
 	if len(hard) > 0 {

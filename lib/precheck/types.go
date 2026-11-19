@@ -3,6 +3,8 @@
 // settings `vsno setup` needs.
 package precheck
 
+import "strings"
+
 // Status is the outcome of a single check.
 type Status string
 
@@ -13,13 +15,51 @@ const (
 	Info Status = "info"
 )
 
+// Group is the report section a result belongs to.
+type Group string
+
+const (
+	GroupCluster Group = "cluster" // access, version, networks, DNS, hub
+	GroupInstall Group = "install" // operator catalog, what is already installed, seed registry
+	GroupWorkers Group = "workers" // worker candidates, per-node hardware, the chosen node
+)
+
 // Result is one row of the precheck report.
 type Result struct {
 	Check  string `json:"check"`
 	Status Status `json:"status"`
 	Detail string `json:"detail"`
 	// Hint tells the user what to do about a warn/fail. Optional.
-	Hint string `json:"hint,omitempty"`
+	Hint  string `json:"hint,omitempty"`
+	Group Group  `json:"group"`
+	// Node is set on per-node rows; Check is then the aspect (cpu, memory...).
+	Node string `json:"node,omitempty"`
+}
+
+// Name is the row's full name: "<node>: <check>" for per-node rows.
+func (r Result) Name() string {
+	if r.Node == "" {
+		return r.Check
+	}
+	return r.Node + ": " + r.Check
+}
+
+// groupOf places a result in its report section.
+func groupOf(r Result) Group {
+	switch {
+	case r.Node != "", r.Check == "Worker nodes", r.Check == "Hardware probe", r.Check == "Eligible node":
+		return GroupWorkers
+	case strings.HasPrefix(r.Check, "Catalog: "), strings.HasPrefix(r.Check, "Existing: "), r.Check == "Seed registry":
+		return GroupInstall
+	default:
+		return GroupCluster
+	}
+}
+
+// NodeSummary is the verdict for one evaluated worker.
+type NodeSummary struct {
+	Name     string `json:"name"`
+	Eligible bool   `json:"eligible"`
 }
 
 // Suggested holds the values `vsno setup` needs, derived from the checks.
@@ -35,8 +75,10 @@ type Suggested struct {
 
 // Report is the full precheck output.
 type Report struct {
-	Results   []Result  `json:"results"`
-	Suggested Suggested `json:"suggested"`
+	Results []Result `json:"results"`
+	// Nodes are the evaluated workers, eligible first, best first.
+	Nodes     []NodeSummary `json:"nodes,omitempty"`
+	Suggested Suggested     `json:"suggested"`
 }
 
 // Failed counts results with Status Fail.
@@ -51,6 +93,9 @@ func (r *Report) Failed() int {
 }
 
 func (r *Report) add(res Result) {
+	if res.Group == "" {
+		res.Group = groupOf(res)
+	}
 	r.Results = append(r.Results, res)
 }
 

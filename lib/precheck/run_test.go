@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -118,7 +119,7 @@ func labEnv(t *testing.T, bmFixture string, extraKube ...runtime.Object) *Env {
 
 func find(r *Report, check string) *Result {
 	for i := range r.Results {
-		if r.Results[i].Check == check {
+		if r.Results[i].Name() == check {
 			return &r.Results[i]
 		}
 	}
@@ -131,7 +132,7 @@ func TestRunPicksBareMetalNodeAndDisk(t *testing.T) {
 
 	if r.Failed() != 0 {
 		for _, res := range r.Results {
-			t.Logf("%-5s %-40s %s", res.Status, res.Check, res.Detail)
+			t.Logf("%-5s %-40s %s", res.Status, res.Name(), res.Detail)
 		}
 		t.Fatalf("an eligible node exists, so nothing should fail; got %d failures", r.Failed())
 	}
@@ -158,6 +159,45 @@ func TestRunPicksBareMetalNodeAndDisk(t *testing.T) {
 	}
 	if got := find(r, "Network overlap"); got == nil || got.Status != Pass {
 		t.Errorf("network overlap: %+v", got)
+	}
+}
+
+func TestRunGroupsAndNodes(t *testing.T) {
+	r := Run(context.Background(), labEnv(t, "probe-baremetal-empty-disk.txt"), DefaultRequirements(), Options{})
+	wantNodes := []NodeSummary{{Name: "bm-worker", Eligible: true}, {Name: "vm-worker"}}
+	if !slices.Equal(r.Nodes, wantNodes) {
+		t.Errorf("Nodes = %+v, want %+v", r.Nodes, wantNodes)
+	}
+	// Each row has its section; per-node rows carry the node.
+	for name, want := range map[string]Group{
+		"Cluster access": GroupCluster, "OpenShift version": GroupCluster,
+		"Catalog: LVM Storage": GroupInstall, "Seed registry": GroupInstall,
+		"Worker nodes": GroupWorkers, "bm-worker: cpu": GroupWorkers, "Eligible node": GroupWorkers,
+	} {
+		if got := find(r, name); got == nil || got.Group != want {
+			t.Errorf("%s: group = %+v, want %s", name, got, want)
+		}
+	}
+	if got := find(r, "bm-worker: cpu"); got.Node != "bm-worker" || got.Check != "cpu" {
+		t.Errorf("per-node row = %+v", got)
+	}
+	// The per-node blocks name the workers, so the candidates row only counts them.
+	if got := find(r, "Worker nodes"); got.Detail != "2 candidate(s)" {
+		t.Errorf("worker nodes detail = %q", got.Detail)
+	}
+}
+
+func TestRunProbeFailureIsANodeRow(t *testing.T) {
+	env := labEnv(t, "probe-baremetal-empty-disk.txt")
+	env.Prober = fixtureProber{"bm-worker": "probe-baremetal-empty-disk.txt", "vm-worker": "missing.txt"}
+	r := Run(context.Background(), env, DefaultRequirements(), Options{})
+	got := find(r, "vm-worker: probe")
+	if got == nil || got.Status != Warn || got.Node != "vm-worker" || got.Group != GroupWorkers {
+		t.Fatalf("probe failure row = %+v", got)
+	}
+	// A node that wasn't evaluated has no verdict.
+	if want := []NodeSummary{{Name: "bm-worker", Eligible: true}}; !slices.Equal(r.Nodes, want) {
+		t.Errorf("Nodes = %+v", r.Nodes)
 	}
 }
 
@@ -217,6 +257,9 @@ func TestRunNoProbeWarns(t *testing.T) {
 	if got := find(r, "Hardware probe"); got == nil || got.Status != Warn {
 		t.Fatalf("want probe-skipped warning, got %+v", got)
 	}
+	if got := find(r, "Worker nodes"); got == nil || !strings.Contains(got.Detail, "2 candidate(s): ") {
+		t.Errorf("without the probe the candidates are named: %+v", got)
+	}
 }
 
 func TestRunNodeFilter(t *testing.T) {
@@ -259,12 +302,22 @@ func TestRunCountsExistingVsnoMemoryAsAvailable(t *testing.T) {
 	}
 	held := false
 	for _, res := range r.Results {
-		if res.Check == "bm-worker: memory" && res.Status == Info && strings.Contains(res.Detail, "66 GiB held by the existing vsno") {
+		if res.Name() == "bm-worker: memory" && res.Status == Info && strings.Contains(res.Detail, "66 GiB held by the existing vsno") {
 			held = true
 		}
 	}
 	if !held {
 		t.Error("want an info row explaining memory held by the existing environment")
+	}
+	// The note follows the memory row it explains, not the disk row.
+	var bm []string
+	for _, res := range r.Results {
+		if res.Node == "bm-worker" {
+			bm = append(bm, res.Check)
+		}
+	}
+	if want := []string{"virtualization", "cpu", "memory", "memory", "disk"}; !slices.Equal(bm, want) {
+		t.Errorf("bm-worker rows = %v, want %v", bm, want)
 	}
 
 	// Without the vsno pods, the same 'other' usage plus a big foreign workload fails.

@@ -252,7 +252,7 @@ func TestRunReusesHostAndRerunIsNoOp(t *testing.T) {
 	s.existingHost(t)
 	o := opts()
 	o.Yes = false // no disk prompt when storage is reused
-	res, err := Run(context.Background(), s.env(report(precheck.Result{Check: node + ": memory", Status: precheck.Fail, Detail: "8 GiB schedulable"})), o)
+	res, err := Run(context.Background(), s.env(report(precheck.Result{Node: node, Check: "memory", Status: precheck.Fail, Detail: "8 GiB schedulable"})), o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,6 +531,11 @@ func TestResolve(t *testing.T) {
 	fail := func(check string) precheck.Result {
 		return precheck.Result{Check: check, Status: precheck.Fail, Detail: "x"}
 	}
+	failOn := func(node, check string) precheck.Result {
+		r := fail(check)
+		r.Node = node
+		return r
+	}
 	cases := []struct {
 		name      string
 		results   []precheck.Result
@@ -545,12 +550,12 @@ func TestResolve(t *testing.T) {
 		{name: "cluster failure stops", results: []precheck.Result{fail("Network overlap")}, suggested: node, wantErr: "Network overlap"},
 		{name: "catalog failure stops", results: []precheck.Result{fail("Catalog: LVM Storage")}, suggested: node, wantErr: "Catalog: LVM Storage"},
 		{name: "memory on the chosen node warns",
-			results: []precheck.Result{fail("worker-2: memory"), fail("Eligible node")},
+			results: []precheck.Result{failOn("worker-2", "memory"), fail("Eligible node")},
 			user:    precheck.Suggested{Node: "worker-2"}, wantNode: "worker-2", wantWarn: 1},
 		{name: "kvm on the chosen node stops",
-			results: []precheck.Result{fail("worker-2: virtualization")},
+			results: []precheck.Result{failOn("worker-2", "virtualization")},
 			user:    precheck.Suggested{Node: "worker-2"}, wantErr: "worker-2: virtualization"},
-		{name: "other nodes are ignored", results: []precheck.Result{fail("worker-9: disk")}, suggested: node, wantNode: node, wantDisk: disk},
+		{name: "other nodes are ignored", results: []precheck.Result{failOn("worker-9", "disk")}, suggested: node, wantNode: node, wantDisk: disk},
 		{name: "no node", results: []precheck.Result{fail("Eligible node")}, wantErr: "precheck failed: Eligible node"},
 		{name: "no probe, no node", wantErr: "no node selected"},
 		{name: "user disk wins", user: precheck.Suggested{Disk: "/dev/disk/by-id/wwn-0x5000000000000009"}, suggested: node,

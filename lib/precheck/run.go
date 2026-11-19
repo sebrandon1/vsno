@@ -75,7 +75,11 @@ func (e *Env) listWorkers(ctx context.Context, r *Report, opts Options) ([]corev
 		r.add(Result{Check: "Worker nodes", Status: Fail, Detail: msg})
 		return nil, false
 	}
-	r.add(Result{Check: "Worker nodes", Status: Info, Detail: fmt.Sprintf("%d candidate(s): %s", len(workers), strings.Join(nodeNames(workers), ", "))})
+	detail := fmt.Sprintf("%d candidate(s)", len(workers))
+	if e.Prober == nil { // no per-node blocks follow, so name them here
+		detail += ": " + strings.Join(nodeNames(workers), ", ")
+	}
+	r.add(Result{Check: "Worker nodes", Status: Info, Detail: detail})
 	return workers, true
 }
 
@@ -113,7 +117,7 @@ func (e *Env) evaluateWorkers(ctx context.Context, r *Report, workers []corev1.N
 	var verdicts []NodeVerdict
 	for _, n := range workers {
 		if perr := probeErrs[n.Name]; perr != nil {
-			r.add(Result{Check: n.Name + ": probe", Status: Warn, Detail: perr.Error()})
+			r.add(Result{Node: n.Name, Check: "probe", Status: Warn, Detail: perr.Error()})
 			continue
 		}
 		h, ok := hw[n.Name]
@@ -122,13 +126,13 @@ func (e *Env) evaluateWorkers(ctx context.Context, r *Report, workers []corev1.N
 		}
 		free, held, ferr := e.freeMemory(ctx, n)
 		if ferr != nil {
-			r.add(Result{Check: n.Name + ": memory", Status: Warn, Detail: ferr.Error()})
+			r.add(Result{Node: n.Name, Check: "memory", Status: Warn, Detail: ferr.Error()})
 			continue
 		}
 		// LVMS storage only helps on the node(s) where TopoLVM actually runs.
 		v := EvaluateNode(n.Name, h, free+held, req, storageReady && e.hasTopoLVM(ctx, n.Name))
 		if held > 0 {
-			v.Results = append(v.Results, Result{Check: n.Name + ": memory", Status: Info,
+			v.insertAfter("memory", Result{Node: n.Name, Check: "memory", Status: Info,
 				Detail: fmt.Sprintf("%d GiB held by the existing %s environment is counted as available", held>>30, e.Namespace)})
 		}
 		verdicts = append(verdicts, v)
@@ -155,7 +159,10 @@ func summarize(r *Report, verdicts []NodeVerdict) {
 		if !v.Eligible && eligible > 0 {
 			demoteFailures(v.Results)
 		}
-		r.Results = append(r.Results, v.Results...)
+		for _, res := range v.Results {
+			r.add(res)
+		}
+		r.Nodes = append(r.Nodes, NodeSummary{Name: v.Node, Eligible: v.Eligible})
 	}
 	if eligible == 0 {
 		r.add(Result{Check: "Eligible node", Status: Fail, Detail: "no worker can host vSNO VMs",

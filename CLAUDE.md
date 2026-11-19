@@ -62,7 +62,7 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 
 | File | Role |
 |---|---|
-| `types.go` | `Status`, `Result`, `Report`, `Suggested`, and `Requirements` (defaults: 2 VMs × 16 cores / 32 GiB, a 600 GB disk, guest CIDRs). Also the `Progress`/`ProgressStep` interfaces, with no-op defaults. |
+| `types.go` | `Status`, `Group`, `Result` (per-node rows set `Node`; `Name()` is `<node>: <check>`), `Report` (with `Nodes` verdicts), `Suggested`, and `Requirements` (defaults: 2 VMs × 16 cores / 32 GiB, a 600 GB disk, guest CIDRs). Also the `Progress`/`ProgressStep` interfaces, with no-op defaults. |
 | `probe.sh` | Embedded node probe script. It runs via `chroot /host` and prints `KEY=VALUE` lines (`VIRT`, `KVM`, `NPROC`, `MEM_*`, `LSBLK`, `BYID`). It must stay read-only. |
 | `probe.go` | `ParseProbe` turns that output into `NodeHardware`/`Disk`. `Disk.PreferredByID` prefers `wwn-*`. |
 | `prober.go` | `PodProber` creates a temporary privileged namespace, one pod per node, reads the logs, then deletes the namespace. It reports each node as it finishes (`onDone`). |
@@ -78,7 +78,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - The "StorageClass `lvms-vg-vsno` already exists" shortcut only applies to nodes whose CSINode
   lists the `topolvm.io` driver.
 - When at least one node is eligible, failures on the other nodes are demoted to `info` with a
-  `not usable:` prefix.
+  `not usable:` prefix. The table groups rows into Cluster / Operators, storage and registry /
+  Workers, with a heading per node that states the verdict, so it drops that prefix.
+- `Report.add` assigns each row's `Group` (`groupOf`); add new checks there.
+- A redrawn progress line never exceeds the terminal width (it would wrap and leave a copy on
+  every redraw). The detail is shortened first, so the elapsed time stays visible.
 - Without `--seed-repo`, the "Seed registry" row is `info` (the in-cluster registry is the
   default) and no auth files are read.
 - Progress goes to stderr and is turned off for `-o json`, so stdout stays machine-readable.

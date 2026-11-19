@@ -69,19 +69,30 @@ Example output (shortened) for a 3-master, 2-worker cluster where `worker-1` is 
 server and `worker-0` is a small VM:
 
 ```text
-✓  Cluster access            cluster-admin
-✓  OpenShift version         4.22.0
-✓  Network overlap           host 10.128.0.0/14,172.30.0.0/16 vs guest 10.0.2.0/24,10.132.0.0/14,172.31.0.0/16
-✓  Catalog: LVM Storage      lvms-operator channel stable-4.22
-i  Seed registry             in-cluster registry (default); pass --seed-repo to push to an external registry instead
+Cluster
+✓  Cluster access     cluster-admin
+✓  OpenShift version  4.22.0
+✓  Network overlap    host 10.128.0.0/14,172.30.0.0/16 vs guest 10.0.2.0/24,10.132.0.0/14,172.31.0.0/16
    ...
-✓  worker-1: virtualization  bare metal (Example Server), /dev/kvm present
-✓  worker-1: cpu             104 threads (need 32 for 2 VMs)
-✓  worker-1: memory          80 GiB schedulable (need 66 GiB)
-✓  worker-1: disk            sdb 1919GB empty: /dev/disk/by-id/wwn-0x5000000000000002
-!  worker-0: virtualization  node is itself a VM (virt=kvm) with nested KVM
-i  worker-0: cpu             not usable: 4 threads; one VM needs 16
-✓  Eligible node             worker-1 (of 1 eligible)
+
+Operators, storage and registry
+✓  Catalog: LVM Storage  lvms-operator channel stable-4.22
+i  Seed registry         in-cluster registry (default); pass --seed-repo to push to an external registry instead
+   ...
+
+Workers
+i  Worker nodes  2 candidate(s)
+✓  worker-1  eligible, suggested
+   ✓  virtualization  bare metal (Example Server), /dev/kvm present
+   ✓  cpu             104 threads (need 32 for 2 VMs)
+   ✓  memory          80 GiB schedulable (need 66 GiB)
+   ✓  disk            sdb 1919GB empty: /dev/disk/by-id/wwn-0x5000000000000002
+i  worker-0  not usable
+   !  virtualization  node is itself a VM (virt=kvm) with nested KVM
+                      → Works, but nested guests are much slower. Prefer a bare-metal worker.
+   i  cpu             4 threads; one VM needs 16
+   ...
+✓  Eligible node  worker-1 (of 1 eligible)
 
 Suggested settings for `vsno setup`:
   node          worker-1
@@ -106,6 +117,9 @@ Useful flags:
 
 `precheck` exits non-zero if any check fails. When at least one worker is eligible, the
 problems found on the other workers are shown as info rather than failures.
+
+In `-o json`, each result has a `group` (`cluster`, `install` or `workers`), per-node results
+have a `node`, and `nodes` lists each evaluated worker with `eligible`.
 
 ## setup
 

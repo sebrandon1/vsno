@@ -3,6 +3,7 @@ package precheck
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -346,10 +347,21 @@ func EvaluateNode(node string, hw NodeHardware, freeMemBytes int64, req Requirem
 }
 
 func (v *NodeVerdict) add(check string, st Status, detail, hint string) {
-	v.Results = append(v.Results, Result{Check: v.Node + ": " + check, Status: st, Detail: detail, Hint: hint})
+	v.Results = append(v.Results, Result{Node: v.Node, Check: check, Status: st, Detail: detail, Hint: hint})
 	if st == Fail {
 		v.Eligible = false
 	}
+}
+
+// insertAfter puts res right after the last row for check, or at the end.
+func (v *NodeVerdict) insertAfter(check string, res Result) {
+	i := len(v.Results)
+	for j, r := range v.Results {
+		if r.Check == check {
+			i = j + 1
+		}
+	}
+	v.Results = slices.Insert(v.Results, i, res)
 }
 
 func (v *NodeVerdict) evalVirt(hw NodeHardware) {

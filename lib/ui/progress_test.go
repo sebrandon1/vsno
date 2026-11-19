@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -96,5 +97,87 @@ func TestTTYRedrawsAndClears(t *testing.T) {
 	}
 	if !strings.HasSuffix(out, ": slow\n") {
 		t.Errorf("final line should end the step: %q", out)
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	for _, c := range []struct {
+		in    string
+		width int
+		want  string
+	}{
+		{"short", 10, "short"},
+		{"exactly10!", 10, "exactly10!"},
+		{"⠋ Probing worker-1", 10, "⠋ Probing…"},
+		{"anything", 0, "anything"},
+		{"anything", -1, "anything"},
+		{"ab", 1, "…"},
+	} {
+		if got := Truncate(c.in, c.width); got != c.want {
+			t.Errorf("Truncate(%q, %d) = %q, want %q", c.in, c.width, got, c.want)
+		}
+	}
+}
+
+func TestTTYRedrawFitsTerminal(t *testing.T) {
+	var b bytes.Buffer
+	p := New(&b, true)
+	p.tty = true
+	p.now = fakeClock()
+	p.tick = time.Millisecond
+	p.cols = func() int { return 40 }
+
+	s := p.Start("Probing 2 worker(s)")
+	s.Update("a-very-long-node-name.example.com ✓")
+	time.Sleep(10 * time.Millisecond)
+	s.Done("2 probed")
+
+	for _, redraw := range strings.Split(b.String(), "\r\033[K")[1:] {
+		if strings.HasSuffix(redraw, "\n") {
+			continue // the final line is printed once, so it may wrap
+		}
+		if n := len([]rune(redraw)); n > 39 {
+			t.Errorf("redraw is %d characters on a 40-column terminal: %q", n, redraw)
+		}
+		if !strings.Contains(redraw, "…") || !strings.HasSuffix(redraw, "s)") {
+			t.Errorf("want the node name shortened and the elapsed time kept: %q", redraw)
+		}
+	}
+}
+
+func TestFitLine(t *testing.T) {
+	for _, c := range []struct {
+		name, head, detail, tail string
+		width                    int
+		want                     string
+	}{
+		{"fits", "⠋ Probe", "node-1 ✓", " (3s)", 40, "⠋ Probe node-1 ✓ (3s)"},
+		{"unknown width", "⠋ Probe", "node-1 ✓", " (3s)", 0, "⠋ Probe node-1 ✓ (3s)"},
+		{"detail shortened", "⠋ Probe", "a-long-node-name ✓", " (3s)", 20, "⠋ Probe a-long… (3s)"},
+		{"no room for detail", "⠋ Probing workers", "node-1", " (3s)", 20, "⠋ Probing workers (…"},
+		{"no detail", "⠋ Probing many many workers", "", " (3s)", 20, "⠋ Probing many many…"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := fitLine(c.head, c.detail, c.tail, c.width)
+			if got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+			if c.width > 0 && len([]rune(got)) > c.width {
+				t.Errorf("%q is wider than %d", got, c.width)
+			}
+		})
+	}
+}
+
+func TestNewOnAFileThatIsNotATerminal(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	p := New(w, true)
+	if p.tty || p.cols() != 0 {
+		t.Errorf("a pipe is not a terminal: tty=%v cols=%d", p.tty, p.cols())
 	}
 }
