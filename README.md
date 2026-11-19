@@ -1,14 +1,22 @@
 # vsno
 
-Run [lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent) **Image Based
-Upgrade (IBU)** tests on **virtual single-node OpenShift clusters (vSNOs)**. The vSNOs run as
-OpenShift Virtualization VMs on a bare-metal worker of an OpenShift cluster you already have,
-so you don't need a spare hypervisor or any reprovisioning.
+Create, list and delete **virtual single-node OpenShift clusters (vSNOs)** quickly, as many as
+you need. The vSNOs run as OpenShift Virtualization VMs on a bare-metal worker of an OpenShift
+cluster you already have, so you don't need a spare hypervisor or any reprovisioning.
+
+One workflow built on top of that is testing
+[lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent) **Image Based Upgrades
+(IBU)** between two vSNOs.
 
 > **Status:** milestones 1 and 2 are done: `vsno precheck`, `setup`, `status` and `teardown` work.
-> `create`, `prepare`, `seed generate`, `upgrade`, `run` and the guest helpers (`ssh`, `oc`,
-> `kubeconfig`, `screenshot`) are planned. See the
-> [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap).
+> Planned, in order:
+> 1. `create <name> --version …`, `list`, `delete` and the guest helpers (`ssh`, `oc`,
+>    `kubeconfig`, `screenshot`)
+> 2. fast creates from an in-cluster release cache
+> 3. IBU (`prepare`, `seed generate`, `upgrade`) and testing lifecycle-agent builds
+> 4. `vsno run`
+>
+> See the [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap).
 
 ## Install
 

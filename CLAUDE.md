@@ -140,10 +140,18 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 
 Milestones 1 (`precheck`) and 2 (`setup`, `status`, `teardown`, #3) are done. The rest are GitHub issues labeled `roadmap`:
 
-- #4, milestone 3: `create seed|target` (agent ISO, VM, install wait) and the guest helpers
-- #5, milestone 4: `prepare`, `seed generate`, `upgrade`
-- #6, milestone 5: test an LCA branch or commit (built in the cluster) or a prebuilt image
-- #7, milestone 6: `vsno run` (kubeconfig only) and the first release
+- #4, milestone 3: vSNO lifecycle. `create <name> --version` (released, `4.20`, nightly or pullspec),
+  `list` with per-vSNO stats, `delete`, `start`/`stop`, and the guest helpers. One shared
+  environment; each vSNO is a VM labeled `vsno.io/name`.
+- #16, milestone 4: fast creates. Cache the tools for each version, and mirror releases into the
+  in-cluster registry.
+- #5, milestone 5: IBU on any two vSNOs (`prepare`, `seed generate`, `upgrade`)
+- #6, milestone 6: test an LCA branch or commit (built in the cluster) or a prebuilt image
+- #7, milestone 7: `vsno run` (kubeconfig only) and the first release; image-based install as a
+  stretch goal
+
+vsno is a general vSNO lifecycle tool; IBU is one workflow on top of it. Don't build features that
+assume exactly two guests named seed and target.
 
 The manifests for the later milestones come from the manual procedure verified on 2026-11-18. The
 author has them locally; ask before assuming their location.

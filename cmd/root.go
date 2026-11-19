@@ -22,10 +22,11 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "vsno",
-	Short: "Run Image Based Upgrade tests on virtual SNOs inside an existing OpenShift cluster",
-	Long: `vsno creates virtual single-node OpenShift clusters (vSNOs) as OpenShift
-Virtualization VMs on a bare-metal worker of a cluster you already have, and
-drives a lifecycle-agent Image Based Upgrade (IBU) between them.
+	Short: "Create and manage virtual SNOs inside an existing OpenShift cluster",
+	Long: `vsno creates, lists and deletes virtual single-node OpenShift clusters (vSNOs)
+as OpenShift Virtualization VMs on a bare-metal worker of a cluster you already
+have. It can also drive a lifecycle-agent Image Based Upgrade (IBU) between two
+of them.
 
 Start with:  vsno precheck`,
 	SilenceUsage: true,
