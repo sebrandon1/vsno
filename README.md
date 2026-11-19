@@ -56,7 +56,7 @@ It checks:
 | Access | You are cluster-admin, and the cluster is OpenShift (its version is reported) |
 | Networks | The guest networks (`10.0.2.0/24`, `10.132.0.0/14`, `172.31.0.0/16`) don't overlap the host's pod and service networks |
 | Catalog | `kubevirt-hyperconverged` and `lvms-operator` are available. It picks the LVMS channel that matches the host's version. |
-| Existing state | OpenShift Virtualization or LVMS already installed, an existing `lvms-vg-vsno` StorageClass, an existing `vsno` namespace |
+| Existing state | OpenShift Virtualization or LVMS already installed, an existing `lvms-vg-vsno` StorageClass, an existing environment namespace (`-n`, default `vsno`) |
 | Hub | Whether the cluster is managed by an ACM hub (hub policies may revert operators vsno installs) |
 | Registry | The seed image goes to an in-cluster registry by default, so nothing is needed. Only if you pass the optional `--seed-repo` (e.g. `quay.io/<you>/ibu-seed`) does it check your local podman/docker auth files for push credentials. |
 | Each worker | `/dev/kvm`, bare metal or nested virtualization, CPU threads, schedulable memory, and an empty disk of at least 600 GB for LVMS |
@@ -122,14 +122,19 @@ vsno setup --dry-run                     # print the manifests, change nothing
 2. An `LVMCluster` on the chosen disk, which creates StorageClass `lvms-vg-vsno`. This is skipped
    when that StorageClass already serves the node. Taking over a disk erases it, so `setup` asks you
    to type the node name unless you pass `--yes`.
-3. The `vsno` namespace with dnsmasq (guest DNS), a builder pod, S3 (SeaweedFS, bucket `ibu`)
+3. The environment namespace (`-n`, default `vsno`) with dnsmasq (guest DNS), a builder pod, S3 (SeaweedFS, bucket `ibu`)
    and a TLS registry. The S3 keys, the registry CA, its certificate and the login are generated
    once and stored as Secrets in the namespace.
 
 It runs `precheck` first. Cluster-level failures stop it, while CPU or memory shortfalls on the
 node are only warnings. Settings come from `--node`/`--disk`, then `--config`, then the
-precheck's suggestion. A rerun reuses everything and reports each object as `unchanged`.
+precheck's suggestion. If `--node` names a different node than `--config`, the config's disk is
+dropped, since it belongs to the other node. A rerun reuses everything and reports each object as `unchanged`.
 Progress and the result are recorded in ConfigMap `<namespace>/vsno-state`.
+
+If no worker has room for the VMs, precheck can't suggest a node and you must pass `--node`. Only
+memory used by the same namespace counts as free, so a second environment on a node that already
+runs one (for example `-n vsno-dev` next to `vsno`) usually needs `--node`.
 
 | Flag | Meaning |
 |---|---|
@@ -180,6 +185,9 @@ It refuses, unless you pass `--force`, when:
 - with `--host`: VMs exist in other namespaces, PVCs in other namespaces use LVMS storage, or LVMS
   has an `LVMCluster` that vsno didn't create
 
+With `--force` the problems are still listed, marked `(ignored: --force)`, and the JSON output
+has `"forced": true`.
+
 It lists the objects and asks you to type the namespace (or `host` with `--host`), unless you
 pass `--yes`.
 
@@ -206,6 +214,7 @@ day will be built into the later commands:
 
 ```bash
 make build   # ./vsno, versioned from git tags
+make install # build, then copy to $GOPATH/bin (or ~/go/bin)
 make test
 make lint    # golangci-lint; CI also runs gosec, govulncheck and gitleaks
 ```

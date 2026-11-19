@@ -10,6 +10,7 @@ Guidance for working in this repository.
 
 ```bash
 make build      # binary with version from git tags
+make install    # build, then copy to $GOPATH/bin (or ~/go/bin)
 make test       # all tests, verbose
 make lint       # golangci-lint (config in .golangci.yml; gocyclo limit 15)
 make vet
@@ -71,8 +72,9 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 
 ### Behaviour to preserve
 
-- Memory requested by pods in the vsno namespace counts as **available**, because an existing
-  environment would be reused or replaced.
+- Memory requested by pods in the environment namespace (`-n`) counts as **available**, because
+  an existing environment would be reused or replaced. Memory used by other namespaces, including
+  other vsno environments, doesn't, so a second environment on a busy node needs `--node`.
 - The "StorageClass `lvms-vg-vsno` already exists" shortcut only applies to nodes whose CSINode
   lists the `topolvm.io` driver.
 - When at least one node is eligible, failures on the other nodes are demoted to `info` with a
@@ -97,7 +99,10 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   `vsno-state` ConfigMap. `--host` refuses while any of these exist: VMs elsewhere, PVCs on a
   TopoLVM StorageClass elsewhere, or an LVMCluster vsno didn't create. PVCs in
   `openshift-virtualization-os-images` don't count; teardown deletes that namespace before the
-  LVMCluster. `--force` skips all of these checks.
+  LVMCluster. `--force` skips all of these checks, but they are still reported: as warnings
+  marked `(ignored: --force)`, and as `forced` in the JSON result.
+- When the confirmation prompt has shown the plan and nothing was deleted, teardown doesn't print
+  the plan again.
 - This repo is public. Docs, fixtures and tests must contain no lab hostnames, hardware models,
   real disk IDs or credentials.
 
@@ -113,9 +118,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 
 ## Plan
 
-Milestones 1 (`precheck`) and 2 (`setup`, `status`, `teardown`) are done. The rest are GitHub issues labeled `roadmap`:
+Milestones 1 (`precheck`) and 2 (`setup`, `status`, `teardown`, #3) are done. The rest are GitHub issues labeled `roadmap`:
 
-- #3, milestone 2: `setup` / `teardown` / `status`, plus the in-cluster registry
 - #4, milestone 3: `create seed|target` (agent ISO, VM, install wait) and the guest helpers
 - #5, milestone 4: `prepare`, `seed generate`, `upgrade`
 - #6, milestone 5: test an LCA branch or commit (built in the cluster) or a prebuilt image
