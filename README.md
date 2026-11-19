@@ -5,8 +5,8 @@ Upgrade (IBU)** tests on **virtual single-node OpenShift clusters (vSNOs)**. The
 OpenShift Virtualization VMs on a bare-metal worker of an OpenShift cluster you already have,
 so you don't need a spare hypervisor or any reprovisioning.
 
-> **Status:** milestone 2 in progress. `vsno precheck` and `vsno setup` work. `teardown`,
-> `status`, `create`, `prepare`, `seed generate`, `upgrade`, `run` and the guest helpers (`ssh`, `oc`,
+> **Status:** milestones 1 and 2 are done: `vsno precheck`, `setup`, `status` and `teardown` work.
+> `create`, `prepare`, `seed generate`, `upgrade`, `run` and the guest helpers (`ssh`, `oc`,
 > `kubeconfig`, `screenshot`) are planned. See the
 > [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap).
 
@@ -140,6 +140,56 @@ Progress and the result are recorded in ConfigMap `<namespace>/vsno-state`.
 | `--no-probe` | Skip the hardware probe (then `--node` is required) |
 | `--timeout <duration>` | How long to wait for each component (default `20m`) |
 | `-n <namespace>` | Environment namespace (default `vsno`) |
+
+## status
+
+```bash
+vsno status            # table
+vsno status -o json
+```
+
+`status` only reads. It shows:
+- the host components: both operators, HyperConverged, the LVMCluster and StorageClass
+- each support service with its readiness and Service IP
+- the registry endpoint
+- the VMs in the namespace
+- the last five stages recorded in `vsno-state`
+
+It exits non-zero when the namespace is missing or a component is missing or failing.
+
+## teardown
+
+```bash
+vsno teardown --dry-run         # list what would be deleted
+vsno teardown                   # delete the vsno namespace
+vsno teardown --host --dry-run  # also list the host components
+```
+
+By default `teardown` deletes the environment namespace: its VMs, support services, volumes and
+generated credentials. With `--host` it also removes, in this order:
+1. HyperConverged
+2. the boot-source image namespace
+3. the OpenShift Virtualization Subscription, CSV and namespace
+4. the `LVMCluster`, which releases the disk
+5. the LVM Storage Subscription, CSV and namespace
+
+It waits for each deletion before the next one.
+
+It refuses, unless you pass `--force`, when:
+- the namespace wasn't created by vsno (no `app.kubernetes.io/managed-by=vsno` label and no `vsno-state`)
+- with `--host`: VMs exist in other namespaces, PVCs in other namespaces use LVMS storage, or LVMS
+  has an `LVMCluster` that vsno didn't create
+
+It lists the objects and asks you to type the namespace (or `host` with `--host`), unless you
+pass `--yes`.
+
+| Flag | Meaning |
+|---|---|
+| `--host` | Also remove the host components |
+| `--dry-run` | List what would be deleted and change nothing |
+| `--yes` | Don't ask for confirmation |
+| `--force` | Skip the safety checks above |
+| `--timeout <duration>` | How long to wait for each deletion (default `10m`) |
 
 ## Background
 

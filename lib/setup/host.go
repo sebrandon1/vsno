@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -15,56 +16,39 @@ import (
 )
 
 const (
-	cnvNS      = "openshift-cnv"
-	storageNS  = "openshift-storage"
-	hcoName    = "kubevirt-hyperconverged"
-	lvmCluster = "vsno-lvmcluster"
+	cnvNS      = cluster.CNVNamespace
+	storageNS  = cluster.StorageNamespace
+	hcoName    = cluster.HyperConvergedName
+	lvmCluster = cluster.LVMClusterName
 )
 
 // operatorSpec is an OLM operator setup installs unless its CSV already succeeded.
 type operatorSpec struct {
-	key       string // state Versions key
-	namespace string
-	csvPrefix string
-	channel   func(manifests.Config) string
+	cluster.Operator
+	channel func(manifests.Config) string
 }
 
 var (
-	cnv  = operatorSpec{"cnv", cnvNS, "kubevirt-hyperconverged-operator.", func(c manifests.Config) string { return c.CNVChannel }}
-	lvms = operatorSpec{"lvms", storageNS, "lvms-operator.", func(c manifests.Config) string { return c.LVMSChannel }}
+	cnv  = operatorSpec{cluster.CNV, func(c manifests.Config) string { return c.CNVChannel }}
+	lvms = operatorSpec{cluster.LVMS, func(c manifests.Config) string { return c.LVMSChannel }}
 )
-
-// succeededCSV returns the name of op's Succeeded CSV, or "".
-func (r *runner) succeededCSV(ctx context.Context, op operatorSpec) (string, error) {
-	l, err := r.Dyn.Resource(precheck.GVRCSV).Namespace(op.namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return "", err
-	}
-	for _, c := range l.Items {
-		phase, _, _ := unstructured.NestedString(c.Object, "status", "phase")
-		if strings.HasPrefix(c.GetName(), op.csvPrefix) && phase == "Succeeded" {
-			return c.GetName(), nil
-		}
-	}
-	return "", nil
-}
 
 func (r *runner) operator(op operatorSpec) func(context.Context, precheck.ProgressStep) (Step, error) {
 	return func(ctx context.Context, ps precheck.ProgressStep) (Step, error) {
-		step := Step{Name: op.key}
-		csv, err := r.succeededCSV(ctx, op)
+		step := Step{Name: op.Key}
+		csv, err := cluster.SucceededCSV(ctx, r.Dyn, op.Operator)
 		if err != nil {
 			return step, err
 		}
 		if csv != "" {
-			r.st.Versions[op.key] = csv
+			r.st.Versions[op.Key] = csv
 			step.Outcome, step.Detail = Reused, csv
 			return step, nil
 		}
 		if op.channel(r.cfg) == "" {
-			return step, fmt.Errorf("no update channel for %s; the precheck catalog check found none", strings.TrimSuffix(op.csvPrefix, "."))
+			return step, fmt.Errorf("no update channel for %s; the precheck catalog check found none", strings.TrimSuffix(op.CSVPrefix, "."))
 		}
-		detail, err := r.applyTemplate(ctx, manifests.Operators, inNamespace(op.namespace))
+		detail, err := r.applyTemplate(ctx, manifests.Operators, inNamespace(op.Namespace))
 		if err != nil {
 			return step, err
 		}
@@ -73,11 +57,11 @@ func (r *runner) operator(op operatorSpec) func(context.Context, precheck.Progre
 			return step, nil
 		}
 		ps.Update("waiting for the CSV to succeed")
-		err = r.wait(ctx, op.csvPrefix+"* CSV", func(ctx context.Context) (bool, error) {
-			csv, err = r.succeededCSV(ctx, op)
+		err = r.wait(ctx, op.CSVPrefix+"* CSV", func(ctx context.Context) (bool, error) {
+			csv, err = cluster.SucceededCSV(ctx, r.Dyn, op.Operator)
 			return csv != "", err
 		})
-		r.st.Versions[op.key] = csv
+		r.st.Versions[op.Key] = csv
 		step.Detail += "; " + csv
 		return step, err
 	}
@@ -96,39 +80,29 @@ func (r *runner) hyperConverged(ctx context.Context, ps precheck.ProgressStep) (
 	cur, err := hc.Get(ctx, hcoName, metav1.GetOptions{})
 	switch {
 	case err == nil:
-		step.Outcome, step.Detail = Reused, "Available="+condition(cur, "Available")
-		return step, nil
+		avail := cluster.Condition(cur, "Available")
+		step.Outcome, step.Detail = Reused, "Available="+avail
+		if avail == "True" || r.o.DryRun {
+			return step, nil
+		}
 	case !apierrors.IsNotFound(err) && !r.o.DryRun:
 		// In a dry run on a fresh cluster the CRD doesn't exist yet.
 		return step, err
-	}
-	detail, err := r.applyTemplate(ctx, manifests.HyperConverged, nil)
-	if err != nil {
-		return step, err
-	}
-	step.Outcome, step.Detail = r.outcome(), detail
-	if r.o.DryRun {
-		return step, nil
+	default:
+		detail, err := r.applyTemplate(ctx, manifests.HyperConverged, nil)
+		if err != nil {
+			return step, err
+		}
+		step.Outcome, step.Detail = r.outcome(), detail
+		if r.o.DryRun {
+			return step, nil
+		}
 	}
 	ps.Update("waiting for Available")
 	return step, r.wait(ctx, "HyperConverged Available", func(ctx context.Context) (bool, error) {
 		cur, err := hc.Get(ctx, hcoName, metav1.GetOptions{})
-		return err == nil && condition(cur, "Available") == "True", err
+		return err == nil && cluster.Condition(cur, "Available") == "True", err
 	})
-}
-
-// condition returns the status of condition t, or "Unknown".
-func condition(u *unstructured.Unstructured, t string) string {
-	conds, _, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
-	for _, c := range conds {
-		m, ok := c.(map[string]any)
-		if ok && m["type"] == t {
-			if s, ok := m["status"].(string); ok {
-				return s
-			}
-		}
-	}
-	return "Unknown"
 }
 
 // storage reuses StorageClass lvms-vg-vsno when TopoLVM serves the node,

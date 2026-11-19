@@ -6,27 +6,17 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/pki"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 )
-
-var (
-	gvrSecret     = schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
-	gvrService    = schema.GroupVersionResource{Version: "v1", Resource: "services"}
-	gvrDeployment = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
-)
-
-// Deployments are the support Deployments (and Services) setup waits for.
-var Deployments = []string{"dnsmasq", "builder", "s3", "registry"}
 
 const (
 	registryUser = "vsno"
-	registryPort = 5000
 	redacted     = "<generated>"
 )
 
@@ -69,14 +59,14 @@ func (r *runner) support(ctx context.Context, ps precheck.ProgressStep) (Step, e
 	if err := r.waitDeployments(ctx, ps); err != nil {
 		return step, err
 	}
-	for _, n := range Deployments {
+	for _, n := range cluster.Deployments {
 		ip, err := r.clusterIP(ctx, n)
 		if err != nil {
 			return step, err
 		}
 		r.st.Services[n] = ip
 	}
-	r.res.Registry = net.JoinHostPort(r.st.Services["registry"], fmt.Sprint(registryPort))
+	r.res.Registry = net.JoinHostPort(r.st.Services["registry"], fmt.Sprint(cluster.RegistryPort))
 	return step, nil
 }
 
@@ -167,7 +157,7 @@ func (r *runner) registryAuth(ctx context.Context) error {
 
 // secret returns a Secret's decoded data, or nil if it doesn't exist.
 func (r *runner) secret(ctx context.Context, name string) (map[string]string, error) {
-	u, err := r.Dyn.Resource(gvrSecret).Namespace(r.o.Namespace).Get(ctx, name, metav1.GetOptions{})
+	u, err := r.Dyn.Resource(cluster.GVRSecret).Namespace(r.o.Namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}
@@ -187,7 +177,7 @@ func (r *runner) secret(ctx context.Context, name string) (map[string]string, er
 }
 
 func (r *runner) clusterIP(ctx context.Context, svc string) (string, error) {
-	u, err := r.Dyn.Resource(gvrService).Namespace(r.o.Namespace).Get(ctx, svc, metav1.GetOptions{})
+	u, err := r.Dyn.Resource(cluster.GVRService).Namespace(r.o.Namespace).Get(ctx, svc, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("reading service %s: %w", svc, err)
 	}
@@ -200,16 +190,16 @@ func (r *runner) clusterIP(ctx context.Context, svc string) (string, error) {
 
 // waitDeployments waits until every support Deployment has rolled out.
 func (r *runner) waitDeployments(ctx context.Context, ps precheck.ProgressStep) error {
-	deps := r.Dyn.Resource(gvrDeployment).Namespace(r.o.Namespace)
+	deps := r.Dyn.Resource(cluster.GVRDeployment).Namespace(r.o.Namespace)
 	return r.wait(ctx, "support Deployments", func(ctx context.Context) (bool, error) {
 		ready := 0
 		var pending string
-		for _, n := range Deployments {
+		for _, n := range cluster.Deployments {
 			d, err := deps.Get(ctx, n, metav1.GetOptions{})
 			if err != nil {
 				return false, err
 			}
-			if rolledOut(d) {
+			if cluster.RolledOut(d) {
 				ready++
 				continue
 			}
@@ -220,11 +210,11 @@ func (r *runner) waitDeployments(ctx context.Context, ps precheck.ProgressStep) 
 				pending = n
 			}
 		}
-		ps.SetProgress(ready, len(Deployments))
+		ps.SetProgress(ready, len(cluster.Deployments))
 		if pending != "" {
 			ps.Update("waiting for " + pending)
 		}
-		return ready == len(Deployments), nil
+		return ready == len(cluster.Deployments), nil
 	})
 }
 
@@ -245,16 +235,4 @@ func (r *runner) crashLooping(ctx context.Context, app string) error {
 		}
 	}
 	return nil
-}
-
-// rolledOut reports whether the current spec of d is fully available.
-func rolledOut(d *unstructured.Unstructured) bool {
-	want, found, _ := unstructured.NestedInt64(d.Object, "spec", "replicas")
-	if !found {
-		want = 1
-	}
-	observed, _, _ := unstructured.NestedInt64(d.Object, "status", "observedGeneration")
-	updated, _, _ := unstructured.NestedInt64(d.Object, "status", "updatedReplicas")
-	available, _, _ := unstructured.NestedInt64(d.Object, "status", "availableReplicas")
-	return observed >= d.GetGeneration() && updated >= want && available >= want
 }

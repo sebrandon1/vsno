@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/apply"
+	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/pki"
 	"github.com/sebrandon1/vsno/lib/precheck"
@@ -44,10 +45,10 @@ var gvrs = map[string]schema.GroupVersionResource{
 	"Namespace":             {Version: "v1", Resource: "namespaces"},
 	"ServiceAccount":        {Version: "v1", Resource: "serviceaccounts"},
 	"ConfigMap":             {Version: "v1", Resource: "configmaps"},
-	"Secret":                gvrSecret,
-	"Service":               gvrService,
+	"Secret":                cluster.GVRSecret,
+	"Service":               cluster.GVRService,
 	"PersistentVolumeClaim": {Version: "v1", Resource: "persistentvolumeclaims"},
-	"Deployment":            gvrDeployment,
+	"Deployment":            cluster.GVRDeployment,
 	"RoleBinding":           {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"},
 	"OperatorGroup":         {Group: "operators.coreos.com", Version: "v1", Resource: "operatorgroups"},
 	"Subscription":          {Group: "operators.coreos.com", Version: "v1alpha1", Resource: "subscriptions"},
@@ -71,7 +72,7 @@ func newSim(objs ...runtime.Object) *sim {
 	s.dyn = dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		precheck.GVRCSV:        "ClusterServiceVersionList",
 		precheck.GVRLVMCluster: "LVMClusterList",
-		gvrSecret:              "SecretList",
+		cluster.GVRSecret:      "SecretList",
 	}, objs...)
 	return s
 }
@@ -284,6 +285,30 @@ func TestRunReusesHostAndRerunIsNoOp(t *testing.T) {
 	st, _, _ := state.Load(context.Background(), s.kube, ns)
 	if st.Disk != "" || len(st.Stages) != 2 {
 		t.Errorf("state = %+v", st)
+	}
+}
+
+func TestRunWaitsForExistingHyperConverged(t *testing.T) {
+	s := newSim()
+	s.existingHost(t)
+	tr := s.dyn.Tracker()
+	cur, err := tr.Get(precheck.GVRHyperConverged, cnvNS, hcoName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hc := cur.(*unstructured.Unstructured)
+	_ = unstructured.SetNestedSlice(hc.Object, []any{map[string]any{"type": "Available", "status": "False"}}, "status", "conditions")
+	if err := tr.Update(precheck.GVRHyperConverged, hc, cnvNS); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Run(context.Background(), s.env(report()), opts())
+	if err == nil || !strings.Contains(err.Error(), "waiting for HyperConverged Available") {
+		t.Fatalf("want a wait for Available, got %v", err)
+	}
+	o := opts()
+	o.DryRun = true
+	if _, err := Run(context.Background(), s.env(report()), o); err != nil {
+		t.Errorf("dry run should not wait: %v", err)
 	}
 }
 
@@ -551,34 +576,6 @@ func TestResolve(t *testing.T) {
 				t.Errorf("got node=%q disk=%q warnings=%v", s.Node, s.Disk, warns)
 			}
 		})
-	}
-}
-
-func TestRolledOut(t *testing.T) {
-	d := func(gen, replicas, observed, updated, available int64, setReplicas bool) *unstructured.Unstructured {
-		u := &unstructured.Unstructured{Object: map[string]any{"status": map[string]any{
-			"observedGeneration": observed, "updatedReplicas": updated, "availableReplicas": available}}}
-		if setReplicas {
-			_ = unstructured.SetNestedField(u.Object, replicas, "spec", "replicas")
-		}
-		u.SetGeneration(gen)
-		return u
-	}
-	cases := []struct {
-		name string
-		d    *unstructured.Unstructured
-		want bool
-	}{
-		{"ready", d(2, 1, 2, 1, 1, true), true},
-		{"default replicas", d(1, 0, 1, 1, 1, false), true},
-		{"old generation", d(3, 1, 2, 1, 1, true), false},
-		{"not available", d(1, 1, 1, 1, 0, true), false},
-		{"scaled to zero", d(1, 0, 1, 0, 0, true), true},
-	}
-	for _, c := range cases {
-		if got := rolledOut(c.d); got != c.want {
-			t.Errorf("%s: got %v", c.name, got)
-		}
 	}
 }
 
