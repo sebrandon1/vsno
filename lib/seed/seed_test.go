@@ -16,6 +16,7 @@ import (
 
 	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/guest"
+	"github.com/sebrandon1/vsno/lib/registry"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kfake "k8s.io/client-go/kubernetes/fake"
@@ -149,23 +150,6 @@ func registrySecrets(objs ...*corev1.Secret) *kfake.Clientset {
 		_ = k.Tracker().Add(o)
 	}
 	return k
-}
-
-func TestLoadRegistry(t *testing.T) {
-	r, err := LoadRegistry(context.Background(), registrySecrets(), ns)
-	if err != nil || r != testRegistry {
-		t.Fatalf("LoadRegistry = %+v, %v", r, err)
-	}
-	if _, err := LoadRegistry(context.Background(), kfake.NewClientset(), ns); err == nil || !strings.Contains(err.Error(), "rerun `vsno setup") {
-		t.Errorf("missing secrets: %v", err)
-	}
-	empty := kfake.NewClientset(
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "registry-auth"}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "registry-ca"}},
-	)
-	if _, err := LoadRegistry(context.Background(), empty, ns); err == nil || !strings.Contains(err.Error(), "incomplete") {
-		t.Errorf("empty secrets: %v", err)
-	}
 }
 
 func TestSeedAuth(t *testing.T) {
@@ -489,7 +473,7 @@ type fakeRunner struct {
 }
 
 func (f *fakeRunner) Run(_ context.Context, s string, args []string, io_ builder.IO) error {
-	if s != script("registry.sh") {
+	if s != registry.Script("registry.sh") {
 		return errors.New("unexpected script")
 	}
 	if io_.Stdin == nil {
@@ -517,7 +501,7 @@ func TestList(t *testing.T) {
 	if err != nil || len(imgs) != 2 {
 		t.Fatalf("got %d, %v", len(imgs), err)
 	}
-	if !slices.Equal(r.calls[0], []string{testRegistry.Host, "list"}) {
+	if !slices.Equal(r.calls[0], []string{testRegistry.Host, "list", RepoPrefix}) {
 		t.Errorf("args %q", r.calls[0])
 	}
 	r = &fakeRunner{err: errors.New("exit 22")}

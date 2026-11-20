@@ -10,8 +10,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/sebrandon1/vsno/lib/builder"
 )
 
 // Image is one seed image in the environment's registry.
@@ -70,20 +68,11 @@ func List(ctx context.Context, e Env, ns string) ([]Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	var stdout, stderr bytes.Buffer
-	if err := e.Builder.Run(ctx, script("registry.sh"), []string{reg.Host, "list"},
-		builder.IO{Stdin: bytes.NewReader(reg.stdin()), Stdout: &stdout, Stderr: &stderr}); err != nil {
-		return nil, fmt.Errorf("listing the registry through the builder: %w%s", err, lastLine(stderr.String()))
+	out, err := reg.Run(ctx, e.Builder, reg.Host, "list", RepoPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("listing the registry through the builder: %w", err)
 	}
-	return parseImages(reg.Host, stdout.Bytes())
-}
-
-func lastLine(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	return ": " + s[strings.LastIndex(s, "\n")+1:]
+	return parseImages(reg.Host, out)
 }
 
 // Match returns the images arg names: a full reference, <vSNO>:<tag>, or
@@ -166,16 +155,14 @@ func Delete(ctx context.Context, e Env, o DeleteOptions) (*DeleteResult, error) 
 	for _, img := range res.Images {
 		refs = append(refs, RepoPrefix+img.From+":"+img.Tag)
 	}
-	var stdout, stderr bytes.Buffer
-	err = e.Builder.Run(ctx, script("registry.sh"), append([]string{reg.Host, "delete"}, refs...),
-		builder.IO{Stdin: bytes.NewReader(reg.stdin()), Stdout: &stdout, Stderr: &stderr})
-	for _, line := range strings.Split(stdout.String(), "\n") {
+	out, err := reg.Run(ctx, e.Builder, append([]string{reg.Host, "delete"}, refs...)...)
+	for _, line := range strings.Split(string(out), "\n") {
 		if ref, ok := strings.CutPrefix(line, "deleted "); ok {
 			res.Deleted = append(res.Deleted, reg.Host+"/"+ref)
 		}
 	}
 	if err != nil {
-		return res, fmt.Errorf("deleting from the registry: %w%s", err, lastLine(stderr.String()))
+		return res, fmt.Errorf("deleting from the registry: %w", err)
 	}
 	return res, nil
 }

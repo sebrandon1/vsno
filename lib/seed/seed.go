@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"embed"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -19,8 +18,8 @@ import (
 	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/registry"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -89,66 +88,14 @@ func (b builderAccess) SSH(ctx context.Context, args []string, s builder.IO) err
 }
 
 // Registry is the environment's in-cluster registry.
-type Registry struct {
-	Host     string // registry.<ns>.svc.cluster.local:5000, as guests and the builder reach it
-	User     string
-	Password string
-	CA       string // PEM
-}
+type Registry = registry.Registry
 
 // RegistryHost is the registry's address in namespace ns.
-func RegistryHost(ns string) string {
-	return fmt.Sprintf("registry.%s.svc.cluster.local:%d", ns, registryPort)
-}
+func RegistryHost(ns string) string { return registry.Host(ns) }
 
 // LoadRegistry reads the registry's credentials and CA, which vsno setup stored.
 func LoadRegistry(ctx context.Context, kube kubernetes.Interface, ns string) (Registry, error) {
-	r := Registry{Host: RegistryHost(ns)}
-	read := func(name string) (map[string][]byte, error) {
-		s, err := kube.CoreV1().Secrets(ns).Get(ctx, name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("secret %s/%s is missing; rerun `vsno setup -n %s`", ns, name, ns)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("reading secret %s: %w", name, err)
-		}
-		return s.Data, nil
-	}
-	auth, err := read("registry-auth")
-	if err != nil {
-		return r, err
-	}
-	ca, err := read("registry-ca")
-	if err != nil {
-		return r, err
-	}
-	r.User, r.Password, r.CA = string(auth["username"]), string(auth["password"]), string(ca["ca.crt"])
-	if r.User == "" || r.Password == "" || r.CA == "" {
-		return r, fmt.Errorf("the registry credentials in %s are incomplete; rerun `vsno setup -n %s`", ns, ns)
-	}
-	return r, nil
-}
-
-// Auth is a dockerconfigjson with the registry's credentials.
-func (r Registry) Auth() string {
-	return dockerConfig(r.Host, base64.StdEncoding.EncodeToString([]byte(r.User+":"+r.Password)))
-}
-
-func dockerConfig(host, auth string) string {
-	b, _ := json.Marshal(map[string]any{"auths": map[string]any{host: map[string]string{"auth": auth}}})
-	return string(b)
-}
-
-// stdin is the registry script's input.
-func (r Registry) stdin() []byte {
-	b, _ := json.Marshal(map[string]string{"user": r.User, "password": r.Password, "ca": r.CA})
-	return b
-}
-
-// TrustKey is the registry's key in the guest's additionalTrustedCA ConfigMap:
-// host..port.
-func (r Registry) TrustKey() string {
-	return strings.Replace(r.Host, ":", "..", 1)
+	return registry.Load(ctx, kube, ns)
 }
 
 // Ref is the default seed image of vSNO name at version.
@@ -187,7 +134,7 @@ func seedAuth(ctx context.Context, kube kubernetes.Interface, r Registry, image 
 	return string(b), nil
 }
 
-//go:embed templates/*.tmpl scripts/*.sh
+//go:embed templates/*.tmpl
 var files embed.FS
 
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{"quote": strconv.Quote}).
@@ -213,14 +160,6 @@ func render(name string, d renderData) (string, error) {
 		return "", fmt.Errorf("rendering %s: %w", name, err)
 	}
 	return b.String(), nil
-}
-
-func script(name string) string {
-	b, err := files.ReadFile("scripts/" + name)
-	if err != nil {
-		panic(err) // embedded at build time
-	}
-	return string(b)
 }
 
 // ocJSON runs oc get ... -o json on the vSNO into out. With --ignore-not-found
