@@ -153,6 +153,24 @@ precheck's suggestion. If `--node` names a different node than `--config`, the c
 dropped, since it belongs to the other node. A rerun reuses everything and reports each object as `unchanged`.
 Progress and the result are recorded in ConfigMap `<namespace>/vsno-state`.
 
+### Fitting more vSNOs: memory overcommit and KSM
+
+```bash
+vsno setup --memory-overcommit 150 --ksm
+```
+
+`--memory-overcommit <percent>` sets OpenShift Virtualization's
+`higherWorkloadDensity.memoryOvercommitPercentage`: at 150, a 16 GiB vSNO's pod requests about
+11 GiB. `--ksm` turns on kernel samepage merging for the vSNO node (`ksmConfiguration`), so
+guests running the same OpenShift share identical memory pages. Both change every VM on the
+cluster, so setup asks first unless you pass `--yes`, and `--dry-run` shows the change.
+
+Setup records the settings it replaced in `vsno-state`, and a plain `vsno teardown` puts them back
+before deleting the namespace (`teardown --host` deletes HyperConverged instead). `vsno create` and
+`vsno list` count a node's free memory at the overcommit in effect, and `vsno status` and
+`vsno precheck` show it. Overcommitted guests can run out of host memory under load; keep the
+percentage modest.
+
 Before installing anything, setup checks the two operators it manages. An operator is out of date
 when its channel offers a newer CSV than the one it runs, when a `Manual` Subscription has an
 InstallPlan waiting for approval, or when its Subscription is on an older channel than the one

@@ -462,18 +462,7 @@ func densityChange(cur, want state.Density) string {
 		parts = append(parts, fmt.Sprintf("memory overcommit %d%% → %d%%", cur.Percent(), want.Percent()))
 	}
 	if cur.KSMNode != want.KSMNode {
-		parts = append(parts, "KSM "+ksmText(cur.KSMNode)+" → "+ksmText(want.KSMNode))
+		parts = append(parts, "KSM "+cur.KSMText()+" → "+want.KSMText())
 	}
 	return strings.Join(parts, ", ")
-}
-
-// ksmText is KSM's setting as setup reports it.
-func ksmText(node string) string {
-	switch node {
-	case "":
-		return "off"
-	case "*":
-		return "on (every node)"
-	}
-	return "on " + node
 }

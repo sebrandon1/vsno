@@ -105,3 +105,18 @@ func TestSaveUpdateError(t *testing.T) {
 		t.Errorf("want update error, got %v", err)
 	}
 }
+
+func TestDensityText(t *testing.T) {
+	for _, c := range []struct {
+		d    Density
+		want string
+	}{
+		{Density{}, "memory overcommit 100%, KSM off"},
+		{Density{OvercommitPercent: 150, KSMNode: "worker-0"}, "memory overcommit 150%, KSM on worker-0"},
+		{Density{KSMNode: "*"}, "memory overcommit 100%, KSM on (every node)"},
+	} {
+		if got := c.d.String(); got != c.want {
+			t.Errorf("%+v = %q, want %q", c.d, got, c.want)
+		}
+	}
+}

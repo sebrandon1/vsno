@@ -26,18 +26,20 @@ import (
 )
 
 var (
-	suNode      string
-	suDisk      string
-	suConfig    string
-	suYes       bool
-	suForce     bool
-	suUpgrade   bool
-	suChannels  []string
-	suDryRun    bool
-	suManifests bool
-	suNoProbe   bool
-	suTimeout   time.Duration
-	suRegSize   string
+	suNode       string
+	suDisk       string
+	suConfig     string
+	suYes        bool
+	suForce      bool
+	suUpgrade    bool
+	suChannels   []string
+	suDryRun     bool
+	suManifests  bool
+	suNoProbe    bool
+	suTimeout    time.Duration
+	suRegSize    string
+	suOvercommit int
+	suKSM        bool
 )
 
 var setupCmd = &cobra.Command{
@@ -93,6 +95,8 @@ func init() {
 	f.BoolVar(&suManifests, "manifests", false, "with --dry-run, also print the manifests (Secret values redacted); implies --dry-run")
 	f.BoolVar(&suNoProbe, "no-probe", false, "skip the precheck hardware probe (then --node is required)")
 	f.DurationVar(&suTimeout, "timeout", 20*time.Minute, "how long to wait for each component")
+	f.IntVar(&suOvercommit, "memory-overcommit", 0, "OpenShift Virtualization's memory overcommit in percent, e.g. 150, to fit more vSNOs (changes every VM on the cluster; asks unless --yes)")
+	f.BoolVar(&suKSM, "ksm", false, "turn on kernel samepage merging for the vSNO node (changes OpenShift Virtualization; asks unless --yes)")
 	f.StringVar(&suRegSize, "registry-size", manifests.DefaultRegistrySize,
 		"size of the in-cluster registry's volume, which holds mirrored releases (it only grows)")
 	rootCmd.AddCommand(setupCmd)
@@ -105,6 +109,9 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	settings, err := setupSettings()
 	if err != nil {
 		return err
+	}
+	if suOvercommit != 0 && (suOvercommit < 100 || suOvercommit > 1000) {
+		return fmt.Errorf("--memory-overcommit takes a percentage from 100 to 1000, not %d", suOvercommit)
 	}
 	if _, err := resource.ParseQuantity(suRegSize); err != nil {
 		return fmt.Errorf("invalid --registry-size %q: %w", suRegSize, err)
@@ -141,7 +148,7 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	res, err := setup.Run(cmd.Context(), env, setup.Options{
 		Namespace: namespace, Settings: settings, Yes: suYes, Force: suForce,
 		UpgradeOperators: suUpgrade, Channels: channels, DryRun: suDryRun, Images: manifests.DefaultImages(),
-		RegistrySize: suRegSize,
+		RegistrySize: suRegSize, MemoryOvercommit: suOvercommit, KSM: suKSM,
 	})
 	if outputFormat != formatJSON {
 		fmt.Fprintln(cmd.ErrOrStderr())

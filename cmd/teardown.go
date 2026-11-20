@@ -129,6 +129,9 @@ func renderTeardownSteps(w io.Writer, res *teardown.Result, pal ui.Palette) {
 // renderTeardownPlan prints the steps and objects teardown would delete, and
 // warns about what setup didn't create but the namespace deletion removes too.
 func renderTeardownPlan(w io.Writer, res *teardown.Result, pal ui.Palette) {
+	if res.RestoreDensity != nil {
+		fmt.Fprintf(w, "%s HyperConverged goes back to %s, as before vsno setup changed it.\n", pal.Icon("i"), res.RestoreDensity)
+	}
 	renderTeardownSteps(w, res, pal)
 	ch := res.Changes()
 	renderObjects(w, ch, pal)

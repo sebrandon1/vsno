@@ -37,7 +37,7 @@ func ReadDensity(ctx context.Context, dyn dynamic.Interface) (state.Density, err
 	if _, found, _ := unstructured.NestedMap(hc.Object, "spec", "ksmConfiguration"); found {
 		d.KSMNode, _, _ = unstructured.NestedString(hc.Object, "spec", "ksmConfiguration", "nodeLabelSelector", "matchLabels", hostnameLabel)
 		if d.KSMNode == "" {
-			d.KSMNode = "*" // on, but not limited to one node
+			d.KSMNode = state.KSMEveryNode
 		}
 	}
 	return d, nil
@@ -53,7 +53,7 @@ func ApplyDensity(ctx context.Context, dyn dynamic.Interface, d state.Density) e
 	}
 	switch d.KSMNode {
 	case "":
-	case "*":
+	case state.KSMEveryNode:
 		spec["ksmConfiguration"] = map[string]any{}
 	default:
 		spec["ksmConfiguration"] = map[string]any{"nodeLabelSelector": map[string]any{"matchLabels": map[string]any{hostnameLabel: d.KSMNode}}}

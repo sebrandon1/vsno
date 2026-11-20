@@ -58,8 +58,28 @@ type State struct {
 type Density struct {
 	// OvercommitPercent is memoryOvercommitPercentage; 0 means unset (100).
 	OvercommitPercent int `json:"overcommitPercent,omitempty"`
-	// KSMNode is the node KSM is limited to; "" means KSM is off.
+	// KSMNode is the node KSM is limited to: "" means KSM is off, and
+	// KSMEveryNode that it is on everywhere.
 	KSMNode string `json:"ksmNode,omitempty"`
+}
+
+// KSMEveryNode is Density.KSMNode when KSM is on without a node selector.
+const KSMEveryNode = "*"
+
+// String is "memory overcommit 150%, KSM on <node>".
+func (d Density) String() string {
+	return fmt.Sprintf("memory overcommit %d%%, KSM %s", d.Percent(), d.KSMText())
+}
+
+// KSMText is "off", "on <node>", or "on (every node)".
+func (d Density) KSMText() string {
+	switch d.KSMNode {
+	case "":
+		return "off"
+	case KSMEveryNode:
+		return "on (every node)"
+	}
+	return "on " + d.KSMNode
 }
 
 // Percent is the overcommit percentage in effect: 100 when unset.

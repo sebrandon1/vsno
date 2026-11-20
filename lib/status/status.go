@@ -97,6 +97,7 @@ func Collect(ctx context.Context, kube kubernetes.Interface, dyn dynamic.Interfa
 		operator(ctx, dyn, cluster.CNV, cnvChannel),
 		operator(ctx, dyn, cluster.LVMS, lvmsChannel),
 		hyperConverged(ctx, dyn),
+		density(ctx, dyn),
 		lvmCluster(ctx, dyn),
 		storageClass(ctx, kube, r.Node),
 	}
@@ -162,6 +163,16 @@ func hyperConverged(ctx context.Context, dyn dynamic.Interface) Component {
 		return Component{Name: name, Status: precheck.Warn, Detail: "Available=" + avail}
 	}
 	return Component{Name: name, Status: precheck.Pass, Detail: "Available"}
+}
+
+// density reports HyperConverged's memory overcommit and KSM, which change how
+// many vSNOs fit (vsno setup --memory-overcommit, --ksm).
+func density(ctx context.Context, dyn dynamic.Interface) Component {
+	d, err := cluster.ReadDensity(ctx, dyn)
+	if err != nil {
+		return Component{Name: "density", Status: precheck.Warn, Detail: err.Error()}
+	}
+	return Component{Name: "density", Status: precheck.Pass, Detail: d.String()}
 }
 
 func lvmCluster(ctx context.Context, dyn dynamic.Interface) Component {
