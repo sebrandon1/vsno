@@ -252,7 +252,7 @@ func observe(ctx context.Context, e Env, vm *unstructured.Unstructured) (Guest, 
 	g.Cached = ann[AnnCached] == "true"
 	g.Timings = Timings{ISO: ann[AnnTimingISO], Install: ann[AnnTimingInstall], Reboot: ann[AnnTimingReboot], Available: ann[AnnTimingAvailable]}
 
-	o := Observed{VMStatus: nested(vm, "status", "printableStatus")}
+	o := Observed{VMStatus: nested(vm, "status", "printableStatus"), WantsRunning: wantsRunning(vm)}
 	if dv, err := e.Dyn.Resource(GVRDataVolume).Namespace(ns).Get(ctx, name+"-iso", metav1.GetOptions{}); err == nil {
 		o.ISOPhase, o.ISOProgress = nested(dv, "status", "phase"), nested(dv, "status", "progress")
 	}
@@ -327,6 +327,19 @@ type Capacity struct {
 	FreeMemoryGiB int64  `json:"freeMemoryGiB"` // allocatable memory minus running pods' requests
 	// FitDefault is how many more default-size vSNOs fit in FreeMemoryGiB.
 	FitDefault int64 `json:"fitDefault"`
+}
+
+// wantsRunning reports whether a VM's spec says it should run: runStrategy
+// Always or RerunOnFailure, or the older spec.running.
+func wantsRunning(vm *unstructured.Unstructured) bool {
+	switch nested(vm, "spec", "runStrategy") {
+	case "Always", "RerunOnFailure":
+		return true
+	case "":
+		running, _, _ := unstructured.NestedBool(vm.Object, "spec", "running")
+		return running
+	}
+	return false
 }
 
 // vmOverheadGiB approximates the virt-launcher pod's memory beyond the guest's.
