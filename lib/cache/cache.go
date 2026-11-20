@@ -79,6 +79,32 @@ type Entry struct {
 	// Users are the vSNOs running this release, filled in by List.
 	Users []string `json:"users,omitempty"`
 	InUse bool     `json:"inUse,omitempty"`
+	// State is where the entry is in its life. Empty means ready, which is
+	// also what entries written before this field existed are.
+	State State `json:"state,omitempty"`
+	// Started is when the current mirror began; set only while mirroring.
+	Started time.Time `json:"started,omitempty"`
+}
+
+// State is how far a cache entry has got.
+type State string
+
+const (
+	// StateMirroring means a mirror is writing this release into the registry.
+	StateMirroring State = "mirroring"
+	// StateFailed means the last mirror failed; its repository may be partial.
+	StateFailed State = "failed"
+)
+
+// StateText is what the commands show for the entry.
+func (e Entry) StateText() string {
+	switch e.State {
+	case StateMirroring:
+		return string(StateMirroring)
+	case StateFailed:
+		return string(StateFailed)
+	}
+	return "ready"
 }
 
 // Ref is the mirrored release image in host's registry.

@@ -133,7 +133,7 @@ func selectEntries(rep *Report, o PruneOptions) (PrunePlan, error) {
 	} else {
 		var unused []Entry
 		for _, ent := range rep.Entries {
-			if !ent.InUse {
+			if !ent.InUse && ent.State != StateMirroring {
 				unused = append(unused, ent)
 			}
 		}
@@ -146,6 +146,9 @@ func selectEntries(rep *Report, o PruneOptions) (PrunePlan, error) {
 		}
 	}
 	for _, ent := range p.Entries {
+		if ent.State == StateMirroring {
+			return p, fmt.Errorf("%s is being mirrored right now; prune it once that finishes", ent.Version)
+		}
 		if ent.InUse {
 			return p, fmt.Errorf("vSNO %s still runs %s; delete it first", strings.Join(ent.Users, ", "), ent.Version)
 		}

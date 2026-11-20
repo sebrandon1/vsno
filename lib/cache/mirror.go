@@ -89,20 +89,31 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 	prev := m.Entries[digest]
 	// The ConfigMap can outlive what it describes (a prune that failed halfway,
 	// a manual delete), so a hit is only a hit if the registry still has it.
-	hit := prev != nil && mirrored(ctx, e, reg, prev)
+	hit := prev != nil && prev.State == "" && mirrored(ctx, e, reg, prev)
 	var ent Entry
 	var elapsed time.Duration
 	if hit {
 		ent = *prev // keep what it was mirrored as, not what this request calls it
 	} else {
-		ent = Entry{Version: o.Release.Version, Image: o.Release.Image, Digest: digest, Repo: repo, Mirrored: e.Now()}
-		if ent.SizeBytes, elapsed, err = mirror(ctx, e, o, reg, addr, repo, short(digest), m); err != nil {
+		start := e.Now()
+		ent = Entry{Version: o.Release.Version, Image: o.Release.Image, Digest: digest, Repo: repo,
+			Mirrored: start, Started: start, State: StateMirroring,
+			Requested: appendUnique(oldRequested(prev), o.Release.Requested)}
+		// Say what is happening before the long part starts: a create that is
+		// mirroring should be visible in `vsno cache list`, not only in its log.
+		if err := saveEntry(ctx, e, o.Namespace, digest, ent); err != nil {
 			return nil, err
 		}
+		if ent.SizeBytes, elapsed, err = mirror(ctx, e, o, reg, addr, repo, short(digest), m); err != nil {
+			ent.State, ent.Started = StateFailed, time.Time{}
+			_ = saveEntry(ctx, e, o.Namespace, digest, ent) // best effort: the release is not usable
+			return nil, err
+		}
+		ent.State, ent.Started = "", time.Time{}
 	}
 	ent.LastUsed = e.Now()
-	ent.Requested = appendUnique(oldRequested(prev), o.Release.Requested)
-	if err := update(ctx, e.Kube, o.Namespace, func(m *metadata) { m.Entries[digest] = &ent }); err != nil {
+	ent.Requested = appendUnique(oldRequested(m.Entries[digest]), o.Release.Requested)
+	if err := saveEntry(ctx, e, o.Namespace, digest, ent); err != nil {
 		return nil, err
 	}
 	ps, err := pullSecret(ctx, e.Kube)
@@ -118,6 +129,11 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 		p.Sources = append(p.Sources, ImageDigestSource{Source: s, Mirrors: []string{addr + "/" + repo}})
 	}
 	return p, nil
+}
+
+// saveEntry writes one entry into the cache's record.
+func saveEntry(ctx context.Context, e Env, ns, digest string, ent Entry) error {
+	return update(ctx, e.Kube, ns, func(m *metadata) { m.Entries[digest] = &ent })
 }
 
 // mirrored reports whether a cached entry's images are still in the registry.

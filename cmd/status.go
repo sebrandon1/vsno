@@ -154,7 +154,11 @@ func renderReleaseCache(w io.Writer, rep *cache.Report, pal ui.Palette) {
 	var t ui.Table
 	t.Row("  "+pal.Bold("VERSION"), pal.Bold("SIZE"), pal.Bold("LAST USED"), pal.Bold("VSNOS"))
 	for _, e := range rep.Entries {
-		t.Row("  "+dash(e.Version), bytesText(e.SizeBytes), age(time.Since(e.LastUsed)), joinItems(e.Users))
+		ver := dash(e.Version)
+		if e.StateText() != "ready" {
+			ver += " (" + e.StateText() + ")"
+		}
+		t.Row("  "+ver, bytesText(e.SizeBytes), age(time.Since(e.LastUsed)), joinItems(e.Users))
 	}
 	t.Write(w)
 	if rep.Total > 0 {

@@ -281,9 +281,9 @@ func renderCache(w io.Writer, rep *cache.Report, now time.Time, pal ui.Palette) 
 		return nil
 	}
 	var t ui.Table
-	t.Row(pal.Bold("VERSION"), pal.Bold("IMAGE"), pal.Bold("SIZE"), pal.Bold("MIRRORED"), pal.Bold("LAST USED"), pal.Bold("VSNOS"))
+	t.Row(pal.Bold("VERSION"), pal.Bold("STATE"), pal.Bold("IMAGE"), pal.Bold("SIZE"), pal.Bold("MIRRORED"), pal.Bold("LAST USED"), pal.Bold("VSNOS"))
 	for _, e := range rep.Entries {
-		t.Row(dash(e.Version), e.Image, bytesText(e.SizeBytes), age(now.Sub(e.Mirrored)), age(now.Sub(e.LastUsed)), joinItems(e.Users))
+		t.Row(dash(e.Version), cacheState(e, now), e.Image, bytesText(e.SizeBytes), age(now.Sub(e.Mirrored)), age(now.Sub(e.LastUsed)), joinItems(e.Users))
 	}
 	t.Write(w)
 	if rep.Total > 0 {
@@ -291,6 +291,14 @@ func renderCache(w io.Writer, rep *cache.Report, now time.Time, pal ui.Palette) 
 			bytesText(rep.Used), bytesText(rep.Total), bytesText(rep.Total-rep.Used))
 	}
 	return nil
+}
+
+// cacheState is the entry's state, with how long a mirror has been running.
+func cacheState(e cache.Entry, now time.Time) string {
+	if e.State == cache.StateMirroring && !e.Started.IsZero() {
+		return e.StateText() + " " + age(now.Sub(e.Started))
+	}
+	return e.StateText()
 }
 
 // joinItems is items joined by ", ", or "-" when there are none.

@@ -208,6 +208,28 @@ func TestEnsureMirrorsWhenTheImagesAreGone(t *testing.T) {
 	}
 }
 
+// An entry that is mid-mirror is not usable yet: another create must wait its
+// turn (the script's lock), then mirror, not install from a partial payload.
+func TestEnsureMirrorsAnEntryThatIsNotReady(t *testing.T) {
+	ctx := context.Background()
+	r := &mirrorRunner{runner: runner{out: releaseInfo}}
+	e := mirrorEnv(t, 50<<30, r)
+	_ = update(ctx, e.Kube, ns, func(m *metadata) {
+		m.Entries["sha256:1111111111111111aaaa"] = &Entry{Version: "4.20.46", Image: rel.Image,
+			Digest: "sha256:1111111111111111aaaa", Repo: "ocp/release/1111111111111111", State: StateMirroring}
+	})
+	p, err := Ensure(ctx, e, EnsureOptions{Namespace: ns, Release: rel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Hit || len(r.mirrorArgs) == 0 {
+		t.Errorf("hit = %v, mirror args %q", p.Hit, r.mirrorArgs)
+	}
+	if p.State != "" {
+		t.Errorf("state = %q, want ready once the mirror finished", p.State)
+	}
+}
+
 func TestEnsureRefusesWhenFull(t *testing.T) {
 	r := &mirrorRunner{runner: runner{out: releaseInfo}}
 	_, err := Ensure(context.Background(), mirrorEnv(t, 2<<30, r), EnsureOptions{Namespace: ns, Release: rel})
@@ -236,9 +258,18 @@ func TestEnsureErrors(t *testing.T) {
 	ctx := context.Background()
 	t.Run("mirror fails", func(t *testing.T) {
 		r := &mirrorRunner{runner: runner{out: releaseInfo}, mirrorErr: errors.New("exit 1")}
-		_, err := Ensure(ctx, mirrorEnv(t, 50<<30, r), EnsureOptions{Namespace: ns, Release: rel})
+		e := mirrorEnv(t, 50<<30, r)
+		_, err := Ensure(ctx, e, EnsureOptions{Namespace: ns, Release: rel})
 		if err == nil || !strings.Contains(err.Error(), "last line") {
 			t.Errorf("got %v", err)
+		}
+		m, err := load(ctx, e.Kube, ns)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Said out loud, so `cache list` shows it and the next create retries.
+		if ent := m.Entries["sha256:1111111111111111aaaa"]; ent == nil || ent.State != StateFailed {
+			t.Errorf("entry = %+v, want a failed one", ent)
 		}
 	})
 	t.Run("no sources", func(t *testing.T) {
