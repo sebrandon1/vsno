@@ -1,0 +1,16 @@
+# The registry's configuration file. The Deployment configures the registry
+# with environment variables, but `registry garbage-collect`, which
+# `vsno cache prune` runs in a Job over the same volume, needs a file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: registry-config
+  namespace: {{ .Namespace }}
+data:
+  config.yml: |
+    version: 0.1
+    storage:
+      filesystem:
+        rootdirectory: /var/lib/registry
+      delete:
+        enabled: true

@@ -269,7 +269,7 @@ func TestStepsObjects(t *testing.T) {
 			t.Errorf("%s = %v, want %v", s.Name, got, w)
 		}
 	}
-	if total != 28 {
-		t.Errorf("%d objects in all steps, want 28 (20 in the namespace, 8 on the host)", total)
+	if total != 29 {
+		t.Errorf("%d objects in all steps, want 29 (21 in the namespace, 8 on the host)", total)
 	}
 }

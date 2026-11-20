@@ -142,7 +142,7 @@ func TestRunNamespace(t *testing.T) {
 	if tg := res.Targets[0]; tg.Outcome != Deleted || tg.Detail != "1 VM(s) (seed), 1 PVC(s)" {
 		t.Errorf("target = %+v", tg)
 	}
-	if c.answer != ns || c.shown != 1 || !strings.Contains(c.asked, "This deletes 20 object(s)") {
+	if c.answer != ns || c.shown != 1 || !strings.Contains(c.asked, "This deletes 21 object(s)") {
 		t.Errorf("confirm: answer %q shown %d q %q", c.answer, c.shown, c.asked)
 	}
 	if exists(t, d, cluster.GVRNamespace, "", ns) || !exists(t, d, precheck.GVRHyperConverged, cluster.CNVNamespace, cluster.HyperConvergedName) {
@@ -310,7 +310,7 @@ func TestRunStepsMirrorSetup(t *testing.T) {
 	if !slices.Equal(got, names) {
 		t.Errorf("steps = %v, want setup's reversed: %v", got, names)
 	}
-	if s := res.Steps[0]; s.Name != "support" || s.Outcome != Planned || s.Detail != "16 to delete, 1 absent" {
+	if s := res.Steps[0]; s.Name != "support" || s.Outcome != Planned || s.Detail != "17 to delete, 1 absent" {
 		t.Errorf("support = %+v", s)
 	}
 	if first, last := res.Objects[0], res.Objects[len(res.Objects)-1]; first.Ref() != ns+"/Deployment/registry" || last.Ref() != "Namespace/"+ns {
@@ -343,7 +343,7 @@ func TestRunStepWithNothingToDeleteIsGone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"support": "gone 17 absent", "namespace": "gone 3 absent", "storage": "planned 1 to delete"}
+	want := map[string]string{"support": "gone 18 absent", "namespace": "gone 3 absent", "storage": "planned 1 to delete"}
 	for _, s := range res.Steps {
 		if w, ok := want[s.Name]; ok && string(s.Outcome)+" "+s.Detail != w {
 			t.Errorf("%s = %s %q, want %s", s.Name, s.Outcome, s.Detail, w)

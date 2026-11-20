@@ -27,6 +27,7 @@ const (
 	Builder         = "builder"
 	S3              = "s3"
 	RegistryService = "registry-service"
+	RegistryConfig  = "registry-config"
 	Registry        = "registry"
 )
 
@@ -60,7 +61,7 @@ var Steps = []Step{
 	{Name: StepHyperConverged, Templates: []string{HyperConverged}, Host: true},
 	{Name: StepStorage, Templates: []string{LVMCluster}, Host: true},
 	{Name: StepNamespace, Templates: []string{Namespace}},
-	{Name: StepSupport, Templates: []string{DNSMasq, Builder, RegistryService, S3, Registry}},
+	{Name: StepSupport, Templates: []string{DNSMasq, Builder, RegistryService, S3, RegistryConfig, Registry}},
 }
 
 // Objects renders the step's templates and keeps the step's objects.
@@ -84,7 +85,8 @@ func (s Step) Objects(cfg Config) ([]*unstructured.Unstructured, error) {
 // name for ns, e.g. to find what setup created there.
 func NamesConfig(ns string) Config {
 	return Config{Namespace: ns, BaseDomain: DefaultBaseDomain,
-		StorageClass: DefaultStorageClass, Images: DefaultImages(), S3Bucket: DefaultS3Bucket}
+		StorageClass: DefaultStorageClass, Images: DefaultImages(), S3Bucket: DefaultS3Bucket,
+		RegistrySize: DefaultRegistrySize}
 }
 
 // Defaults shared with the commands that consume these manifests.
@@ -92,6 +94,8 @@ const (
 	DefaultBaseDomain   = "vsno.lab"
 	DefaultStorageClass = "lvms-vg-vsno"
 	DefaultS3Bucket     = "ibu"
+	// DefaultRegistrySize holds about five OpenShift releases plus seed images.
+	DefaultRegistrySize = "100Gi"
 	// GuestIP is the address every KubeVirt masquerade guest has for itself.
 	GuestIP = "10.0.2.2"
 )
@@ -148,6 +152,9 @@ type Config struct {
 	S3SecretKey string
 	S3Bucket    string
 
+	// RegistrySize is the registry's volume, e.g. 100Gi; empty means the default.
+	RegistrySize string
+
 	Registry RegistryAuth
 }
 
@@ -193,6 +200,9 @@ func (c Config) S3ConfigJSON() (string, error) {
 
 // RenderYAML renders one template to a multi-document YAML string.
 func RenderYAML(name string, cfg Config) (string, error) {
+	if cfg.RegistrySize == "" {
+		cfg.RegistrySize = DefaultRegistrySize
+	}
 	var b bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&b, name+".yaml.tmpl", cfg); err != nil {
 		return "", fmt.Errorf("rendering %s: %w", name, err)

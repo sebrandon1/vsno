@@ -55,6 +55,9 @@ type Options struct {
 	// given channel without asking, the way --upgrade-operators would accept it.
 	Channels map[string]string
 	Images   manifests.Images
+	// RegistrySize is the registry's volume, e.g. 200Gi. Empty means the default,
+	// and an existing volume only ever grows.
+	RegistrySize string
 }
 
 // Outcome says what a step did.
@@ -120,6 +123,7 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 		LVMSChannel:  s.LVMSChannel,
 		BaseDomain:   manifests.DefaultBaseDomain,
 		StorageClass: manifests.DefaultStorageClass,
+		RegistrySize: o.RegistrySize,
 		Images:       o.Images,
 		S3Bucket:     manifests.DefaultS3Bucket,
 	}, st: &state.State{Versions: map[string]string{}, Services: map[string]string{}}, upgrades: map[string]*cluster.Update{}}

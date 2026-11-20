@@ -10,7 +10,9 @@ import (
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/pki"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -18,6 +20,8 @@ import (
 const (
 	registryUser = "vsno"
 	redacted     = "<generated>"
+	// registryPVC is the registry's volume.
+	registryPVC = "registry-data"
 )
 
 func (r *runner) namespace(ctx context.Context, _ precheck.ProgressStep) (Step, error) {
@@ -52,7 +56,10 @@ func (r *runner) support(ctx context.Context, ps precheck.ProgressStep) (Step, e
 	if err := r.credentials(ctx); err != nil {
 		return step, err
 	}
-	if err := applyAll(manifests.S3, manifests.Registry); err != nil {
+	if err := r.registrySize(ctx); err != nil {
+		return step, err
+	}
+	if err := applyAll(manifests.S3, manifests.RegistryConfig, manifests.Registry); err != nil {
 		return step, err
 	}
 	step.Outcome, step.Detail = r.outcome(), r.detail(r.res.Changes[start:])
@@ -71,6 +78,43 @@ func (r *runner) support(ctx context.Context, ps precheck.ProgressStep) (Step, e
 	}
 	r.res.Registry = net.JoinHostPort(r.st.Services["registry"], fmt.Sprint(cluster.RegistryPort))
 	return step, nil
+}
+
+// registrySize keeps the registry's volume from being shrunk: a PVC only ever
+// grows. Asking for less keeps what exists and warns; asking for more needs a
+// StorageClass that allows expansion.
+func (r *runner) registrySize(ctx context.Context) error {
+	if r.cfg.RegistrySize == "" {
+		return nil
+	}
+	want, err := resource.ParseQuantity(r.cfg.RegistrySize)
+	if err != nil {
+		return fmt.Errorf("registry size %q: %w", r.cfg.RegistrySize, err)
+	}
+	pvc, err := r.Kube.CoreV1().PersistentVolumeClaims(r.o.Namespace).Get(ctx, registryPVC, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil // the first run creates it at the requested size
+	}
+	if err != nil {
+		return fmt.Errorf("reading the registry volume: %w", err)
+	}
+	have := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	switch {
+	case want.Cmp(have) < 0:
+		r.res.Warnings = append(r.res.Warnings, fmt.Sprintf("the registry volume can only grow; keeping %s instead of %s",
+			have.String(), want.String()))
+		r.cfg.RegistrySize = have.String()
+	case want.Cmp(have) > 0:
+		sc, err := r.Kube.StorageV1().StorageClasses().Get(ctx, r.cfg.StorageClass, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("reading StorageClass %s: %w", r.cfg.StorageClass, err)
+		}
+		if sc.AllowVolumeExpansion == nil || !*sc.AllowVolumeExpansion {
+			return fmt.Errorf("StorageClass %s doesn't allow volume expansion, so the registry volume can't grow to %s",
+				r.cfg.StorageClass, want.String())
+		}
+	}
+	return nil
 }
 
 // sshKey fills the builder's SSH key pair into r.cfg, reusing the stored one.

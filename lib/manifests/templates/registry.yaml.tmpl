@@ -36,7 +36,7 @@ metadata:
   namespace: {{ .Namespace }}
 spec:
   accessModes: [ReadWriteOnce]
-  resources: {requests: {storage: 100Gi}}
+  resources: {requests: {storage: {{ .RegistrySize }}}}
   storageClassName: {{ .StorageClass }}
 ---
 apiVersion: apps/v1
