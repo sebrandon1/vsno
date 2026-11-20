@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -73,23 +74,31 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 		return nil, err
 	}
 	repo := RepoPrefix + short(digest)
-	ent := Entry{Version: o.Release.Version, Image: o.Release.Image, Digest: digest, Repo: repo}
+	// The release image is not one of the payload's references, yet the guest
+	// pulls it first; map its repository too, as `oc adm release mirror` does.
+	if r, ok := repoOf(o.Release.Image); ok && !slices.Contains(sources, r) {
+		sources = append(sources, r)
+	}
 	m, err := load(ctx, e.Kube, o.Namespace)
 	if err != nil {
 		return nil, err
 	}
-	hit := m.Entries[digest] != nil
+	prev := m.Entries[digest]
+	// The ConfigMap can outlive what it describes (a prune that failed halfway,
+	// a manual delete), so a hit is only a hit if the registry still has it.
+	hit := prev != nil && mirrored(ctx, e, reg, prev)
+	var ent Entry
 	var elapsed time.Duration
 	if hit {
-		ent.Mirrored, ent.SizeBytes = m.Entries[digest].Mirrored, m.Entries[digest].SizeBytes
+		ent = *prev // keep what it was mirrored as, not what this request calls it
 	} else {
-		ent.Mirrored = e.Now()
+		ent = Entry{Version: o.Release.Version, Image: o.Release.Image, Digest: digest, Repo: repo, Mirrored: e.Now()}
 		if ent.SizeBytes, elapsed, err = mirror(ctx, e, o, reg, addr, repo, short(digest), m); err != nil {
 			return nil, err
 		}
 	}
 	ent.LastUsed = e.Now()
-	ent.Requested = appendUnique(oldRequested(m.Entries[digest]), o.Release.Requested)
+	ent.Requested = appendUnique(oldRequested(prev), o.Release.Requested)
 	if err := update(ctx, e.Kube, o.Namespace, func(m *metadata) { m.Entries[digest] = &ent }); err != nil {
 		return nil, err
 	}
@@ -106,6 +115,12 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 		p.Sources = append(p.Sources, ImageDigestSource{Source: s, Mirrors: []string{addr + "/" + repo}})
 	}
 	return p, nil
+}
+
+// mirrored reports whether a cached entry's images are still in the registry.
+func mirrored(ctx context.Context, e Env, reg registry.Registry, ent *Entry) bool {
+	out, err := reg.Run(ctx, e.Builder, reg.Host, "exists", ent.Repo+":"+short(ent.Digest))
+	return err == nil && strings.TrimSpace(string(out)) == "yes"
 }
 
 // mirror copies the release's payload into the registry, after checking there
@@ -204,11 +219,19 @@ func runMirror(ctx context.Context, e Env, o EnsureOptions, files []byte, host, 
 		done <- err
 	}()
 	sc := bufio.NewScanner(pr)
+	sc.Buffer(make([]byte, 64<<10), 4<<20)
 	for sc.Scan() {
 		o.line(sc.Text())
 	}
-	if err := <-done; err != nil {
-		return fmt.Errorf("mirroring %s: %w%s", o.Release.Requested, err, tail(stderr.String()))
+	// A scanner that gives up would otherwise leave the writer blocked in the
+	// pipe and this call waiting on it forever.
+	_ = pr.Close()
+	errRun := <-done
+	if errRun != nil {
+		return fmt.Errorf("mirroring %s: %w%s", o.Release.Requested, errRun, tail(stderr.String()))
+	}
+	if err := sc.Err(); err != nil {
+		return fmt.Errorf("reading the mirror's output: %w", err)
 	}
 	return nil
 }

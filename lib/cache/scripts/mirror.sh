@@ -6,14 +6,17 @@
 set -euo pipefail
 image=$1 host=$2 repo=$3 tag=$4
 dir=/work/cache/mirror-$(printf %s "$image" | sha256sum | cut -c1-16)
+
+# One mirror at a time: it shares the volume and the registry with ISO builds.
+# The lock comes first: two mirrors of one release share this work dir, and
+# wiping it under the one that holds the lock is how both would fail.
+exec 8>/work/.mirror.lock
+flock 8
+
 rm -rf "$dir"
 mkdir -p "$dir"
 tar -x -C "$dir"
 trap 'rm -rf "$dir"' EXIT
-
-# One mirror at a time: it shares the volume and the registry with ISO builds.
-exec 8>/work/.mirror.lock
-flock 8
 
 # oc verifies every registry against the system bundle, and the registry's CA
 # is not in it. --certificate-authority would replace the bundle for quay.io

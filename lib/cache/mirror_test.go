@@ -159,7 +159,7 @@ func TestRate(t *testing.T) {
 
 func TestEnsureHit(t *testing.T) {
 	ctx := context.Background()
-	r := &mirrorRunner{runner: runner{out: releaseInfo}}
+	r := &mirrorRunner{runner: runner{out: releaseInfo, exists: "yes"}}
 	e := mirrorEnv(t, 50<<30, r)
 	at := time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
 	_ = update(ctx, e.Kube, ns, func(m *metadata) {
@@ -178,6 +178,30 @@ func TestEnsureHit(t *testing.T) {
 	}
 	if want := []string{"4.20", "4.20.46"}; !equal(p.Requested, want) {
 		t.Errorf("requested = %q, want %q", p.Requested, want)
+	}
+}
+
+// The record can outlive the images (a prune that failed halfway, a manual
+// delete): that is not a hit, or the guest installs from upstream believing it
+// is reading the mirror.
+func TestEnsureMirrorsWhenTheImagesAreGone(t *testing.T) {
+	ctx := context.Background()
+	r := &mirrorRunner{runner: runner{out: releaseInfo, exists: "no"}}
+	e := mirrorEnv(t, 50<<30, r)
+	at := time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
+	_ = update(ctx, e.Kube, ns, func(m *metadata) {
+		m.Entries["sha256:1111111111111111aaaa"] = &Entry{Version: "4.20.46", Image: rel.Image,
+			Digest: "sha256:1111111111111111aaaa", Repo: "ocp/release/1111111111111111", Mirrored: at, SizeBytes: 7 << 30}
+	})
+	p, err := Ensure(ctx, e, EnsureOptions{Namespace: ns, Release: rel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Hit || len(r.mirrorArgs) == 0 {
+		t.Errorf("hit = %v, mirror args %q", p.Hit, r.mirrorArgs)
+	}
+	if len(r.registryCalls) == 0 || r.registryCalls[0][1] != "exists" {
+		t.Errorf("registry calls = %q", r.registryCalls)
 	}
 }
 
