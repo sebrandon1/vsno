@@ -38,13 +38,13 @@ var certTest = "test -f " + certFile(testRegistry)
 // trusting the registry, and the node holding the CA.
 func readyAccess() *fakeAccess {
 	return &fakeAccess{
-		oc: map[string][]resp{
-			cosGet:  {{out: cosStable}},
-			mcpsGet: {{out: mcpsStable}},
-			csvGet:  {{out: csvDone}},
-			imgGet:  {{out: imgOurs}},
+		OcReplies: map[string][]resp{
+			cosGet:  {{Out: cosStable}},
+			mcpsGet: {{Out: mcpsStable}},
+			csvGet:  {{Out: csvDone}},
+			imgGet:  {{Out: imgOurs}},
 		},
-		ssh: map[string][]resp{certTest: {{}}},
+		SSHReplies: map[string][]resp{certTest: {{}}},
 	}
 }
 
@@ -81,24 +81,24 @@ type checkCase struct {
 
 var checkCases = []checkCase{
 	{"everything in place", func(*fakeAccess) {}, "Seed target", precheck.Pass, Ref(testRegistry, "a", "4.20.46"), ""},
-	{"LCA installing", func(f *fakeAccess) { f.oc[csvGet] = []resp{{out: csvPending}} },
+	{"LCA installing", func(f *fakeAccess) { f.OcReplies[csvGet] = []resp{{Out: csvPending}} },
 		"Lifecycle Agent", precheck.Warn, "not Succeeded yet", "wait for it"},
 	{"LCA missing", func(f *fakeAccess) {
-		f.oc[csvGet] = []resp{{out: ""}}
-		f.oc[pmGet] = []resp{{out: `{"status":{"catalogSource":"redhat-operators","defaultChannel":"stable"}}`}}
+		f.OcReplies[csvGet] = []resp{{Out: ""}}
+		f.OcReplies[pmGet] = []resp{{Out: `{"status":{"catalogSource":"redhat-operators","defaultChannel":"stable"}}`}}
 	}, "Lifecycle Agent", precheck.Fail, "not installed", "--install subscribes to redhat-operators/stable"},
-	{"LCA package missing", func(f *fakeAccess) { f.oc[csvGet] = []resp{{out: ""}} },
+	{"LCA package missing", func(f *fakeAccess) { f.OcReplies[csvGet] = []resp{{Out: ""}} },
 		"Lifecycle Agent", precheck.Fail, "no lifecycle-agent package", "expected for a nightly"},
-	{"trust not set up", func(f *fakeAccess) { f.oc[imgGet] = []resp{{out: imgNone}} },
+	{"trust not set up", func(f *fakeAccess) { f.OcReplies[imgGet] = []resp{{Out: imgNone}} },
 		"Registry trust", precheck.Fail, "no additionalTrustedCA", "--install adds ConfigMap " + trustConfigMap},
-	{"someone else's trust", func(f *fakeAccess) { f.oc[imgGet] = []resp{{out: imgElse}} },
+	{"someone else's trust", func(f *fakeAccess) { f.OcReplies[imgGet] = []resp{{Out: imgElse}} },
 		"Registry trust", precheck.Fail, "openshift-config/corp-ca", "add key " + testRegistry.TrustKey()},
-	{"trust configured, node behind", func(f *fakeAccess) { f.ssh[certTest] = []resp{{err: errors.New("exit 1")}} },
+	{"trust configured, node behind", func(f *fakeAccess) { f.SSHReplies[certTest] = []resp{{Err: errors.New("exit 1")}} },
 		"Registry trust", precheck.Warn, "doesn't have", "wait for the node's MachineConfig"},
 	{"cluster degraded", func(f *fakeAccess) {
-		f.oc[cosGet] = []resp{{out: `{"items":[{"metadata":{"name":"etcd"},"status":{"conditions":[{"type":"Available","status":"True"},{"type":"Degraded","status":"True"}]}}]}`}}
+		f.OcReplies[cosGet] = []resp{{Out: `{"items":[{"metadata":{"name":"etcd"},"status":{"conditions":[{"type":"Available","status":"True"},{"type":"Degraded","status":"True"}]}}]}`}}
 	}, "Cluster settled", precheck.Fail, "etcd degraded", "waits up to"},
-	{"API down", func(f *fakeAccess) { f.oc[cosGet] = []resp{{err: errors.New("connection refused")}} },
+	{"API down", func(f *fakeAccess) { f.OcReplies[cosGet] = []resp{{Err: errors.New("connection refused")}} },
 		"vSNO API", precheck.Fail, "connection refused", "is the vSNO running?"},
 }
 
@@ -188,26 +188,26 @@ func TestPrecheckRows(t *testing.T) {
 
 func TestPrecheckSettles(t *testing.T) {
 	fa := readyAccess()
-	fa.oc[cosGet] = []resp{
-		{out: `{"items":[{"metadata":{"name":"etcd"},"status":{"conditions":[{"type":"Available","status":"True"},{"type":"Progressing","status":"True"}]}}]}`},
-		{out: cosStable},
+	fa.OcReplies[cosGet] = []resp{
+		{Out: `{"items":[{"metadata":{"name":"etcd"},"status":{"conditions":[{"type":"Available","status":"True"},{"type":"Progressing","status":"True"}]}}]}`},
+		{Out: cosStable},
 	}
 	_, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a", Settle: true})
 	if got := rowOf(t, rep, "Cluster settled"); got.Status != precheck.Pass {
 		t.Errorf("settled = %+v", got)
 	}
-	if len(fa.calls) < 3 {
-		t.Errorf("calls %q", fa.calls)
+	if len(fa.Calls) < 3 {
+		t.Errorf("calls %q", fa.Calls)
 	}
 }
 
 func TestInstall(t *testing.T) {
 	ctx := context.Background()
 	fa := readyAccess()
-	fa.oc[csvGet] = []resp{{out: ""}, {out: ""}, {out: csvDone}}
-	fa.oc[pmGet] = []resp{{out: `{"status":{"catalogSource":"redhat-operators","catalogSourceNamespace":"openshift-marketplace","defaultChannel":"stable"}}`}}
-	fa.oc[imgGet] = []resp{{out: imgNone}, {out: imgOurs}}
-	fa.ssh[certTest] = []resp{{err: errors.New("exit 1")}, {}}
+	fa.OcReplies[csvGet] = []resp{{Out: ""}, {Out: ""}, {Out: csvDone}}
+	fa.OcReplies[pmGet] = []resp{{Out: `{"status":{"catalogSource":"redhat-operators","catalogSourceNamespace":"openshift-marketplace","defaultChannel":"stable"}}`}}
+	fa.OcReplies[imgGet] = []resp{{Out: imgNone}, {Out: imgOurs}}
+	fa.SSHReplies[certTest] = []resp{{Err: errors.New("exit 1")}, {}}
 	in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
 	if rep.Failed() == 0 {
 		t.Fatal("a vSNO without LCA or trust passed")
@@ -223,23 +223,23 @@ func TestInstall(t *testing.T) {
 		t.Errorf("installed %q, warnings %q", rep.Installed, rep.Warnings)
 	}
 	var subscribed, trusted bool
-	for _, s := range fa.stdin {
+	for _, s := range fa.Stdin {
 		subscribed = subscribed || strings.Contains(s, `channel: "stable"`)
 		trusted = trusted || strings.Contains(s, testRegistry.TrustKey())
 	}
 	if !subscribed || !trusted {
-		t.Errorf("installed %q, applied %q", rep.Installed, fa.stdin)
+		t.Errorf("installed %q, applied %q", rep.Installed, fa.Stdin)
 	}
 }
 
 func TestInstallLeavesOthersAlone(t *testing.T) {
 	ctx := context.Background()
 	fa := readyAccess()
-	fa.oc[imgGet] = []resp{{out: imgElse}}
+	fa.OcReplies[imgGet] = []resp{{Out: imgElse}}
 	in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
 	install(ctx, in.Env, in)
-	if len(rep.Installed) != 0 || fa.ran("oc patch image.config.openshift.io") || len(fa.stdin) != 0 {
-		t.Errorf("installed %q, calls %q", rep.Installed, fa.calls)
+	if len(rep.Installed) != 0 || fa.Ran("oc patch image.config.openshift.io") || len(fa.Stdin) != 0 {
+		t.Errorf("installed %q, calls %q", rep.Installed, fa.Calls)
 	}
 	if got := rowOf(t, rep, "Registry trust"); !strings.Contains(got.Hint, "openshift-config/corp-ca") {
 		t.Errorf("hint = %q", got.Hint)
@@ -249,8 +249,8 @@ func TestInstallLeavesOthersAlone(t *testing.T) {
 func TestInstallWarnsInsteadOfFailing(t *testing.T) {
 	ctx := context.Background()
 	fa := readyAccess()
-	fa.oc[csvGet] = []resp{{out: ""}}
-	fa.oc[pmGet] = []resp{{out: ""}} // no package: LCA can't be installed
+	fa.OcReplies[csvGet] = []resp{{Out: ""}}
+	fa.OcReplies[pmGet] = []resp{{Out: ""}} // no package: LCA can't be installed
 	in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
 	install(ctx, in.Env, in)
 	if len(rep.Warnings) != 1 || !strings.Contains(rep.Warnings[0], "no lifecycle-agent package") {
@@ -315,8 +315,8 @@ func TestPrecheck(t *testing.T) {
 		if len(rep.Results) != 1 || rep.Failed() != 1 || !strings.Contains(rep.Results[0].Detail, "not found") {
 			t.Errorf("report = %+v", rep)
 		}
-		if len(fa.calls) != 0 {
-			t.Errorf("checked a vSNO that isn't there: %q", fa.calls)
+		if len(fa.Calls) != 0 {
+			t.Errorf("checked a vSNO that isn't there: %q", fa.Calls)
 		}
 	})
 }

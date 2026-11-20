@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/sebrandon1/go-toolbox/cliout"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/ui"
@@ -84,9 +84,7 @@ func runPrecheck(cmd *cobra.Command, _ []string) error {
 
 	out := cmd.OutOrStdout()
 	if outputFormat == formatJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(report); err != nil {
+		if err := cliout.PrintJSON(out, report); err != nil {
 			return err
 		}
 	} else {

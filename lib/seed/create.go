@@ -1,16 +1,15 @@
 package seed
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/guest"
+	"github.com/sebrandon1/vsno/lib/guestctl"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -46,10 +45,10 @@ const (
 // trust the environment's registry, then runs LCA's seed generation and
 // follows it until the image is pushed and the cluster is back.
 func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
-	e.defaults(o.Namespace)
+	e.Defaults(o.Namespace)
 	res := &Result{Name: o.Name, Image: o.Image}
 	var reg Registry
-	if err := step(e, "Checking "+o.Name, func(precheck.ProgressStep) (string, error) {
+	if err := guestctl.Step(e.Progress, "Checking "+o.Name, func(precheck.ProgressStep) (string, error) {
 		rep, err := Precheck(ctx, e, PrecheckOptions{Namespace: o.Namespace, Name: o.Name, Image: o.Image, Settle: true})
 		if err != nil {
 			return "", err
@@ -60,7 +59,7 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
 		return res, err
 	}
 	a := e.Access(o.Name)
-	if err := step(e, "Lifecycle Agent", func(ps precheck.ProgressStep) (string, error) {
+	if err := guestctl.Step(e.Progress, "Lifecycle Agent", func(ps precheck.ProgressStep) (string, error) {
 		var err error
 		res.LCA, err = ensureLCA(ctx, e, a, ps)
 		return res.LCA, err
@@ -68,8 +67,8 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
 		return res, err
 	}
 	if imageHost(res.Image) == reg.Host {
-		if err := step(e, "Trusting the environment registry", func(ps precheck.ProgressStep) (string, error) {
-			return reg.Host, ensureTrust(ctx, e, a, reg, ps)
+		if err := guestctl.Step(e.Progress, "Trusting the environment registry", func(ps precheck.ProgressStep) (string, error) {
+			return reg.Host, EnsureTrust(ctx, e, a, reg, ps)
 		}); err != nil {
 			return res, err
 		}
@@ -78,7 +77,7 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
 	if err != nil {
 		return res, err
 	}
-	if err := step(e, "Generating the seed image", func(ps precheck.ProgressStep) (string, error) {
+	if err := guestctl.Step(e.Progress, "Generating the seed image", func(ps precheck.ProgressStep) (string, error) {
 		start := e.Now()
 		err := generate(ctx, e, a, res.Image, auth, ps)
 		res.Duration = e.Now().Sub(start).Round(time.Second)
@@ -90,37 +89,25 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
 	return res, nil
 }
 
-// step runs fn as one progress step.
-func step(e Env, title string, fn func(precheck.ProgressStep) (string, error)) error {
-	ps := e.Progress.Start(title)
-	detail, err := fn(ps)
-	if err != nil {
-		ps.Fail(err.Error())
-		return err
-	}
-	ps.Done(detail)
-	return nil
-}
-
 // unstable lists why the cluster isn't settled: ClusterOperators not
 // Available, Progressing or Degraded, and MachineConfigPools not Updated.
-func unstable(cos, mcps objectList) []string {
+func unstable(cos, mcps guestctl.ObjectList) []string {
 	var out []string
 	for _, co := range cos.Items {
 		switch {
-		case !co.isTrue("Available"):
+		case !co.IsTrue("Available"):
 			out = append(out, co.Metadata.Name+" unavailable")
-		case co.isTrue("Degraded"):
+		case co.IsTrue("Degraded"):
 			out = append(out, co.Metadata.Name+" degraded")
-		case co.isTrue("Progressing"):
+		case co.IsTrue("Progressing"):
 			out = append(out, co.Metadata.Name+" progressing")
 		}
 	}
 	for _, p := range mcps.Items {
 		switch {
-		case p.isTrue("Degraded"):
+		case p.IsTrue("Degraded"):
 			out = append(out, "MachineConfigPool "+p.Metadata.Name+" degraded")
-		case !p.isTrue("Updated") || p.isTrue("Updating"):
+		case !p.IsTrue("Updated") || p.IsTrue("Updating"):
 			out = append(out, "MachineConfigPool "+p.Metadata.Name+" updating")
 		}
 	}
@@ -134,111 +121,37 @@ func unstable(cos, mcps objectList) []string {
 func waitStable(ctx context.Context, e Env, a Access, ps precheck.ProgressStep) error {
 	var last []string
 	err := poll(ctx, e, stableWait, func() (bool, error) {
-		var cos, mcps objectList
-		if _, err := ocJSON(ctx, a, &cos, "get", "clusteroperators"); err != nil {
+		var cos, mcps guestctl.ObjectList
+		if _, err := guestctl.Get(ctx, a, &cos, "get", "clusteroperators"); err != nil {
 			return false, err
 		}
-		if _, err := ocJSON(ctx, a, &mcps, "get", "machineconfigpools"); err != nil {
+		if _, err := guestctl.Get(ctx, a, &mcps, "get", "machineconfigpools"); err != nil {
 			return false, err
 		}
 		last = unstable(cos, mcps)
 		ps.Update(strings.Join(last, ", "))
 		return len(last) == 0, nil
 	})
-	if errors.Is(err, errTimeout) {
+	if errors.Is(err, guestctl.ErrTimeout) {
 		return fmt.Errorf("the cluster didn't settle in %s: %s", stableWait, strings.Join(last, ", "))
 	}
 	return err
 }
 
-var errTimeout = errors.New("timed out")
+// Clock is how e's waits poll: every e.Poll, by e.Now.
+func (e Env) Clock() guestctl.Clock { return guestctl.Clock{Every: e.Poll, Now: e.Now} }
 
 // poll calls fn every e.Poll until it's done, fails, or limit passes.
 func poll(ctx context.Context, e Env, limit time.Duration, fn func() (bool, error)) error {
-	deadline := e.Now().Add(limit)
-	for {
-		done, err := fn()
-		if done || err != nil {
-			return err
-		}
-		if e.Now().After(deadline) {
-			return errTimeout
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(e.Poll):
-		}
-	}
+	return guestctl.Poll(ctx, e.Clock(), limit, fn)
 }
 
-// lcaCSV returns the name of LCA's CSV and whether it has Succeeded.
-func lcaCSV(ctx context.Context, a Access) (string, bool, error) {
-	var csvs objectList
-	if _, err := ocJSON(ctx, a, &csvs, "get", "clusterserviceversions", "-n", LCANamespace, "--ignore-not-found"); err != nil {
-		return "", false, err
-	}
-	for _, c := range csvs.Items {
-		if strings.HasPrefix(c.Metadata.Name, "lifecycle-agent.") {
-			return c.Metadata.Name, c.Status.Phase == "Succeeded", nil
-		}
-	}
-	return "", false, nil
-}
+// LCA is the Lifecycle Agent, which makes seed images and runs upgrades.
+var LCA = guestctl.Operator{Name: "LCA", Package: "lifecycle-agent", Namespace: LCANamespace, Management: true}
 
-// packageManifest is the part of LCA's PackageManifest vsno reads.
-type packageManifest struct {
-	Status struct {
-		CatalogSource          string `json:"catalogSource"`
-		CatalogSourceNamespace string `json:"catalogSourceNamespace"`
-		DefaultChannel         string `json:"defaultChannel"`
-	} `json:"status"`
-}
-
-// lcaPackage looks for LCA in the vSNO's operator catalog, which is where
-// ensureLCA takes its channel and source from.
-func lcaPackage(ctx context.Context, a Access) (packageManifest, bool, error) {
-	var pm packageManifest
-	found, err := ocJSON(ctx, a, &pm, "get", "packagemanifests", "lifecycle-agent", "-n", "openshift-marketplace", "--ignore-not-found")
-	return pm, found, err
-}
-
-// ensureLCA installs LCA from the vSNO's own catalog (so it matches the
-// vSNO's version) unless it's there, and waits for its CSV.
+// ensureLCA installs LCA from the vSNO's own catalog unless it's there.
 func ensureLCA(ctx context.Context, e Env, a Access, ps precheck.ProgressStep) (string, error) {
-	name, ok, err := lcaCSV(ctx, a)
-	if err != nil || ok {
-		return name, err
-	}
-	if name == "" {
-		pm, found, err := lcaPackage(ctx, a)
-		if err != nil {
-			return "", err
-		}
-		if !found || pm.Status.DefaultChannel == "" {
-			return "", errors.New("the vSNO's operator catalog has no lifecycle-agent package (expected for a nightly before its release)")
-		}
-		y, err := render("lca.yaml.tmpl", renderData{Channel: pm.Status.DefaultChannel,
-			Source: pm.Status.CatalogSource, SourceNamespace: pm.Status.CatalogSourceNamespace})
-		if err != nil {
-			return "", err
-		}
-		if err := oc(ctx, a, y, "apply", "-f", "-"); err != nil {
-			return "", err
-		}
-		ps.Update(fmt.Sprintf("subscribed to %s/%s", pm.Status.CatalogSource, pm.Status.DefaultChannel))
-	}
-	err = poll(ctx, e, lcaWait, func() (bool, error) {
-		name, ok, err = lcaCSV(ctx, a)
-		if name != "" {
-			ps.Update("installing " + name)
-		}
-		return ok, err
-	})
-	if errors.Is(err, errTimeout) {
-		return name, fmt.Errorf("LCA wasn't installed after %s (`vsno oc <name> -- get csv,installplan -n %s`)", lcaWait, LCANamespace)
-	}
-	return name, err
+	return LCA.Ensure(ctx, a, e.Clock(), lcaWait, ps)
 }
 
 // imageConfig is the part of the cluster image configuration vsno reads.
@@ -250,25 +163,25 @@ type imageConfig struct {
 	} `json:"spec"`
 }
 
-// ensureTrust makes the vSNO trust the registry's CA, through
+// EnsureTrust makes the vSNO trust the registry's CA, through
 // image.config's additionalTrustedCA, and waits until the node has it.
-func ensureTrust(ctx context.Context, e Env, a Access, r Registry, ps precheck.ProgressStep) error {
+func EnsureTrust(ctx context.Context, e Env, a Access, r Registry, ps precheck.ProgressStep) error {
 	y, err := render("trust.yaml.tmpl", renderData{TrustKey: r.TrustKey(), CA: r.CA})
 	if err != nil {
 		return err
 	}
-	if err := oc(ctx, a, y, "apply", "-f", "-"); err != nil {
+	if err := guestctl.Apply(ctx, a, y); err != nil {
 		return err
 	}
 	var img imageConfig
-	if _, err := ocJSON(ctx, a, &img, "get", "image.config.openshift.io", "cluster"); err != nil {
+	if _, err := guestctl.Get(ctx, a, &img, "get", "image.config.openshift.io", "cluster"); err != nil {
 		return err
 	}
 	switch img.Spec.AdditionalTrustedCA.Name {
 	case trustConfigMap:
 	case "":
 		patch := fmt.Sprintf(`{"spec":{"additionalTrustedCA":{"name":%q}}}`, trustConfigMap)
-		if err := oc(ctx, a, "", "patch", "image.config.openshift.io", "cluster", "--type", "merge", "-p", patch); err != nil {
+		if err := guestctl.Oc(ctx, a, "", "patch", "image.config.openshift.io", "cluster", "--type", "merge", "-p", patch); err != nil {
 			return err
 		}
 	default:
@@ -278,23 +191,11 @@ func ensureTrust(ctx context.Context, e Env, a Access, r Registry, ps precheck.P
 	file := certFile(r)
 	ps.Update("waiting for " + file)
 	err = poll(ctx, e, trustWait, func() (bool, error) {
-		return ssh(ctx, a, "test", "-f", file) == nil, nil
+		return guestctl.SSH(ctx, a, "test", "-f", file) == nil, nil
 	})
-	if errors.Is(err, errTimeout) {
+	if errors.Is(err, guestctl.ErrTimeout) {
 		return fmt.Errorf("the vSNO doesn't have %s after %s", file, trustWait)
 	}
-	return err
-}
-
-// sshOut runs a command on the vSNO and returns its output.
-func sshOut(ctx context.Context, a Access, args ...string) (string, error) {
-	var stdout, stderr bytes.Buffer
-	err := a.SSH(ctx, args, builder.IO{Stdout: &stdout, Stderr: &stderr})
-	return strings.TrimSpace(stdout.String()), err
-}
-
-func ssh(ctx context.Context, a Access, args ...string) error {
-	_, err := sshOut(ctx, a, args...)
 	return err
 }
 
@@ -307,8 +208,8 @@ const (
 	sgFailed
 )
 
-func phaseOf(sg object) (seedgenPhase, string) {
-	done, inProgress := sg.cond("SeedGenCompleted"), sg.cond("SeedGenInProgress")
+func phaseOf(sg guestctl.Object) (seedgenPhase, string) {
+	done, inProgress := sg.Cond("SeedGenCompleted"), sg.Cond("SeedGenInProgress")
 	switch {
 	case done != nil && done.Reason == "Failed":
 		return sgFailed, done.Message
@@ -329,8 +230,8 @@ var journalCmd = []string{"sudo", "journalctl", "-u", "lca-generate-seed-image",
 // follows it. The vSNO's API is down for most of it, while LCA builds the
 // image on the node; meanwhile progress comes from the node's journal.
 func generate(ctx context.Context, e Env, a Access, image, auth string, ps precheck.ProgressStep) error {
-	var sg object
-	found, err := ocJSON(ctx, a, &sg, "get", "seedgenerators", "seedimage", "--ignore-not-found")
+	var sg guestctl.Object
+	found, err := guestctl.Get(ctx, a, &sg, "get", "seedgenerators", "seedimage", "--ignore-not-found")
 	if err != nil {
 		return err
 	}
@@ -338,7 +239,7 @@ func generate(ctx context.Context, e Env, a Access, image, auth string, ps prech
 		if p, msg := phaseOf(sg); p == sgRunning {
 			return fmt.Errorf("a seed generation is already running on the vSNO: %s", msg)
 		}
-		if err := oc(ctx, a, "", "delete", "seedgenerators", "seedimage", "--wait"); err != nil {
+		if err := guestctl.Oc(ctx, a, "", "delete", "seedgenerators", "seedimage", "--wait"); err != nil {
 			return err
 		}
 	}
@@ -346,15 +247,15 @@ func generate(ctx context.Context, e Env, a Access, image, auth string, ps prech
 	if err != nil {
 		return err
 	}
-	if err := oc(ctx, a, y, "apply", "-f", "-"); err != nil {
+	if err := guestctl.Apply(ctx, a, y); err != nil {
 		return err
 	}
 	var failure error
 	err = poll(ctx, e, e.Timeout, func() (bool, error) {
-		var sg object
-		found, err := ocJSON(ctx, a, &sg, "get", "seedgenerators", "seedimage", "--ignore-not-found", "--request-timeout=10s")
+		var sg guestctl.Object
+		found, err := guestctl.Get(ctx, a, &sg, "get", "seedgenerators", "seedimage", "--ignore-not-found", "--request-timeout=10s")
 		if err != nil { // the API is down: LCA is generating the seed on the node
-			line, _ := sshOut(ctx, a, journalCmd...)
+			line, _ := guestctl.SSHOut(ctx, a, journalCmd...)
 			ps.Update("cluster stopped: " + line)
 			return false, nil
 		}
@@ -372,7 +273,7 @@ func generate(ctx context.Context, e Env, a Access, image, auth string, ps prech
 	switch {
 	case failure != nil:
 		return failure
-	case errors.Is(err, errTimeout):
+	case errors.Is(err, guestctl.ErrTimeout):
 		return fmt.Errorf("seed generation not finished after %s; it may still finish (`vsno oc <name> -- get seedgenerator seedimage`)", e.Timeout)
 	}
 	return err
@@ -383,10 +284,10 @@ func generate(ctx context.Context, e Env, a Access, image, auth string, ps prech
 func finish(ctx context.Context, e Env, a Access, o CreateOptions, res *Result) {
 	ps := e.Progress.Start("Cleaning up")
 	var warn []string
-	if err := oc(ctx, a, "", "delete", "seedgenerators", "seedimage", "--ignore-not-found"); err != nil {
+	if err := guestctl.Oc(ctx, a, "", "delete", "seedgenerators", "seedimage", "--ignore-not-found"); err != nil {
 		warn = append(warn, err.Error())
 	}
-	if err := oc(ctx, a, "", "delete", "secret", "seedgen", "-n", LCANamespace, "--ignore-not-found"); err != nil {
+	if err := guestctl.Oc(ctx, a, "", "delete", "secret", "seedgen", "-n", LCANamespace, "--ignore-not-found"); err != nil {
 		warn = append(warn, err.Error())
 	}
 	patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, AnnSeedImage, res.Image)

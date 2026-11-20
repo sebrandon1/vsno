@@ -2,12 +2,12 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"time"
 
+	"github.com/sebrandon1/go-toolbox/cliout"
 	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/isos"
@@ -106,9 +106,7 @@ func builderVolume(ctx context.Context, env guest.Env) *status.Component {
 
 func renderStatus(w io.Writer, r *status.Report, pal ui.Palette) error {
 	if outputFormat == formatJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(r)
+		return cliout.PrintJSON(w, r)
 	}
 	switch {
 	case !r.Exists:
@@ -154,7 +152,7 @@ func renderReleaseCache(w io.Writer, rep *cache.Report, pal ui.Palette) {
 	var t ui.Table
 	t.Row("  "+pal.Bold("VERSION"), pal.Bold("SIZE"), pal.Bold("LAST USED"), pal.Bold("VSNOS"))
 	for _, e := range rep.Entries {
-		ver := dash(e.Version)
+		ver := orDash(e.Version)
 		if e.StateText() != "ready" {
 			ver += " (" + e.StateText() + ")"
 		}

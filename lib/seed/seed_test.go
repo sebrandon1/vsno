@@ -16,6 +16,8 @@ import (
 
 	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/guest"
+	"github.com/sebrandon1/vsno/lib/guestctl"
+	"github.com/sebrandon1/vsno/lib/guestctl/guestctltest"
 	"github.com/sebrandon1/vsno/lib/registry"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,57 +46,15 @@ func golden(t *testing.T, name, got string) {
 	}
 }
 
-// resp is one canned answer.
-type resp struct {
-	out string
-	err error
-}
-
-// fakeAccess answers oc and ssh by their arguments (without "-o json"); each
-// key's answers are used in turn, the last one repeating. Unknown keys answer
-// nothing, successfully.
-type fakeAccess struct {
-	oc, ssh map[string][]resp
-	calls   []string
-	stdin   []string
-}
-
-func (f *fakeAccess) answer(m map[string][]resp, kind string, args []string, s builder.IO) error {
-	key := strings.TrimSuffix(strings.Join(args, " "), " -o json")
-	f.calls = append(f.calls, kind+" "+key)
-	if s.Stdin != nil {
-		b, _ := io.ReadAll(s.Stdin)
-		f.stdin = append(f.stdin, string(b))
-	}
-	q := m[key]
-	if len(q) == 0 {
-		return nil
-	}
-	r := q[0]
-	if len(q) > 1 {
-		m[key] = q[1:]
-	}
-	if s.Stdout != nil {
-		_, _ = io.WriteString(s.Stdout, r.out)
-	}
-	return r.err
-}
-
-func (f *fakeAccess) Oc(_ context.Context, args []string, s builder.IO) error {
-	return f.answer(f.oc, "oc", args, s)
-}
-
-func (f *fakeAccess) SSH(_ context.Context, args []string, s builder.IO) error {
-	return f.answer(f.ssh, "ssh", args, s)
-}
-
-func (f *fakeAccess) ran(prefix string) bool {
-	return slices.ContainsFunc(f.calls, func(c string) bool { return strings.HasPrefix(c, prefix) })
-}
+// resp and fakeAccess are guestctltest's, under the names these tests use.
+type (
+	resp       = guestctltest.Reply
+	fakeAccess = guestctltest.Fake
+)
 
 func testEnv(fa *fakeAccess) Env {
 	e := Env{Env: guest.Env{Poll: time.Millisecond}, Access: func(string) Access { return fa }}
-	e.defaults(ns)
+	e.Defaults(ns)
 	return e
 }
 
@@ -110,7 +70,6 @@ var testRegistry = Registry{Host: RegistryHost(ns), User: "u", Password: "p", CA
 
 func TestTemplates(t *testing.T) {
 	for name, d := range map[string]renderData{
-		"lca.yaml.tmpl":     {Channel: "stable", Source: "redhat-operators", SourceNamespace: "openshift-marketplace"},
 		"trust.yaml.tmpl":   {TrustKey: testRegistry.TrustKey(), CA: testRegistry.CA},
 		"seedgen.yaml.tmpl": {SeedAuth: testRegistry.Auth(), Image: Ref(testRegistry, "brave-otter", "4.20.46")},
 	} {
@@ -172,31 +131,31 @@ const (
 	mcpsStable = `{"items":[{"metadata":{"name":"master"},"status":{"conditions":[{"type":"Updated","status":"True"},{"type":"Updating","status":"False"},{"type":"Degraded","status":"False"}]}}]}`
 )
 
-func obj(name string, conds ...condition) object {
-	var o object
+func obj(name string, conds ...guestctl.Condition) guestctl.Object {
+	var o guestctl.Object
 	o.Metadata.Name = name
 	o.Status.Conditions = conds
 	return o
 }
 
 func TestUnstable(t *testing.T) {
-	ok := []condition{{Type: "Available", Status: "True"}, {Type: "Progressing", Status: "False"}, {Type: "Degraded", Status: "False"}}
-	updated := []condition{{Type: "Updated", Status: "True"}, {Type: "Updating", Status: "False"}}
+	ok := []guestctl.Condition{{Type: "Available", Status: "True"}, {Type: "Progressing", Status: "False"}, {Type: "Degraded", Status: "False"}}
+	updated := []guestctl.Condition{{Type: "Updated", Status: "True"}, {Type: "Updating", Status: "False"}}
 	for _, c := range []struct {
 		name      string
-		cos, mcps []object
+		cos, mcps []guestctl.Object
 		want      []string
 	}{
-		{"stable", []object{obj("etcd", ok...)}, []object{obj("master", updated...)}, nil},
+		{"stable", []guestctl.Object{obj("etcd", ok...)}, []guestctl.Object{obj("master", updated...)}, nil},
 		{"no operators", nil, nil, []string{"no ClusterOperators reported"}},
-		{"unavailable", []object{obj("etcd", condition{Type: "Available", Status: "False"})}, nil, []string{"etcd unavailable"}},
-		{"degraded", []object{obj("dns", condition{Type: "Available", Status: "True"}, condition{Type: "Degraded", Status: "True"})}, nil, []string{"dns degraded"}},
-		{"progressing", []object{obj("network", condition{Type: "Available", Status: "True"}, condition{Type: "Progressing", Status: "True"})}, nil, []string{"network progressing"}},
-		{"pool updating", []object{obj("etcd", ok...)}, []object{obj("master", condition{Type: "Updated", Status: "False"}, condition{Type: "Updating", Status: "True"})}, []string{"MachineConfigPool master updating"}},
-		{"pool degraded", []object{obj("etcd", ok...)}, []object{obj("master", condition{Type: "Degraded", Status: "True"})}, []string{"MachineConfigPool master degraded"}},
+		{"unavailable", []guestctl.Object{obj("etcd", guestctl.Condition{Type: "Available", Status: "False"})}, nil, []string{"etcd unavailable"}},
+		{"degraded", []guestctl.Object{obj("dns", guestctl.Condition{Type: "Available", Status: "True"}, guestctl.Condition{Type: "Degraded", Status: "True"})}, nil, []string{"dns degraded"}},
+		{"progressing", []guestctl.Object{obj("network", guestctl.Condition{Type: "Available", Status: "True"}, guestctl.Condition{Type: "Progressing", Status: "True"})}, nil, []string{"network progressing"}},
+		{"pool updating", []guestctl.Object{obj("etcd", ok...)}, []guestctl.Object{obj("master", guestctl.Condition{Type: "Updated", Status: "False"}, guestctl.Condition{Type: "Updating", Status: "True"})}, []string{"MachineConfigPool master updating"}},
+		{"pool degraded", []guestctl.Object{obj("etcd", ok...)}, []guestctl.Object{obj("master", guestctl.Condition{Type: "Degraded", Status: "True"})}, []string{"MachineConfigPool master degraded"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if got := unstable(objectList{Items: c.cos}, objectList{Items: c.mcps}); !slices.Equal(got, c.want) {
+			if got := unstable(guestctl.ObjectList{Items: c.cos}, guestctl.ObjectList{Items: c.mcps}); !slices.Equal(got, c.want) {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})
@@ -204,26 +163,26 @@ func TestUnstable(t *testing.T) {
 }
 
 func TestWaitStable(t *testing.T) {
-	fa := &fakeAccess{oc: map[string][]resp{
-		"get clusteroperators":   {{out: `{"items":[{"metadata":{"name":"etcd"},"status":{"conditions":[{"type":"Available","status":"True"},{"type":"Progressing","status":"True"}]}}]}`}, {out: cosStable}},
-		"get machineconfigpools": {{out: mcpsStable}},
+	fa := &fakeAccess{OcReplies: map[string][]resp{
+		"get clusteroperators":   {{Out: `{"items":[{"metadata":{"name":"etcd"},"status":{"conditions":[{"type":"Available","status":"True"},{"type":"Progressing","status":"True"}]}}]}`}, {Out: cosStable}},
+		"get machineconfigpools": {{Out: mcpsStable}},
 	}}
 	e := testEnv(fa)
 	if err := waitStable(context.Background(), e, fa, e.Progress.Start("x")); err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(strings.Join(fa.calls, "\n"), "get clusteroperators"); n != 2 {
+	if n := strings.Count(strings.Join(fa.Calls, "\n"), "get clusteroperators"); n != 2 {
 		t.Errorf("polled %d times, want 2", n)
 	}
 
-	stuck := &fakeAccess{oc: map[string][]resp{"get clusteroperators": {{out: `{"items":[]}`}}}}
+	stuck := &fakeAccess{OcReplies: map[string][]resp{"get clusteroperators": {{Out: `{"items":[]}`}}}}
 	e = testEnv(stuck)
 	e.Now = clock()
 	if err := waitStable(context.Background(), e, stuck, e.Progress.Start("x")); err == nil || !strings.Contains(err.Error(), "didn't settle") {
 		t.Errorf("stuck: %v", err)
 	}
 
-	broken := &fakeAccess{oc: map[string][]resp{"get clusteroperators": {{err: errors.New("exit 1")}}}}
+	broken := &fakeAccess{OcReplies: map[string][]resp{"get clusteroperators": {{Err: errors.New("exit 1")}}}}
 	e = testEnv(broken)
 	if err := waitStable(context.Background(), e, broken, e.Progress.Start("x")); err == nil || !strings.Contains(err.Error(), "oc get clusteroperators") {
 		t.Errorf("oc failure: %v", err)
@@ -240,32 +199,32 @@ const (
 func TestEnsureLCA(t *testing.T) {
 	ctx := context.Background()
 	t.Run("installed", func(t *testing.T) {
-		fa := &fakeAccess{oc: map[string][]resp{csvGet: {{out: csvDone}}}}
+		fa := &fakeAccess{OcReplies: map[string][]resp{csvGet: {{Out: csvDone}}}}
 		e := testEnv(fa)
 		name, err := ensureLCA(ctx, e, fa, e.Progress.Start("x"))
-		if err != nil || name != "lifecycle-agent.v4.20.7" || fa.ran("oc apply") {
-			t.Errorf("got %s, %v; calls %q", name, err, fa.calls)
+		if err != nil || name != "lifecycle-agent.v4.20.7" || fa.Ran("oc apply") {
+			t.Errorf("got %s, %v; calls %q", name, err, fa.Calls)
 		}
 	})
 	t.Run("installs from the catalog", func(t *testing.T) {
-		fa := &fakeAccess{oc: map[string][]resp{
-			csvGet: {{out: ""}, {out: csvPending}, {out: csvDone}},
-			pmGet:  {{out: `{"status":{"catalogSource":"redhat-operators","catalogSourceNamespace":"openshift-marketplace","defaultChannel":"stable"}}`}},
+		fa := &fakeAccess{OcReplies: map[string][]resp{
+			csvGet: {{Out: ""}, {Out: csvPending}, {Out: csvDone}},
+			pmGet:  {{Out: `{"status":{"catalogSource":"redhat-operators","catalogSourceNamespace":"openshift-marketplace","defaultChannel":"stable"}}`}},
 		}}
 		e := testEnv(fa)
 		name, err := ensureLCA(ctx, e, fa, e.Progress.Start("x"))
 		if err != nil || name != "lifecycle-agent.v4.20.7" {
 			t.Fatalf("got %s, %v", name, err)
 		}
-		if len(fa.stdin) != 1 || !strings.Contains(fa.stdin[0], `channel: "stable"`) || !strings.Contains(fa.stdin[0], `source: "redhat-operators"`) {
-			t.Errorf("applied %q", fa.stdin)
+		if len(fa.Stdin) != 1 || !strings.Contains(fa.Stdin[0], `channel: "stable"`) || !strings.Contains(fa.Stdin[0], `source: "redhat-operators"`) {
+			t.Errorf("applied %q", fa.Stdin)
 		}
 	})
 	t.Run("subscribed already, still installing", func(t *testing.T) {
-		fa := &fakeAccess{oc: map[string][]resp{csvGet: {{out: csvPending}, {out: csvDone}}}}
+		fa := &fakeAccess{OcReplies: map[string][]resp{csvGet: {{Out: csvPending}, {Out: csvDone}}}}
 		e := testEnv(fa)
-		if _, err := ensureLCA(ctx, e, fa, e.Progress.Start("x")); err != nil || fa.ran("oc apply") || fa.ran("oc "+pmGet) {
-			t.Errorf("%v; calls %q", err, fa.calls)
+		if _, err := ensureLCA(ctx, e, fa, e.Progress.Start("x")); err != nil || fa.Ran("oc apply") || fa.Ran("oc "+pmGet) {
+			t.Errorf("%v; calls %q", err, fa.Calls)
 		}
 	})
 }
@@ -273,14 +232,14 @@ func TestEnsureLCA(t *testing.T) {
 func TestEnsureLCAFailures(t *testing.T) {
 	ctx := context.Background()
 	t.Run("no package", func(t *testing.T) {
-		fa := &fakeAccess{oc: map[string][]resp{}}
+		fa := &fakeAccess{OcReplies: map[string][]resp{}}
 		e := testEnv(fa)
 		if _, err := ensureLCA(ctx, e, fa, e.Progress.Start("x")); err == nil || !strings.Contains(err.Error(), "no lifecycle-agent package") {
 			t.Errorf("got %v", err)
 		}
 	})
 	t.Run("never succeeds", func(t *testing.T) {
-		fa := &fakeAccess{oc: map[string][]resp{csvGet: {{out: csvPending}}}}
+		fa := &fakeAccess{OcReplies: map[string][]resp{csvGet: {{Out: csvPending}}}}
 		e := testEnv(fa)
 		e.Now = clock()
 		if _, err := ensureLCA(ctx, e, fa, e.Progress.Start("x")); err == nil || !strings.Contains(err.Error(), "wasn't installed") {
@@ -303,11 +262,11 @@ func TestEnsureTrust(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			fa := &fakeAccess{
-				oc:  map[string][]resp{"get image.config.openshift.io cluster": {{out: `{"spec":{"additionalTrustedCA":{"name":"` + c.current + `"}}}`}}},
-				ssh: map[string][]resp{certFile: {{err: errors.New("exit 1")}, {}}},
+				OcReplies:  map[string][]resp{"get image.config.openshift.io cluster": {{Out: `{"spec":{"additionalTrustedCA":{"name":"` + c.current + `"}}}`}}},
+				SSHReplies: map[string][]resp{certFile: {{Err: errors.New("exit 1")}, {}}},
 			}
 			e := testEnv(fa)
-			err := ensureTrust(ctx, e, fa, testRegistry, e.Progress.Start("x"))
+			err := EnsureTrust(ctx, e, fa, testRegistry, e.Progress.Start("x"))
 			if c.err != "" {
 				if err == nil || !strings.Contains(err.Error(), c.err) {
 					t.Errorf("got %v, want %s", err, c.err)
@@ -317,19 +276,19 @@ func TestEnsureTrust(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := fa.ran("oc patch image.config.openshift.io cluster"); got != c.patched {
+			if got := fa.Ran("oc patch image.config.openshift.io cluster"); got != c.patched {
 				t.Errorf("patched = %v, want %v", got, c.patched)
 			}
-			if !strings.Contains(fa.stdin[0], testRegistry.TrustKey()+`: "-----BEGIN CERTIFICATE-----\nCA\n`) {
-				t.Errorf("ConfigMap: %s", fa.stdin[0])
+			if !strings.Contains(fa.Stdin[0], testRegistry.TrustKey()+`: "-----BEGIN CERTIFICATE-----\nCA\n`) {
+				t.Errorf("ConfigMap: %s", fa.Stdin[0])
 			}
 		})
 	}
 	t.Run("node never gets it", func(t *testing.T) {
-		fa := &fakeAccess{oc: map[string][]resp{}, ssh: map[string][]resp{certFile: {{err: errors.New("exit 1")}}}}
+		fa := &fakeAccess{OcReplies: map[string][]resp{}, SSHReplies: map[string][]resp{certFile: {{Err: errors.New("exit 1")}}}}
 		e := testEnv(fa)
 		e.Now = clock()
-		if err := ensureTrust(ctx, e, fa, testRegistry, e.Progress.Start("x")); err == nil || !strings.Contains(err.Error(), "doesn't have") {
+		if err := EnsureTrust(ctx, e, fa, testRegistry, e.Progress.Start("x")); err == nil || !strings.Contains(err.Error(), "doesn't have") {
 			t.Errorf("got %v", err)
 		}
 	})
@@ -338,15 +297,15 @@ func TestEnsureTrust(t *testing.T) {
 func TestPhaseOf(t *testing.T) {
 	for _, c := range []struct {
 		name  string
-		conds []condition
+		conds []guestctl.Condition
 		want  seedgenPhase
 		msg   string
 	}{
 		{"new", nil, sgRunning, "starting"},
-		{"in progress", []condition{{Type: "SeedGenInProgress", Status: "True", Reason: "InProgress", Message: "Launching imager container"}}, sgRunning, "Launching imager container"},
-		{"completed", []condition{{Type: "SeedGenInProgress", Status: "False", Reason: "Completed"}, {Type: "SeedGenCompleted", Status: "True", Reason: "Completed", Message: "Seed Generation completed"}}, sgCompleted, "Seed Generation completed"},
-		{"failed", []condition{{Type: "SeedGenInProgress", Status: "False", Reason: "Failed", Message: "push failed"}, {Type: "SeedGenCompleted", Status: "False", Reason: "Failed", Message: "Seed Generation failed: push failed"}}, sgFailed, "Seed Generation failed: push failed"},
-		{"failed in progress only", []condition{{Type: "SeedGenInProgress", Status: "False", Reason: "Failed", Message: "precheck"}}, sgFailed, "precheck"},
+		{"in progress", []guestctl.Condition{{Type: "SeedGenInProgress", Status: "True", Reason: "InProgress", Message: "Launching imager container"}}, sgRunning, "Launching imager container"},
+		{"completed", []guestctl.Condition{{Type: "SeedGenInProgress", Status: "False", Reason: "Completed"}, {Type: "SeedGenCompleted", Status: "True", Reason: "Completed", Message: "Seed Generation completed"}}, sgCompleted, "Seed Generation completed"},
+		{"failed", []guestctl.Condition{{Type: "SeedGenInProgress", Status: "False", Reason: "Failed", Message: "push failed"}, {Type: "SeedGenCompleted", Status: "False", Reason: "Failed", Message: "Seed Generation failed: push failed"}}, sgFailed, "Seed Generation failed: push failed"},
+		{"failed in progress only", []guestctl.Condition{{Type: "SeedGenInProgress", Status: "False", Reason: "Failed", Message: "precheck"}}, sgFailed, "precheck"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if p, msg := phaseOf(obj("seedimage", c.conds...)); p != c.want || msg != c.msg {
@@ -370,42 +329,42 @@ func TestGenerate(t *testing.T) {
 	journal := strings.Join(journalCmd, " ")
 	t.Run("follows the API going down and coming back", func(t *testing.T) {
 		fa := &fakeAccess{
-			oc: map[string][]resp{
-				sgGet:  {{out: sgDoneJS}}, // a finished earlier run is replaced
-				sgPoll: {{out: sgRunningJS}, {err: errors.New("connection refused")}, {out: ""}, {out: sgDoneJS}},
+			OcReplies: map[string][]resp{
+				sgGet:  {{Out: sgDoneJS}}, // a finished earlier run is replaced
+				sgPoll: {{Out: sgRunningJS}, {Err: errors.New("connection refused")}, {Out: ""}, {Out: sgDoneJS}},
 			},
-			ssh: map[string][]resp{journal: {{out: "Pushing the seed image\n"}}},
+			SSHReplies: map[string][]resp{journal: {{Out: "Pushing the seed image\n"}}},
 		}
 		e := testEnv(fa)
 		if err := generate(ctx, e, fa, image, testRegistry.Auth(), e.Progress.Start("x")); err != nil {
 			t.Fatal(err)
 		}
-		if !fa.ran("oc delete seedgenerators seedimage --wait") || !fa.ran("ssh "+journal) {
-			t.Errorf("calls %q", fa.calls)
+		if !fa.Ran("oc delete seedgenerators seedimage --wait") || !fa.Ran("ssh "+journal) {
+			t.Errorf("calls %q", fa.Calls)
 		}
-		if len(fa.stdin) != 1 || !strings.Contains(fa.stdin[0], `seedImage: "`+image+`"`) || !strings.Contains(fa.stdin[0], "seedAuth:") {
-			t.Errorf("applied %q", fa.stdin)
+		if len(fa.Stdin) != 1 || !strings.Contains(fa.Stdin[0], `seedImage: "`+image+`"`) || !strings.Contains(fa.Stdin[0], "seedAuth:") {
+			t.Errorf("applied %q", fa.Stdin)
 		}
 	})
 	t.Run("failed", func(t *testing.T) {
-		fa := &fakeAccess{oc: map[string][]resp{sgPoll: {{out: sgFailedJS}}}}
+		fa := &fakeAccess{OcReplies: map[string][]resp{sgPoll: {{Out: sgFailedJS}}}}
 		e := testEnv(fa)
 		if err := generate(ctx, e, fa, image, "{}", e.Progress.Start("x")); err == nil || !strings.Contains(err.Error(), "push denied") {
 			t.Errorf("got %v", err)
 		}
-		if fa.ran("oc delete") {
-			t.Errorf("nothing to replace, but deleted: %q", fa.calls)
+		if fa.Ran("oc delete") {
+			t.Errorf("nothing to replace, but deleted: %q", fa.Calls)
 		}
 	})
 	t.Run("already running", func(t *testing.T) {
-		fa := &fakeAccess{oc: map[string][]resp{sgGet: {{out: sgRunningJS}}}}
+		fa := &fakeAccess{OcReplies: map[string][]resp{sgGet: {{Out: sgRunningJS}}}}
 		e := testEnv(fa)
 		if err := generate(ctx, e, fa, image, "{}", e.Progress.Start("x")); err == nil || !strings.Contains(err.Error(), "already running") {
 			t.Errorf("got %v", err)
 		}
 	})
 	t.Run("timeout", func(t *testing.T) {
-		fa := &fakeAccess{oc: map[string][]resp{sgPoll: {{out: sgRunningJS}}}}
+		fa := &fakeAccess{OcReplies: map[string][]resp{sgPoll: {{Out: sgRunningJS}}}}
 		e := testEnv(fa)
 		e.Now, e.Timeout = clock(), 5*time.Minute
 		if err := generate(ctx, e, fa, image, "{}", e.Progress.Start("x")); err == nil || !strings.Contains(err.Error(), "not finished after 5m0s") {

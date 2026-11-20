@@ -86,10 +86,21 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   holding the `app=builder` pod, so hand-built environments are included. `Classify` turns
   observations (VM status, ISO DataVolume, probe) into a `State`; create's wait and list share it.
   Golden files in `testdata/` (`go test ./lib/guest -update`).
+- `lib/guestctl`: running things on a vSNO, shared by `lib/seed` and `lib/ibu`: `Access` (oc and
+  ssh; `ThroughBuilder` reaches the guest through the builder pod), `Get` (oc ... -o json),
+  `Oc`/`Apply`, `SSHOut`, `Conditions`/`Object`, `Poll` with an injectable `Clock`, `Step` for
+  progress, and `Operator` (install an OLM operator from the guest's own catalog and wait for its
+  CSV). `guestctltest.Fake` answers oc and ssh by their arguments in tests.
+- `lib/ibu`: Image Based Upgrades. `Prepare` installs LCA and OADP (via `guestctl.Operator`), registry
+  trust, and for a target the backup location (`backup.yaml.tmpl`, S3 by ClusterIP) and
+  `seed-pull-secret`. `Upgrade` resolves the seed, prepares the target, then `begin` (identity, LCA
+  match, `resumeFrom`) and `drive` (`moveTo` each stage, tolerating the API's absence while the node
+  reboots). `IBU.Toward` is the one classifier of LCA's conditions (`stageConditions`,
+  `failedReasons`). Tests drive a simulated LCA (`lca` in `ibu_test.go`).
 - `lib/seed`: Image Based Upgrade seed images. `Precheck` reports what a seed needs (vSNO state,
   registry, guest API and cluster settling, LCA, registry trust, the image and its push credentials)
   and with `Install` sets up LCA and trust; `Create` runs it first, then drives the Lifecycle Agent
-  (`waitStable`, `ensureLCA`, `ensureTrust`, `generate`, `finish`); while the guest API is
+  (`waitStable`, `ensureLCA`, `EnsureTrust`, `generate`, `finish`); while the guest API is
   down it reads progress from the node's `lca-generate-seed-image` unit. `List`/`Delete` talk to the
   environment's registry through `scripts/registry.sh` (skopeo + curl, credentials on stdin) from the
   builder. Templates and the script are embedded; goldens in `testdata/`.

@@ -1,13 +1,13 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/sebrandon1/go-toolbox/cliout"
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
@@ -88,9 +88,7 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 // something was deleted since.
 func renderTeardown(w io.Writer, res *teardown.Result, runErr error, planShown bool, pal ui.Palette) error {
 	if outputFormat == formatJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(res)
+		return cliout.PrintJSON(w, res)
 	}
 	for _, b := range res.Blockers {
 		if res.Forced {

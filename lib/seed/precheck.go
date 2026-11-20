@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sebrandon1/vsno/lib/guest"
+	"github.com/sebrandon1/vsno/lib/guestctl"
 	"github.com/sebrandon1/vsno/lib/precheck"
 )
 
@@ -70,7 +71,7 @@ func (r *PrecheckReport) Failed() int {
 // sets up the parts it can. Failing checks are in the report, not an error:
 // only a failure to list the vSNOs is.
 func Precheck(ctx context.Context, e Env, o PrecheckOptions) (*PrecheckReport, error) {
-	e.defaults(o.Namespace)
+	e.Defaults(o.Namespace)
 	rep := &PrecheckReport{VSNO: o.Name}
 	g, err := find(ctx, e, o)
 	if err != nil {
@@ -169,13 +170,13 @@ func (in *inspector) registry() {
 // api reports whether the vSNO answers and its cluster is settled. With
 // Settle, an unsettled cluster is waited for.
 func (in *inspector) api(ctx context.Context) {
-	var cos, mcps objectList
-	if _, err := ocJSON(ctx, in.a, &cos, "get", "clusteroperators"); err != nil {
+	var cos, mcps guestctl.ObjectList
+	if _, err := guestctl.Get(ctx, in.a, &cos, "get", "clusteroperators"); err != nil {
 		in.row(precheck.GroupCluster, precheck.Fail, "vSNO API", err.Error(), "is the vSNO running? `vsno list`")
 		return
 	}
 	in.row(precheck.GroupCluster, precheck.Pass, "vSNO API", "answers", "")
-	if _, err := ocJSON(ctx, in.a, &mcps, "get", "machineconfigpools"); err != nil {
+	if _, err := guestctl.Get(ctx, in.a, &mcps, "get", "machineconfigpools"); err != nil {
 		in.row(precheck.GroupCluster, precheck.Fail, "Cluster settled", err.Error(), "")
 		return
 	}
@@ -198,7 +199,7 @@ func (in *inspector) api(ctx context.Context) {
 // lifecycleAgent reports whether LCA is installed, or installable from the
 // vSNO's own catalog.
 func (in *inspector) lifecycleAgent(ctx context.Context) {
-	name, ok, err := lcaCSV(ctx, in.a)
+	name, ok, err := LCA.CSV(ctx, in.a)
 	switch {
 	case err != nil:
 		in.row(GroupLCA, precheck.Fail, checkLCA, err.Error(), "")
@@ -209,7 +210,7 @@ func (in *inspector) lifecycleAgent(ctx context.Context) {
 		in.rep.LCA = name
 		in.row(GroupLCA, precheck.Warn, checkLCA, name+" is not Succeeded yet", "wait for it, or `vsno oc "+in.g.Name+" -- get csv -n "+LCANamespace+"`")
 	default:
-		pm, found, err := lcaPackage(ctx, in.a)
+		pm, found, err := LCA.Catalog(ctx, in.a)
 		switch {
 		case err != nil:
 			in.row(GroupLCA, precheck.Fail, checkLCA, err.Error(), "")
@@ -234,14 +235,14 @@ func (in *inspector) trust(ctx context.Context) {
 		return
 	}
 	var img imageConfig
-	if _, err := ocJSON(ctx, in.a, &img, "get", "image.config.openshift.io", "cluster"); err != nil {
+	if _, err := guestctl.Get(ctx, in.a, &img, "get", "image.config.openshift.io", "cluster"); err != nil {
 		in.row(GroupRegistry, precheck.Fail, checkTrust, err.Error(), "")
 		return
 	}
 	file := certFile(in.reg)
 	switch name := img.Spec.AdditionalTrustedCA.Name; name {
 	case trustConfigMap:
-		if ssh(ctx, in.a, "test", "-f", file) != nil {
+		if guestctl.SSH(ctx, in.a, "test", "-f", file) != nil {
 			in.row(GroupRegistry, precheck.Warn, checkTrust, trustConfigMap+" is configured, but the node doesn't have "+file+" yet",
 				"wait for the node's MachineConfig to finish")
 			return
@@ -288,7 +289,7 @@ func install(ctx context.Context, e Env, in *inspector) {
 		return
 	}
 	var img imageConfig
-	if _, err := ocJSON(ctx, in.a, &img, "get", "image.config.openshift.io", "cluster"); err != nil {
+	if _, err := guestctl.Get(ctx, in.a, &img, "get", "image.config.openshift.io", "cluster"); err != nil {
 		warn(err)
 		return
 	}
@@ -297,7 +298,7 @@ func install(ctx context.Context, e Env, in *inspector) {
 	default:
 		return // someone else's ConfigMap: trust() says which key to add
 	}
-	if err := ensureTrust(ctx, e, in.a, in.reg, e.Progress.Start("Trusting the environment registry")); err != nil {
+	if err := EnsureTrust(ctx, e, in.a, in.reg, e.Progress.Start("Trusting the environment registry")); err != nil {
 		warn(err)
 		return
 	}

@@ -1,12 +1,12 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"time"
 
+	"github.com/sebrandon1/go-toolbox/cliout"
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
@@ -83,9 +83,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 
 func renderDelete(w io.Writer, res *guest.DeleteResult, planShown bool, pal ui.Palette) error {
 	if outputFormat == formatJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(res)
+		return cliout.PrintJSON(w, res)
 	}
 	deleted := apply.Count(res.Objects, apply.Removed)
 	switch {

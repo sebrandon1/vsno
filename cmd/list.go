@@ -2,13 +2,13 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
 	"slices"
 	"time"
 
+	"github.com/sebrandon1/go-toolbox/cliout"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/ui"
@@ -107,9 +107,7 @@ func collect(ctx context.Context, c *kube.Clients, env guest.Env, single bool) (
 
 func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 	if outputFormat == formatJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(l)
+		return cliout.PrintJSON(w, l)
 	}
 	if len(l.VSNOs) == 0 {
 		if l.Namespace == "" {
@@ -131,7 +129,7 @@ func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 				api = fmt.Sprintf("api.%s (%s)", g.Name, g.ServiceIP)
 			}
 			row := []string{g.Namespace, g.Name, stateText(pal, g.State), g.ShownVersion(), age(now.Sub(g.Created)), size(g.Cores, ""),
-				size(g.MemoryGiB, "Gi"), size(g.DiskGiB, "Gi"), api, pal.Dim(g.Detail)}
+				size(g.MemoryGiB, "Gi"), size(g.DiskGiB, "Gi"), api, pal.Dim(detailText(g))}
 			if outputFormat == formatWide {
 				row = append(row, yesNo(g.Cached), orDash(g.Timings.ISO), orDash(g.Timings.Install), orDash(g.Timings.Reboot), orDash(g.Timings.Available))
 			}
@@ -146,6 +144,17 @@ func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 	return nil
 }
 
+// detailText is a vSNO's detail, led by its IBU stage when one is under way.
+func detailText(g guest.Guest) string {
+	switch {
+	case g.IBU == "":
+		return g.Detail
+	case g.Detail == "":
+		return "IBU " + g.IBU
+	}
+	return "IBU " + g.IBU + "; " + g.Detail
+}
+
 // yesNo is "yes" or "-" for a measurement that may not have happened.
 func yesNo(b bool) string {
 	if b {
@@ -154,7 +163,7 @@ func yesNo(b bool) string {
 	return "-"
 }
 
-// orDash is s, or "-" when create didn't measure it.
+// orDash is s, or "-" when it is empty: a value create didn't measure, say.
 func orDash(s string) string {
 	if s == "" {
 		return "-"

@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloud-credentials
+  namespace: {{ .OADPNamespace }}
+stringData:
+  cloud: |
+    [default]
+    aws_access_key_id={{ .AccessKey }}
+    aws_secret_access_key={{ .SecretKey }}
+---
+apiVersion: oadp.openshift.io/v1alpha1
+kind: DataProtectionApplication
+metadata:
+  name: {{ .DPA }}
+  namespace: {{ .OADPNamespace }}
+spec:
+  configuration:
+    velero:
+      defaultPlugins: [aws, openshift]
+      resourceTimeout: 10m
+  backupLocations:
+  - velero:
+      provider: aws
+      default: true
+      credential: {name: cloud-credentials, key: cloud}
+      config:
+        profile: default
+        region: us-east-1
+        s3Url: {{ quote .S3URL }}
+        insecureSkipTLSVerify: "true"
+        s3ForcePathStyle: "true"
+      objectStorage: {bucket: {{ quote .Bucket }}, prefix: velero}

@@ -118,3 +118,16 @@ func TestInvalidOutputFormat(t *testing.T) {
 		t.Fatal("want error for --output yaml")
 	}
 }
+
+// -o is case-insensitive, and normalized so the rest of the command compares
+// it with the lower-case constants.
+func TestOutputFormatIgnoresCase(t *testing.T) {
+	outputFormat = "JSON"
+	defer func() { outputFormat = "table" }()
+	if err := rootCmd.PersistentPreRunE(rootCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	if outputFormat != formatJSON {
+		t.Errorf("outputFormat = %q, want %q", outputFormat, formatJSON)
+	}
+}

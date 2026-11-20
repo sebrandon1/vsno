@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/sebrandon1/go-toolbox/cliout"
+
 	"io"
 	"os"
 
@@ -52,12 +54,11 @@ Start with:  vsno precheck`,
 				return err
 			}
 		}
-		switch outputFormat {
-		case formatTable, formatWide, formatJSON:
-			return nil
-		default:
-			return fmt.Errorf("invalid --output %q (want table, wide or json)", outputFormat)
+		if err := cliout.ValidateFormat(outputFormat, formatTable, formatWide, formatJSON); err != nil {
+			return err
 		}
+		outputFormat = strings.ToLower(outputFormat)
+		return nil
 	},
 }
 

@@ -30,6 +30,25 @@ type Probe struct {
 	Agent     *Agent `json:"agent"`
 	CV        *CV    `json:"cv"`
 	Unhealthy *int   `json:"unhealthy"`
+	IBU       *IBU   `json:"ibu"`
+}
+
+// IBU is where LCA's Image Based Upgrade on the guest is, when LCA runs.
+type IBU struct {
+	Stage     string `json:"stage"`
+	Completed bool   `json:"completed"`
+}
+
+// Text is the stage, marked done once it completed, or "" while the guest is
+// idle: nothing to show.
+func (u *IBU) Text() string {
+	switch {
+	case u == nil || u.Stage == "" || u.Stage == "Idle":
+		return ""
+	case u.Completed:
+		return u.Stage + " done"
+	}
+	return u.Stage
 }
 
 // Agent is the agent installer's view of the cluster, before the first reboot.

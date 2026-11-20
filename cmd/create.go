@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"time"
 
+	"github.com/sebrandon1/go-toolbox/cliout"
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/cache"
@@ -133,9 +133,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 func renderCreated(w io.Writer, g *guest.Guest, ready bool, pal ui.Palette) error {
 	if outputFormat == formatJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(g)
+		return cliout.PrintJSON(w, g)
 	}
 	fmt.Fprintln(w)
 	switch {

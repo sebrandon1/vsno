@@ -121,7 +121,7 @@ func renderIsos(w io.Writer, rep *isos.Report, pal ui.Palette) error {
 	var t ui.Table
 	t.Row(pal.Bold("WHAT"), pal.Bold("NAME"), pal.Bold("VERSION"), pal.Bold("SIZE"), pal.Bold("USE"))
 	for _, e := range rep.Entries {
-		t.Row(string(e.Kind), e.Name, dash(e.Version), bytesText(e.Size), useText(e.Use, e.Users))
+		t.Row(string(e.Kind), e.Name, orDash(e.Version), bytesText(e.Size), useText(e.Use, e.Users))
 	}
 	for _, d := range rep.Disks {
 		t.Row("data volume", d.Name, "-", bytesText(d.Size), useText(d.Use, d.Users))
@@ -139,14 +139,6 @@ func renderIsos(w io.Writer, rep *isos.Report, pal ui.Palette) error {
 		fmt.Fprintf(w, "ISO DataVolumes on LVMS: %s\n", bytesText(rep.DiskBytes))
 	}
 	return nil
-}
-
-// dash is s, or "-" when empty.
-func dash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
 }
 
 // useText says what still uses an entry, or "-" when nothing tracks it.

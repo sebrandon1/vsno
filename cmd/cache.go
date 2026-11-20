@@ -227,7 +227,7 @@ func runCacheGC(cmd *cobra.Command, _ []string) error {
 
 func renderCachePlan(w io.Writer, p *cache.PrunePlan, pal ui.Palette) {
 	for _, e := range p.Entries {
-		fmt.Fprintf(w, "  %s %s  %s  %s\n", pal.Red("remove"), dash(e.Version), e.Repo, pal.Dim(bytesText(e.SizeBytes)))
+		fmt.Fprintf(w, "  %s %s  %s  %s\n", pal.Red("remove"), orDash(e.Version), e.Repo, pal.Dim(bytesText(e.SizeBytes)))
 	}
 	fmt.Fprintf(w, "\n%s\n", pal.Dim("Frees about "+bytesText(p.Bytes)+" once the registry's garbage is collected."))
 }
@@ -283,7 +283,7 @@ func renderCache(w io.Writer, rep *cache.Report, now time.Time, pal ui.Palette) 
 	var t ui.Table
 	t.Row(pal.Bold("VERSION"), pal.Bold("STATE"), pal.Bold("IMAGE"), pal.Bold("SIZE"), pal.Bold("MIRRORED"), pal.Bold("LAST USED"), pal.Bold("VSNOS"))
 	for _, e := range rep.Entries {
-		t.Row(dash(e.Version), cacheState(e, now), e.Image, bytesText(e.SizeBytes), age(now.Sub(e.Mirrored)), age(now.Sub(e.LastUsed)), joinItems(e.Users))
+		t.Row(orDash(e.Version), cacheState(e, now), e.Image, bytesText(e.SizeBytes), age(now.Sub(e.Mirrored)), age(now.Sub(e.LastUsed)), joinItems(e.Users))
 	}
 	t.Write(w)
 	if rep.Total > 0 {

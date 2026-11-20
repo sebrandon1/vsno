@@ -81,6 +81,8 @@ type Guest struct {
 	Created   time.Time `json:"created"`
 	// Unhealthy counts ClusterOperators that are Degraded or not Available, once known.
 	Unhealthy *int `json:"unhealthyOperators,omitempty"`
+	// IBU is the Image Based Upgrade stage, such as "Upgrade done"; "" when idle.
+	IBU string `json:"ibu,omitempty"`
 	// Cached is true when the guest installed from the registry mirror.
 	Cached bool `json:"cached,omitempty"`
 	// Timings are how long create's phases took; empty when not measured.
@@ -152,6 +154,7 @@ func List(ctx context.Context, e Env, ns string) ([]Guest, error) {
 				out[i].Version = p.CV.Version
 			}
 			out[i].Unhealthy = p.Unhealthy
+			out[i].IBU = p.IBU.Text()
 		}
 	}
 	building, err := buildingISO(ctx, e, ns, out)

@@ -50,3 +50,20 @@ func TestFailing(t *testing.T) {
 		}
 	}
 }
+
+func TestIBUText(t *testing.T) {
+	for _, c := range []struct {
+		u    *IBU
+		want string
+	}{
+		{nil, ""},
+		{&IBU{Stage: "Idle", Completed: false}, ""},
+		{&IBU{}, ""},
+		{&IBU{Stage: "Prep"}, "Prep"},
+		{&IBU{Stage: "Upgrade", Completed: true}, "Upgrade done"},
+	} {
+		if got := c.u.Text(); got != c.want {
+			t.Errorf("%+v = %q, want %q", c.u, got, c.want)
+		}
+	}
+}

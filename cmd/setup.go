@@ -3,13 +3,13 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/sebrandon1/go-toolbox/cliout"
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/kube"
@@ -232,9 +232,7 @@ func renderSetup(w io.Writer, res *setup.Result, dryRun bool, pal ui.Palette) er
 		return nil
 	}
 	if outputFormat == formatJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(res)
+		return cliout.PrintJSON(w, res)
 	}
 	if dryRun && suManifests {
 		for _, o := range res.Objects {

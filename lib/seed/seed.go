@@ -15,8 +15,8 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/guest"
+	"github.com/sebrandon1/vsno/lib/guestctl"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/registry"
 	corev1 "k8s.io/api/core/v1"
@@ -48,7 +48,9 @@ type Env struct {
 	Access func(name string) Access
 }
 
-func (e *Env) defaults(ns string) {
+// Defaults fills in what e leaves unset: silent progress, a 10s poll, an
+// hour's timeout, the real clock, and access through the builder of ns.
+func (e *Env) Defaults(ns string) {
 	if e.Progress == nil {
 		e.Progress = precheck.NoProgress()
 	}
@@ -63,29 +65,12 @@ func (e *Env) defaults(ns string) {
 	}
 	if e.Access == nil {
 		ge := e.Env
-		e.Access = func(name string) Access { return builderAccess{e: ge, ns: ns, name: name} }
+		e.Access = func(name string) Access { return guestctl.ThroughBuilder(ge, ns, name) }
 	}
 }
 
 // Access runs oc and ssh on one vSNO.
-type Access interface {
-	Oc(ctx context.Context, args []string, s builder.IO) error
-	SSH(ctx context.Context, args []string, s builder.IO) error
-}
-
-// builderAccess reaches the vSNO through the builder pod, like vsno oc and vsno ssh.
-type builderAccess struct {
-	e        guest.Env
-	ns, name string
-}
-
-func (b builderAccess) Oc(ctx context.Context, args []string, s builder.IO) error {
-	return guest.Oc(ctx, b.e, b.ns, b.name, args, s)
-}
-
-func (b builderAccess) SSH(ctx context.Context, args []string, s builder.IO) error {
-	return guest.SSH(ctx, b.e, b.ns, b.name, args, s)
-}
+type Access = guestctl.Access
 
 // Registry is the environment's in-cluster registry.
 type Registry = registry.Registry
@@ -142,15 +127,12 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{"quote": strcon
 
 // renderData is the input to every template.
 type renderData struct {
-	LCANamespace    string
-	Channel         string
-	Source          string
-	SourceNamespace string
-	TrustConfigMap  string
-	TrustKey        string
-	CA              string
-	SeedAuth        string
-	Image           string
+	LCANamespace   string
+	TrustConfigMap string
+	TrustKey       string
+	CA             string
+	SeedAuth       string
+	Image          string
 }
 
 func render(name string, d renderData) (string, error) {
@@ -160,78 +142,4 @@ func render(name string, d renderData) (string, error) {
 		return "", fmt.Errorf("rendering %s: %w", name, err)
 	}
 	return b.String(), nil
-}
-
-// ocJSON runs oc get ... -o json on the vSNO into out. With --ignore-not-found
-// in args, a missing object gives found == false.
-func ocJSON(ctx context.Context, a Access, out any, args ...string) (bool, error) {
-	var stdout, stderr bytes.Buffer
-	if err := a.Oc(ctx, append(args, "-o", "json"), builder.IO{Stdout: &stdout, Stderr: &stderr}); err != nil {
-		return false, ocErr(args, err, stderr.String())
-	}
-	if len(bytes.TrimSpace(stdout.Bytes())) == 0 {
-		return false, nil
-	}
-	if err := json.Unmarshal(stdout.Bytes(), out); err != nil {
-		return false, fmt.Errorf("oc %s: parsing the output: %w", strings.Join(args, " "), err)
-	}
-	return true, nil
-}
-
-// oc runs oc on the vSNO with stdin, discarding its output.
-func oc(ctx context.Context, a Access, stdin string, args ...string) error {
-	var stderr bytes.Buffer
-	s := builder.IO{Stdout: &bytes.Buffer{}, Stderr: &stderr}
-	if stdin != "" {
-		s.Stdin = strings.NewReader(stdin)
-	}
-	if err := a.Oc(ctx, args, s); err != nil {
-		return ocErr(args, err, stderr.String())
-	}
-	return nil
-}
-
-func ocErr(args []string, err error, stderr string) error {
-	msg := fmt.Sprintf("oc %s: %v", strings.Join(args, " "), err)
-	if s := strings.TrimSpace(stderr); s != "" {
-		msg += ": " + s[strings.LastIndex(s, "\n")+1:]
-	}
-	return fmt.Errorf("%s", msg)
-}
-
-// condition is a status condition as oc prints it.
-type condition struct {
-	Type    string `json:"type"`
-	Status  string `json:"status"`
-	Reason  string `json:"reason"`
-	Message string `json:"message"`
-}
-
-// object is the part of any listed object vsno reads.
-type object struct {
-	Metadata struct {
-		Name string `json:"name"`
-	} `json:"metadata"`
-	Status struct {
-		Phase      string      `json:"phase"`
-		Conditions []condition `json:"conditions"`
-	} `json:"status"`
-}
-
-type objectList struct {
-	Items []object `json:"items"`
-}
-
-func (o object) cond(t string) *condition {
-	for i := range o.Status.Conditions {
-		if o.Status.Conditions[i].Type == t {
-			return &o.Status.Conditions[i]
-		}
-	}
-	return nil
-}
-
-func (o object) isTrue(t string) bool {
-	c := o.cond(t)
-	return c != nil && c.Status == "True"
 }

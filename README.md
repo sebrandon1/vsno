@@ -8,10 +8,11 @@ One workflow built on top of that is testing
 [lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent) **Image Based Upgrades
 (IBU)** between two vSNOs.
 
-> **Status:** milestones 1–4 are done: `precheck`, `setup`, `status`, `teardown`, the vSNO
+> **Status:** milestones 1–5 are done: `precheck`, `setup`, `status`, `teardown`, the vSNO
 > lifecycle (`create`, `list`, `delete`, `start`, `stop`, `oc`, `ssh`, `kubeconfig`, `screenshot`),
-> seed images, and fast creates from an in-cluster release cache. Planned, in order:
-> 1. IBU (`prepare`, `seed generate`, `upgrade`) and testing lifecycle-agent builds
+> seed images, fast creates from an in-cluster release cache, and Image Based Upgrades (`prepare`,
+> `upgrade`). Planned, in order:
+> 1. testing lifecycle-agent builds
 > 2. `vsno run`
 >
 > See the [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap).
@@ -315,6 +316,45 @@ older vsno.
 age. `seed delete` removes tags by full reference, `<vsno>:<version>` or `<vsno>`. It asks you to
 type the arguments first unless `--yes`, and `--dry-run` only lists. The registry frees the disk
 space only when it is garbage collected, so deletion does not shrink it immediately.
+
+## Image Based Upgrade
+
+```bash
+vsno seed create seed-421                        # a seed image from a ready vSNO (see Seed images)
+vsno upgrade target --seed seed-421              # Prep, then Upgrade, to the seed's version
+vsno upgrade target --seed seed-421 --finalize   # ...and finalize, dropping the old version
+vsno upgrade target --seed seed-421 --to prep    # stop after Prep
+vsno prepare target                              # only get a vSNO ready, ahead of time
+```
+
+`upgrade` runs an Image Based Upgrade on the target with the Lifecycle Agent (LCA). `--seed` is a
+seed image (`vsno seed list`), `<vsno>:<version>`, or a vSNO, meaning its newest seed. For an image
+outside the environment's registry, pass its reference and `--seed-version`.
+
+1. It prepares the target, like `vsno prepare`: LCA and OADP from the vSNO's own catalog, trust in
+   the environment's registry, a backup location in the environment's S3 (reached by ClusterIP)
+   that OADP reports Available, and the `seed-pull-secret` LCA pulls the seed with.
+2. It records the target's identity: version, clusterID, infrastructureName, node and API URL. When
+   the seed's vSNO answers, its LCA must be the same version as the target's.
+3. **Prep** pulls the seed's images ahead, shown as a progress bar.
+4. **Upgrade** reboots the node into the seed's version. The API is down for about 15 minutes; if
+   LCA rolls the upgrade back by itself, upgrade says so and stops.
+5. It prints the identity before and after, which must differ only in version, and how long each
+   stage and phase took.
+
+`--finalize` then moves to Idle, dropping the old version; `--rollback` goes back to it. Run again
+with the same seed, upgrade carries on from where the target is, so an upgrade can be finalized or
+rolled back later. A target part way through with another seed is refused. `vsno list` shows a
+vSNO's IBU stage in its detail, such as `IBU Upgrade done`.
+
+`prepare <vsno>... --role seed` sets up only what a seed needs (LCA, OADP, registry trust).
+
+| Flag | Meaning |
+|---|---|
+| `--seed` | The seed image, `<vsno>:<version>`, or a vSNO (required) |
+| `--seed-version` | The seed's OpenShift version, for an image outside the environment's registry |
+| `--to prep\|upgrade` | Stop after this stage (default `upgrade`) |
+| `--finalize`, `--rollback` | After the upgrade, finalize it or roll it back |
 
 ## ISOs and caches
 

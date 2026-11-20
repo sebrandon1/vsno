@@ -26,7 +26,7 @@ func TestList(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	w.runner.outputs["probe.sh"] = probeLine("ready", `"cv":{"version":"4.20.47","available":true},"unhealthy":1`) + "not json\n"
+	w.runner.outputs["probe.sh"] = probeLine("ready", `"cv":{"version":"4.20.47","available":true},"unhealthy":1,"ibu":{"stage":"Prep","completed":true}`) + "not json\n"
 	got, err := List(context.Background(), w.env(), ns)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestList(t *testing.T) {
 	r := got[2]
 	r.Created, r.Image = time.Time{}, ""
 	want := Guest{Namespace: ns, Name: "ready", State: Ready, Detail: "1 operator(s) degraded or unavailable", Version: "4.20.47", Requested: "4.20",
-		Node: node, Cores: 16, MemoryGiB: 32, DiskGiB: 200, ServiceIP: "172.30.1.1", API: "https://api.ready.vsno.lab:6443", Unhealthy: intp(1)}
+		Node: node, Cores: 16, MemoryGiB: 32, DiskGiB: 200, ServiceIP: "172.30.1.1", API: "https://api.ready.vsno.lab:6443", Unhealthy: intp(1), IBU: "Prep done"}
 	if !reflect.DeepEqual(r, want) {
 		t.Errorf("ready =\n %+v\nwant\n %+v", r, want)
 	}
