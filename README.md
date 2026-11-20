@@ -11,14 +11,17 @@ One workflow built on top of that is testing
 > **Status:** milestones 1–5 are done: `precheck`, `setup`, `status`, `teardown`, the vSNO
 > lifecycle (`create`, `list`, `delete`, `start`, `stop`, `oc`, `ssh`, `kubeconfig`, `screenshot`),
 > seed images, fast creates from an in-cluster release cache, Image Based Upgrades (`prepare`,
-> `upgrade`), and testing lifecycle-agent branches in them. Planned:
-> 1. `vsno run`
+> `upgrade`), testing lifecycle-agent branches in them, and `vsno run` for the whole flow.
 >
 > See the [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap).
 
 ## Install
 
 Requires Go 1.27 or newer.
+
+Download a binary for Linux or macOS (amd64 or arm64) from the
+[releases](https://github.com/sebrandon1/vsno/releases), with `checksums.sha256` to verify it, or
+build it:
 
 ```bash
 go install github.com/sebrandon1/vsno@latest
@@ -401,6 +404,53 @@ Prepare seed and target from the same ref: `upgrade` refuses a seed made with a 
 | `--to prep\|upgrade` | Stop after this stage (default `upgrade`) |
 | `--finalize`, `--rollback` | After the upgrade, finalize it or roll it back |
 | `--lca-ref`, `--lca-repo`, `--lca-image` | Run LCA built from a ref, or a prebuilt image, instead of the catalog's (also on `prepare`) |
+
+## vsno run
+
+```bash
+vsno run                                        # shows the plan, asks, then does it all
+vsno run --yes --finalize                       # for CI: no question, finalize at the end
+vsno run --target-version 4.20.45 --seed-version 4.20.46
+vsno run --seed-image registry/seeds/a:4.21.42  # no seed vSNO; upgrade to an existing seed
+vsno run -f vsno.yaml                           # the same settings from a file
+```
+
+`run` does an Image Based Upgrade with only a kubeconfig:
+1. **setup**, as `vsno setup`
+2. **vsnos**: a seed and a target vSNO, both started before waiting for either
+3. **seed**: a seed image from the seed vSNO, which is stopped afterwards
+4. **upgrade**: the target upgraded with it, as `vsno upgrade`
+
+By default the seed is the newest stable release of the host's OpenShift minor and the target the
+release before it. `--seed-version` and `--target-version` take anything `vsno create` accepts, and
+the target must be older. The plan (versions, names, LCA source and what happens afterwards) is
+shown and confirmed first, unless `--yes`.
+
+Each stage reuses what's already there: a vSNO of that name at the right version, the seed image an
+earlier run made, an upgrade part way. So when a run is interrupted, running it again carries on;
+the plan says which stages an earlier run finished. Stages are recorded in the environment's state
+(`vsno status`). Ctrl+C stops a run cleanly.
+
+`-f vsno.yaml` takes the same settings as the flags, by their JSON names, and flags override it:
+
+```yaml
+targetVersion: "4.21.1"
+seedVersion: "4.21.42"
+lca: {ref: my-fix, repo: https://github.com/me/lifecycle-agent}
+finalize: true
+```
+
+| Flag | Meaning |
+|---|---|
+| `--target-version`, `--seed-version` | The versions (default: the host minor's last two stable releases) |
+| `--target-name`, `--seed-name` | vSNO names (default `target`, `seed`); existing ones are reused |
+| `--seed-image` | Upgrade to this seed image; no seed vSNO |
+| `--seed-repo` | Push the seed to `<repo>:<version>` instead of the environment's registry |
+| `--lca-ref`, `--lca-repo`, `--lca-image` | LCA from a ref or an image on both vSNOs (see above) |
+| `--node`, `--cores`, `--memory` | Where and how big the vSNOs are |
+| `--finalize`, `--rollback`, `--delete` | What to do after the upgrade |
+| `--yes` | Run the plan without asking |
+| `-f <file>` | Settings file |
 
 ## ISOs and caches
 

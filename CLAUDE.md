@@ -102,6 +102,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   in the builder with the image replaced; `deployLCA` swaps the guest's OLM LCA for it.
   `seed.SourceLCA` tells a source deployment from OLM's by the `olm.owner` label, and every LCA install
   path keeps it.
+- `lib/run`: `vsno run`. `makePlan` picks versions (`Env.Stable`, the host's minor), names and
+  `Stage`s; `Run` confirms, then `runStage` each: `Setup` (supplied by cmd, `setupEnv`),
+  `ensureVSNOs` (create both, then `guest.WaitState`), `ensureSeed` (reuses `seeds/<seed>:<version>`),
+  `ibu.Upgrade`, `guest.Delete`. Stages are recorded as `run:<stage>` in vsno-state; every stage is
+  idempotent, which is what makes a rerun resume.
 - `lib/seed`: Image Based Upgrade seed images. `Precheck` reports what a seed needs (vSNO state,
   registry, guest API and cluster settling, LCA, registry trust, the image and its push credentials)
   and with `Install` sets up LCA and trust; `Create` runs it first, then drives the Lifecycle Agent
