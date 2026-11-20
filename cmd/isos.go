@@ -13,22 +13,47 @@ import (
 )
 
 var (
-	isKeep   int
-	isYes    bool
-	isDryRun bool
+	isoKeep   int
+	isoYes    bool
+	isoDryRun bool
+	idlYes    bool
+	idlDryRun bool
 )
 
-var isosCmd = &cobra.Command{
-	Use:   "isos",
-	Short: "Show, and clean up, what vSNO creates leave in the builder and on LVMS",
-	Long: `isos lists what the environment holds beyond its vSNOs: the ISOs the builder
+var isoCmd = &cobra.Command{
+	Use:     "iso",
+	Aliases: []string{"isos"},
+	Short:   "Show, delete and clean up what vSNO creates leave in the builder and on LVMS",
+	Long: `iso lists what the environment holds beyond its vSNOs: the ISOs the builder
 serves, the installer's build directories, the cached openshift-install
 binaries (one per release) and the ISO DataVolumes, with what still uses each.
-It ends with the builder volume's usage.`,
-	RunE: runIsos,
+It ends with the builder volume's usage.
+
+iso prune removes everything no vSNO uses; iso delete removes the ones you
+name; iso eject takes an install ISO off a vSNO that has finished installing.`,
+	RunE: runIsoList,
 }
 
-var isosPruneCmd = &cobra.Command{
+var isoListCmd = &cobra.Command{
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List the ISOs, installer caches and ISO DataVolumes, and what uses them",
+	Args:    cobra.NoArgs,
+	RunE:    runIsoList,
+}
+
+var isoDeleteCmd = &cobra.Command{
+	Use:   "delete <vsno|installer|DataVolume>...",
+	Short: "Delete the ISOs, installers or ISO DataVolumes you name",
+	Long: `delete removes what you name: a vSNO's served ISO and build directory, a
+cached openshift-install binary, or an ISO DataVolume. Anything a vSNO still
+uses is refused — ` + "`vsno iso eject`" + ` takes an install ISO off the VM first —
+and it asks "are you sure?" unless --yes. --dry-run only lists.`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: runIsoDelete,
+}
+
+var isoPruneCmd = &cobra.Command{
 	Use:   "prune",
 	Short: "Remove the ISOs, installers and ISO DataVolumes no vSNO uses",
 	Long: `prune removes what a finished or failed create left behind: the served ISO and
@@ -37,10 +62,10 @@ no vSNO runs (--keep N keeps the N newest), and their ISO DataVolumes. It
 lists them and asks you to type "prune" first, unless --yes. --dry-run only
 lists.`,
 	Args: cobra.NoArgs,
-	RunE: runIsosPrune,
+	RunE: runIsoPrune,
 }
 
-var isosEjectCmd = &cobra.Command{
+var isoEjectCmd = &cobra.Command{
 	Use:   "eject <vsno>",
 	Short: "Remove a vSNO's install ISO, which it no longer boots from",
 	Long: `eject removes the install ISO from a vSNO that has finished installing: the
@@ -48,15 +73,17 @@ CD-ROM and its volume from the VM, the ISO DataVolume, and the builder's copy.
 create does this itself when the install finishes; eject is for vSNOs it
 didn't, such as ones from an older vsno.`,
 	Args: cobra.ExactArgs(1),
-	RunE: runIsosEject,
+	RunE: runIsoEject,
 }
 
 func init() {
-	isosPruneCmd.Flags().IntVar(&isKeep, "keep", 0, "keep the N newest unused installers")
-	isosPruneCmd.Flags().BoolVar(&isYes, "yes", false, "don't ask for confirmation")
-	isosPruneCmd.Flags().BoolVar(&isDryRun, "dry-run", false, "list what would be removed and change nothing")
-	isosCmd.AddCommand(isosPruneCmd, isosEjectCmd)
-	rootCmd.AddCommand(isosCmd)
+	isoPruneCmd.Flags().IntVar(&isoKeep, "keep", 0, "keep the N newest unused installers")
+	isoPruneCmd.Flags().BoolVar(&isoYes, "yes", false, "don't ask for confirmation")
+	isoPruneCmd.Flags().BoolVar(&isoDryRun, "dry-run", false, "list what would be removed and change nothing")
+	isoDeleteCmd.Flags().BoolVar(&idlYes, "yes", false, "don't ask for confirmation")
+	isoDeleteCmd.Flags().BoolVar(&idlDryRun, "dry-run", false, "list what would be removed and change nothing")
+	isoCmd.AddCommand(isoListCmd, isoDeleteCmd, isoPruneCmd, isoEjectCmd)
+	rootCmd.AddCommand(isoCmd)
 }
 
 func isosEnv(cmd *cobra.Command) (isos.Env, error) {
@@ -71,7 +98,7 @@ func isosEnv(cmd *cobra.Command) (isos.Env, error) {
 	return isos.Env{Env: e}, err
 }
 
-func runIsos(cmd *cobra.Command, _ []string) error {
+func runIsoList(cmd *cobra.Command, _ []string) error {
 	env, err := isosEnv(cmd)
 	if err != nil {
 		return err
@@ -133,7 +160,7 @@ func useText(u isos.Use, users []string) string {
 	return string(u)
 }
 
-func runIsosPrune(cmd *cobra.Command, _ []string) error {
+func runIsoPrune(cmd *cobra.Command, _ []string) error {
 	env, err := isosEnv(cmd)
 	if err != nil {
 		return err
@@ -141,7 +168,7 @@ func runIsosPrune(cmd *cobra.Command, _ []string) error {
 	ew := cmd.ErrOrStderr()
 	shown := false
 	res, err := isos.Prune(cmd.Context(), env, isos.PruneOptions{
-		Namespace: namespace, DryRun: isDryRun, Yes: isYes, Keep: isKeep,
+		Namespace: namespace, DryRun: isoDryRun, Yes: isoYes, Keep: isoKeep,
 		Confirm: confirmOnTerminal(os.Stdin, ew),
 		ShowPlan: func(p *isos.Plan) {
 			renderPrunePlan(ew, p, palette(ew))
@@ -161,11 +188,46 @@ func runIsosPrune(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(w, "%s Freed %s: %d file(s) and DataVolume(s) removed.\n", pal.Icon("✓"), bytesText(res.Bytes), len(res.Removed))
 	case !shown && !res.Plan.Empty():
 		renderPrunePlan(w, &res.Plan, pal)
-		if isDryRun {
+		if isoDryRun {
 			fmt.Fprintln(w, "\nDry run: nothing was changed.")
 		}
 	case res.Plan.Empty():
 		fmt.Fprintln(w, "Nothing to prune: every ISO, installer and DataVolume is in use.")
+	}
+	return err
+}
+
+func runIsoDelete(cmd *cobra.Command, args []string) error {
+	env, err := isosEnv(cmd)
+	if err != nil {
+		return err
+	}
+	ew := cmd.ErrOrStderr()
+	shown := false
+	res, err := isos.Delete(cmd.Context(), env, isos.DeleteOptions{
+		Namespace: namespace, Args: args, DryRun: idlDryRun, Yes: idlYes,
+		Confirm: confirmOnTerminal(os.Stdin, ew),
+		ShowPlan: func(p *isos.Plan) {
+			renderPrunePlan(ew, p, palette(ew))
+			fmt.Fprintln(ew)
+			shown = true
+		},
+	})
+	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
+	if outputFormat == formatJSON {
+		if rerr := writeJSON(w, res); rerr != nil && err == nil {
+			err = rerr
+		}
+		return err
+	}
+	switch {
+	case len(res.Deleted) > 0:
+		fmt.Fprintf(w, "%s Deleted %d thing(s), freeing %s.\n", pal.Icon("✓"), len(res.Deleted), bytesText(res.Bytes))
+	case !shown && !res.Plan.Empty():
+		renderPrunePlan(w, &res.Plan, pal)
+		if idlDryRun {
+			fmt.Fprintln(w, "\nDry run: nothing was changed.")
+		}
 	}
 	return err
 }
@@ -183,7 +245,7 @@ func renderPrunePlan(w io.Writer, p *isos.Plan, pal ui.Palette) {
 	fmt.Fprintf(w, "\n%s\n", pal.Dim("Frees "+bytesText(p.Bytes)+" in the builder and on LVMS."))
 }
 
-func runIsosEject(cmd *cobra.Command, args []string) error {
+func runIsoEject(cmd *cobra.Command, args []string) error {
 	env, err := isosEnv(cmd)
 	if err != nil {
 		return err

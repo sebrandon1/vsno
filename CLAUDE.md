@@ -96,7 +96,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `lib/isos`: what creates leave behind. `List` runs `scripts/isos.sh` in the builder (served ISOs,
   build directories, cached `openshift-install` binaries with their `.ref` release image, the base
   ISO cache, volume usage) and classifies each against the namespace's VMs and ISO DataVolumes;
-  `Prune` removes what no vSNO uses. `guest.EjectISO` drops a finished vSNO's CD-ROM and ISO
+  `Prune` removes what no vSNO uses and `Delete` removes the ones named, both through the shared
+  `remove`. `guest.EjectISO` drops a finished vSNO's CD-ROM and ISO
   DataVolume; `create` calls it, with `rm.sh`, once the install is ready.
 - `lib/ui/color.go`: `Palette` (ANSI colors when `On`; status icons via `Icon`), `ColorEnabled`
   (terminal, no `NO_COLOR`, `TERM` not `dumb`), and `Table`, which aligns columns by visible width.

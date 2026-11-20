@@ -6,11 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-
-	"github.com/sebrandon1/vsno/lib/builder"
-	"github.com/sebrandon1/vsno/lib/guest"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // PruneOptions are the user's choices for vsno isos prune.
@@ -77,35 +72,12 @@ func Prune(ctx context.Context, e Env, o PruneOptions) (*Result, error) {
 			return res, errors.New("not confirmed; rerun with --yes to skip the question")
 		}
 	}
-	for _, v := range res.Plan.VSNOs {
-		if err := e.Builder.Run(ctx, rmVsno, []string{v.Name}, builder.IO{}); err != nil {
-			return res, fmt.Errorf("removing %s's files: %w", v.Name, err)
-		}
-		res.removed("vSNO "+v.Name, v.Size)
-	}
-	for _, ent := range res.Plan.Installers {
-		if err := e.Builder.Run(ctx, rmInstaller, []string{ent.Name}, builder.IO{}); err != nil {
-			return res, fmt.Errorf("removing %s: %w", ent.Name, err)
-		}
-		res.removed("installer "+ent.Name, ent.Size)
-	}
-	for _, d := range res.Plan.Disks {
-		err := e.Dyn.Resource(guest.GVRDataVolume).Namespace(o.Namespace).Delete(ctx, d.Name, metav1.DeleteOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return res, fmt.Errorf("deleting DataVolume %s: %w", d.Name, err)
-		}
-		res.removed("DataVolume "+d.Name, d.Size)
-	}
-	return res, nil
+	res.Removed, res.Bytes, err = remove(ctx, e, o.Namespace, &res.Plan)
+	return res, err
 }
 
 // answer is what the user types to confirm.
 const answer = "prune"
-
-func (r *Result) removed(what string, size int64) {
-	r.Removed = append(r.Removed, what)
-	r.Bytes += size
-}
 
 // planFor picks what to remove. An orphaned vSNO's served ISO and build
 // directory count once: they go together.

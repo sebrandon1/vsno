@@ -304,7 +304,7 @@ minutes; the vSNO's API is down for most of it.
 
 When the install finishes, `create` ejects the ISO: the CD-ROM and its volume leave the VM, the
 `<name>-iso` DataVolume is deleted, and the builder's copy goes. The vSNO boots from its root disk
-from then on, which frees about 4 GB. `vsno isos eject <vsno>` does the same for a vSNO from an
+from then on, which frees about 4 GB. `vsno iso eject <vsno>` does the same for a vSNO from an
 older vsno.
 
 `seed list` shows each seed image's reference, the vSNO it came from, its OpenShift version, size and
@@ -315,17 +315,23 @@ space only when it is garbage collected, so deletion does not shrink it immediat
 ## ISOs and caches
 
 ```bash
-vsno isos                          # what the builder and LVMS hold, and what uses it
-vsno isos prune --dry-run          # ISOs, installers and DataVolumes nothing uses
-vsno isos prune --yes              # ...and remove them
-vsno isos prune --keep 2           # keep the two newest unused installers
-vsno isos eject a                  # drop a's install ISO, if create didn't
+vsno iso list                      # what the builder and LVMS hold, and what uses it
+vsno iso delete old-vsno           # remove one vSNO's leftover ISO and build directory
+vsno iso delete openshift-install-1a2b3c4d
+vsno iso prune --dry-run           # ISOs, installers and DataVolumes nothing uses
+vsno iso prune --yes               # ...and remove them
+vsno iso prune --keep 2            # keep the two newest unused installers
+vsno iso eject a                   # drop a's install ISO, if create didn't
 ```
 
-`isos` lists the served ISOs, the installer's build directories, the cached `openshift-install`
+`iso` (`list` is the default) lists the served ISOs, the installer's build directories, the cached `openshift-install`
 binaries (one per release image), the installer's base ISO cache, and the ISO DataVolumes, each
 marked in use, orphaned (its vSNO is gone) or unused. It ends with the builder volume's usage, which
 `vsno status` also reports, warning above 80%.
+
+`iso delete` removes the ISOs, installers or DataVolumes you name, asking "are you sure?" first
+unless `--yes`. It refuses anything a vSNO still uses: `iso eject` takes an install ISO off the VM
+safely, and `iso prune` clears the rest.
 
 The builder volume fills up with things a finished create no longer needs: `iso.sh` keeps one copy
 of each ISO rather than two, `create` ejects the ISO once the vSNO is ready, and `isos prune`
