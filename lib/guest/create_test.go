@@ -281,8 +281,12 @@ func TestCreateWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	ann := u.GetAnnotations()
-	if ann[AnnVersion] != "4.20.46" || ann[AnnTimingISO] == "" || ann[AnnTimingAvailable] != "" && ann[AnnTimingInstall] == "" {
+	if ann[AnnVersion] != "4.20.46" || ann[AnnTimingISO] == "" || ann[AnnTimingInstall] == "" || ann[AnnTimingAvailable] == "" {
 		t.Errorf("annotations = %v", ann)
+	}
+	// No Finishing was observed, so the reboot phase has nothing to report.
+	if _, ok := ann[AnnTimingReboot]; ok {
+		t.Errorf("reboot annotation without a reboot: %v", ann)
 	}
 	if _, ok := ann[AnnCached]; ok {
 		t.Errorf("cached annotation without a cache: %v", ann)

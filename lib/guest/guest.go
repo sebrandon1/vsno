@@ -34,8 +34,9 @@ const (
 	AnnVersion = "vsno.io/version"
 	// AnnCached is "true" when the guest installed from the registry mirror.
 	AnnCached = "vsno.io/cache"
-	// AnnTimingISO, AnnTimingInstall, AnnTimingReboot and AnnTimingAvailable are
-	// how long each phase of a create took, as a Go duration ("8m12s").
+	// AnnTimingISO, AnnTimingInstall and AnnTimingReboot are how long each phase
+	// of a create took, and AnnTimingAvailable the whole create up to the guest's
+	// ClusterVersion being Available, as Go durations ("8m12s").
 	AnnTimingISO       = "vsno.io/timing-iso"
 	AnnTimingInstall   = "vsno.io/timing-install"
 	AnnTimingReboot    = "vsno.io/timing-reboot"

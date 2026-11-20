@@ -118,6 +118,9 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 	if err = waitInstalled(ctx, e, g, o, started); err != nil {
 		return g, err
 	}
+	// The whole create, caching and ISO build included: the number to compare
+	// a cached release's create against.
+	g.Timings.Available = dur(e.Now().Sub(start))
 	eject(ctx, e, spec.Namespace, spec.Name)
 	return g, record(ctx, e, spec.Namespace, g)
 }
