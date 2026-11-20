@@ -96,6 +96,16 @@ func (r Resolver) Resolve(ctx context.Context, v string) (Release, error) {
 	return rel, nil
 }
 
+// Minor is "4.21" of "4.21.5" or "4.21.0-0.nightly-...", or "" when v has
+// no minor.
+func Minor(v string) string {
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[0] + "." + parts[1]
+}
+
 func releaseImage(v string) string { return releaseRepo + ":" + v + "-x86_64" }
 
 // stable returns the versions in channel stable-<minor>, oldest first.

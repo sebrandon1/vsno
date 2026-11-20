@@ -84,3 +84,11 @@ func TestDefaults(t *testing.T) {
 		t.Error("empty Resolver must use the public endpoints")
 	}
 }
+
+func TestMinor(t *testing.T) {
+	for v, want := range map[string]string{"4.21.5": "4.21", "4.22.0-0.nightly-2026-11-03": "4.22", "5": "", "": ""} {
+		if got := Minor(v); got != want {
+			t.Errorf("Minor(%q) = %q, want %q", v, got, want)
+		}
+	}
+}

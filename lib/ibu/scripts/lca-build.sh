@@ -10,6 +10,7 @@ set -euo pipefail
 repo=$1 ref=$2 host=$3 image=${4:-}
 
 command -v git >/dev/null || dnf -y -q install git >/dev/null
+mkdir -p /work/lca
 tmp=$(mktemp -d /work/lca/clone.XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
 echo "cloning $repo at $ref"

@@ -14,6 +14,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/guestctl"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/release"
 	"github.com/sebrandon1/vsno/lib/seed"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -158,7 +159,7 @@ func prepareOne(ctx context.Context, e Env, ns, name string, role Role, reg seed
 // LCA releases follow OpenShift's, and a mismatch is rarely what was meant.
 func versionWarning(ctx context.Context, a guestctl.Access, b *BuiltLCA) []string {
 	id, err := identity(ctx, a)
-	if err != nil || b.Version == "" || minorOf(b.Version) == minorOf(id.Version) {
+	if err != nil || b.Version == "" || release.Minor(b.Version) == release.Minor(id.Version) {
 		return nil
 	}
 	return []string{fmt.Sprintf("LCA %s at %s is version %s, but the vSNO runs OpenShift %s", b.Ref, b.SHA, b.Version, id.Version)}

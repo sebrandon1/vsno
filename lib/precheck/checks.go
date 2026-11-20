@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/release"
 	"github.com/sebrandon1/vsno/lib/state"
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -89,15 +90,6 @@ func (e *Env) checkHostVersion(ctx context.Context, r *Report) {
 	r.add(Result{Check: "OpenShift version", Status: Pass, Detail: v})
 }
 
-// hostMinor returns "4.22" from "4.22.0-0.nightly-...".
-func hostMinor(v string) string {
-	parts := strings.SplitN(v, ".", 3)
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[0] + "." + parts[1]
-}
-
 func (e *Env) checkNetworks(ctx context.Context, r *Report, req Requirements) {
 	nw, err := e.Dyn.Resource(GVRNetwork).Get(ctx, "cluster", metav1.GetOptions{})
 	if err != nil {
@@ -177,7 +169,7 @@ func Channels(ctx context.Context, dyn dynamic.Interface) (cnv, lvms string) {
 	minor := ""
 	if cv, err := dyn.Resource(GVRClusterVersion).Get(ctx, "version", metav1.GetOptions{}); err == nil {
 		v, _, _ := unstructured.NestedString(cv.Object, "status", "desired", "version")
-		minor = hostMinor(v)
+		minor = release.Minor(v)
 	}
 	cnv, _, _, _ = pickChannel(ctx, dyn, cluster.CNV.Package, "")
 	lvms, _, _, _ = pickChannel(ctx, dyn, cluster.LVMS.Package, minor)
@@ -195,7 +187,7 @@ func (e *Env) checkCatalog(ctx context.Context, r *Report) {
 			Detail: fmt.Sprintf("%s (default %s; %s)", cluster.CNV.Package, def, strings.Join(names, ","))})
 	}
 
-	minor := hostMinor(r.Suggested.HostVersion)
+	minor := release.Minor(r.Suggested.HostVersion)
 	ch, def, _, err = pickChannel(ctx, e.Dyn, cluster.LVMS.Package, minor)
 	if err != nil {
 		r.add(Result{Check: "Catalog: LVM Storage", Status: Fail, Detail: err.Error(),

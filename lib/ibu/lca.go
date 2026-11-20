@@ -76,7 +76,7 @@ const (
 // its image unless s names one, and renders its manifests in the builder.
 func buildLCA(ctx context.Context, e Env, ns string, s LCASource, reg seed.Registry, ps precheck.ProgressStep) (*BuiltLCA, error) {
 	s = s.withDefaults()
-	node, err := builderNode(ctx, e, ns)
+	bp, err := builderPod(ctx, e, ns)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func buildLCA(ctx context.Context, e Env, ns string, s LCASource, reg seed.Regis
 	defer func() {
 		_ = e.Kube.CoreV1().Secrets(ns).Delete(context.WithoutCancel(ctx), lcaBuildAuth, metav1.DeleteOptions{})
 	}()
-	logs, err := runBuildPod(ctx, e, ns, node, []string{s.Repo, s.Ref, reg.Host, s.Image}, ps)
+	logs, err := runBuildPod(ctx, e, ns, bp, []string{s.Repo, s.Ref, reg.Host, s.Image}, ps)
 	if err != nil {
 		return nil, err
 	}
@@ -103,19 +103,21 @@ func buildLCA(ctx context.Context, e Env, ns string, s LCASource, reg seed.Regis
 	return b, nil
 }
 
-// builderNode is the node the builder pod runs on: the build pod mounts the
-// builder's ReadWriteOnce volume, so it has to run there too.
-func builderNode(ctx context.Context, e Env, ns string) (string, error) {
+// builderPod is the running builder pod. The build pod mounts its
+// ReadWriteOnce volume, so it runs on the builder's node, with the builder's
+// SELinux level: a pod at another level would get the volume relabeled to
+// its own, locking the builder out of its files.
+func builderPod(ctx context.Context, e Env, ns string) (*corev1.Pod, error) {
 	pods, err := e.Kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: "app=builder"})
 	if err != nil {
-		return "", fmt.Errorf("finding the builder: %w", err)
+		return nil, fmt.Errorf("finding the builder: %w", err)
 	}
-	for _, p := range pods.Items {
+	for i, p := range pods.Items {
 		if p.Status.Phase == corev1.PodRunning && p.Spec.NodeName != "" {
-			return p.Spec.NodeName, nil
+			return &pods.Items[i], nil
 		}
 	}
-	return "", errors.New("the builder pod isn't running; see `vsno status`")
+	return nil, errors.New("the builder pod isn't running; see `vsno status`")
 }
 
 // writeBuildAuth stores what the build pod pulls base images and pushes with:
@@ -138,17 +140,19 @@ func writeBuildAuth(ctx context.Context, e Env, ns string, reg seed.Registry) er
 	return nil
 }
 
-// runBuildPod runs lca-build.sh in a privileged buildah pod on node, shows its
-// last log line as progress, and returns its whole log once it succeeded.
-func runBuildPod(ctx context.Context, e Env, ns, node string, args []string, ps precheck.ProgressStep) (string, error) {
+// runBuildPod runs lca-build.sh in a privileged buildah pod beside the builder
+// (see builderPod), shows its last log line as progress, and returns its whole
+// log once it succeeded.
+func runBuildPod(ctx context.Context, e Env, ns string, builder *corev1.Pod, args []string, ps precheck.ProgressStep) (string, error) {
 	pods := e.Kube.CoreV1().Pods(ns)
 	_ = pods.Delete(ctx, lcaBuildPod, metav1.DeleteOptions{}) // a leftover from an interrupted build
 	privileged := true
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: lcaBuildPod, Namespace: ns, Labels: map[string]string{"app.kubernetes.io/managed-by": "vsno"}},
 		Spec: corev1.PodSpec{
-			NodeName:      node,
-			RestartPolicy: corev1.RestartPolicyNever,
+			NodeName:        builder.Spec.NodeName,
+			SecurityContext: sameSELinux(builder),
+			RestartPolicy:   corev1.RestartPolicyNever,
 			Containers: []corev1.Container{{
 				Name: "build", Image: lcaBuildImage,
 				Command:         append([]string{"bash", "-c", script("lca-build.sh"), "lca-build.sh"}, args...),
@@ -187,6 +191,15 @@ func runBuildPod(ctx context.Context, e Env, ns, node string, args []string, ps 
 		return "", fmt.Errorf("the LCA build failed: %s", lastLine(logs))
 	}
 	return logs, nil
+}
+
+// sameSELinux is a pod security context with builder's SELinux options.
+func sameSELinux(builder *corev1.Pod) *corev1.PodSecurityContext {
+	if builder.Spec.SecurityContext == nil || builder.Spec.SecurityContext.SELinuxOptions == nil {
+		return nil
+	}
+	o := *builder.Spec.SecurityContext.SELinuxOptions
+	return &corev1.PodSecurityContext{SELinuxOptions: &o}
 }
 
 // podLog is the build pod's log, its last tail lines when tail > 0, or "".
@@ -267,8 +280,10 @@ func deployLCA(ctx context.Context, a guestctl.Access, c guestctl.Clock, b *Buil
 				} `json:"template"`
 			} `json:"spec"`
 			Status struct {
-				UpdatedReplicas   int `json:"updatedReplicas"`
-				AvailableReplicas int `json:"availableReplicas"`
+				Replicas            int `json:"replicas"`
+				UpdatedReplicas     int `json:"updatedReplicas"`
+				AvailableReplicas   int `json:"availableReplicas"`
+				UnavailableReplicas int `json:"unavailableReplicas"`
 			} `json:"status"`
 		}
 		if _, err := guestctl.Get(ctx, a, &d, "get", "deployments", seed.LCADeployment, "-n", seed.LCANamespace); err != nil {
@@ -281,7 +296,11 @@ func deployLCA(ctx context.Context, a guestctl.Access, c guestctl.Clock, b *Buil
 		}
 		last = fmt.Sprintf("%d updated, %d available", d.Status.UpdatedReplicas, d.Status.AvailableReplicas)
 		ps.Update("LCA controller: " + last)
-		return ours && d.Status.UpdatedReplicas > 0 && d.Status.AvailableReplicas > 0, nil
+		// Rolled out: every replica runs b's image and is available. The old
+		// controller counts as available until it goes, so available alone
+		// doesn't say the new one started.
+		st := d.Status
+		return ours && st.UpdatedReplicas > 0 && st.UpdatedReplicas == st.Replicas && st.UnavailableReplicas == 0 && st.AvailableReplicas > 0, nil
 	})
 	if errors.Is(err, guestctl.ErrTimeout) {
 		return fmt.Errorf("LCA %s didn't start in %s (%s); `vsno oc <name> -- get pods -n %s`", b.SHA, lcaDeployWait, last, seed.LCANamespace)
@@ -328,15 +347,6 @@ func recordLCA(ctx context.Context, e Env, ns, name string, b *BuiltLCA) error {
 		return nil // not a vSNO vsno made; nothing to note it on
 	}
 	return err
-}
-
-// minorOf is "4.21" of "4.21.5" or "4.21.0-0.nightly-...".
-func minorOf(v string) string {
-	parts := strings.SplitN(v, ".", 3)
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[0] + "." + parts[1]
 }
 
 // script is an embedded script.

@@ -3,6 +3,7 @@ package ibu
 import (
 	"context"
 	"encoding/base64"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -54,19 +55,17 @@ func TestParseBuild(t *testing.T) {
 	}
 }
 
-func TestMinorOf(t *testing.T) {
-	for v, want := range map[string]string{"4.21.5": "4.21", "4.22.0-0.nightly-2026-11-03": "4.22", "5": "", "": ""} {
-		if got := minorOf(v); got != want {
-			t.Errorf("minorOf(%q) = %q, want %q", v, got, want)
-		}
-	}
-}
-
 // deployment is LCA's controller Deployment running image, with one replica
 // updated and available ones of it ready.
 func deployment(image string, available int) guestctltest.Reply {
+	return rollout(image, 1, 1, available, 1-available)
+}
+
+// rollout is LCA's controller Deployment with the given replica counts.
+func rollout(image string, replicas, updated, available, unavailable int) guestctltest.Reply {
 	return guestctltest.Reply{Out: `{"spec":{"template":{"spec":{"containers":[{"name":"manager","image":"` + image + `"}]}}},` +
-		`"status":{"updatedReplicas":1,"availableReplicas":` + strconv.Itoa(available) + `}}`}
+		`"status":{"replicas":` + strconv.Itoa(replicas) + `,"updatedReplicas":` + strconv.Itoa(updated) +
+		`,"availableReplicas":` + strconv.Itoa(available) + `,"unavailableReplicas":` + strconv.Itoa(unavailable) + `}}`}
 }
 
 func TestInstalledLCA(t *testing.T) {
@@ -98,9 +97,13 @@ func TestDeployLCA(t *testing.T) {
 	b := &BuiltLCA{SHA: "0123456789ab", Image: lcaImage, manifests: "kind: Deployment\n"}
 	f := targetFake() // runs the catalog's LCA
 	f.OcReplies["get secret pull-secret -n openshift-config"] = []guestctltest.Reply{pullSecretReply(`{"auths":{"quay.io":{"auth":"QQ=="}}}`)}
-	f.OcReplies[lcaDeployGet] = []guestctltest.Reply{deployment("old", 1), deployment(lcaImage, 0), deployment(lcaImage, 1)}
+	// Mid-rollout the old controller is still available and the new one not: not yet.
+	f.OcReplies[lcaDeployGet] = []guestctltest.Reply{deployment("old", 1), rollout(lcaImage, 2, 1, 1, 1), deployment(lcaImage, 0), deployment(lcaImage, 1)}
 	if err := deployLCA(ctx, f, e.Clock(), b, testReg, &steps{}); err != nil {
 		t.Fatal(err)
+	}
+	if n := slices.Index(f.Calls, "oc "+lcaDeployGet); n < 0 || len(f.Calls)-n != 4 {
+		t.Errorf("polled the Deployment %d time(s) from %q; want 4: done only once fully rolled out", len(f.Calls)-n, f.Calls)
 	}
 	for _, want := range []string{
 		"oc delete subscriptions lifecycle-agent -n openshift-lifecycle-agent --ignore-not-found",
@@ -172,30 +175,50 @@ func TestRunBuildPod(t *testing.T) {
 			k.PrependReactor("get", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
 				return true, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: lcaBuildPod, Namespace: ns}, Status: corev1.PodStatus{Phase: c.phase}}, nil
 			})
-			logs, err := runBuildPod(ctx, e, ns, "worker-1", []string{DefaultLCARepo, "main", testReg.Host, ""}, &steps{})
+			logs, err := runBuildPod(ctx, e, ns, testBuilder(), []string{DefaultLCARepo, "main", testReg.Host, ""}, &steps{})
 			if err == nil {
 				_, err = parseBuild(logs)
 			}
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("err = %v, want %q", err, c.want)
 			}
-			if created == nil || created.Spec.NodeName != "worker-1" || !*created.Spec.Containers[0].SecurityContext.Privileged {
+			if created == nil || created.Spec.NodeName != "worker-1" || !*created.Spec.Containers[0].SecurityContext.Privileged ||
+				created.Spec.SecurityContext == nil || created.Spec.SecurityContext.SELinuxOptions.Level != "s0:c29,c4" {
 				t.Errorf("pod = %+v", created)
 			}
 		})
 	}
 }
 
-func TestBuilderNode(t *testing.T) {
+// testBuilder is a running builder pod on worker-1 at SELinux level s0:c29,c4.
+func testBuilder() *corev1.Pod {
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "builder-x", Namespace: ns, Labels: map[string]string{"app": "builder"}},
+		Spec:   corev1.PodSpec{NodeName: "worker-1", SecurityContext: &corev1.PodSecurityContext{SELinuxOptions: &corev1.SELinuxOptions{Level: "s0:c29,c4"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+}
+
+func TestBuilderPod(t *testing.T) {
 	ctx := context.Background()
 	e := testEnv(nil)
-	if _, err := builderNode(ctx, e, ns); err == nil || !strings.Contains(err.Error(), "isn't running") {
+	if _, err := builderPod(ctx, e, ns); err == nil || !strings.Contains(err.Error(), "isn't running") {
 		t.Errorf("no builder: err = %v", err)
 	}
-	_, _ = e.Kube.CoreV1().Pods(ns).Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "builder-x", Namespace: ns, Labels: map[string]string{"app": "builder"}},
-		Spec: corev1.PodSpec{NodeName: "worker-1"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}, metav1.CreateOptions{})
-	if n, err := builderNode(ctx, e, ns); err != nil || n != "worker-1" {
-		t.Errorf("= %q %v", n, err)
+	_, _ = e.Kube.CoreV1().Pods(ns).Create(ctx, testBuilder(), metav1.CreateOptions{})
+	if p, err := builderPod(ctx, e, ns); err != nil || p.Spec.NodeName != "worker-1" {
+		t.Errorf("= %v %v", p, err)
+	}
+}
+
+// Without SELinux options on the builder, the build pod sets none either.
+func TestSameSELinux(t *testing.T) {
+	if sc := sameSELinux(&corev1.Pod{}); sc != nil {
+		t.Errorf("= %+v", sc)
+	}
+	b := testBuilder()
+	sc := sameSELinux(b)
+	b.Spec.SecurityContext.SELinuxOptions.Level = "changed"
+	if sc == nil || sc.SELinuxOptions.Level != "s0:c29,c4" {
+		t.Errorf("= %+v", sc)
 	}
 }
 
