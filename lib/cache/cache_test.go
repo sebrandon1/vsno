@@ -25,7 +25,6 @@ const ns = "vsno-test"
 const releaseInfo = `{"digest":"sha256:1111111111111111aaaa",
  "references":{"spec":{"tags":[
   {"from":{"name":"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:aaa"}},
-  {"from":{"name":"quay.io/openshift-release-dev/ocp-release@sha256:bbb"}},
   {"from":{"name":"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:ccc"}}
  ]}}}`
 
@@ -87,7 +86,9 @@ func TestDescribe(t *testing.T) {
 	if digest != "sha256:1111111111111111aaaa" {
 		t.Errorf("digest = %s", digest)
 	}
-	want := []string{"quay.io/openshift-release-dev/ocp-release", "quay.io/openshift-release-dev/ocp-v4.0-art-dev"}
+	// A release's references name only its payload's repository; Ensure adds
+	// the release image's own.
+	want := []string{"quay.io/openshift-release-dev/ocp-v4.0-art-dev"}
 	if !slices.Equal(sources, want) {
 		t.Errorf("sources = %v, want %v", sources, want)
 	}

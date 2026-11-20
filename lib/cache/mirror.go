@@ -80,6 +80,12 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 	// not read it from upstream; and the guest's kubelet fetches the image's
 	// signature from whichever registry the pull resolves to
 	// (use-sigstore-attachments), which is why the signature is copied too.
+	// The release's references name only the payload's repository, so the
+	// release image's own is added here.
+	if r, ok := repoOf(o.Release.Image); ok && !slices.Contains(sources, r) {
+		sources = append(sources, r)
+		slices.Sort(sources)
+	}
 	m, err := load(ctx, e.Kube, o.Namespace)
 	if err != nil {
 		return nil, err
