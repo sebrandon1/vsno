@@ -25,15 +25,19 @@ export XDG_CACHE_HOME=/work/cache
 sha=$(printf %s "$image" | sha256sum | cut -c1-16)
 bin=/work/bin/openshift-install-$sha
 ocbin=/work/bin/oc-$sha
-if [ ! -x "$bin" ] || [ ! -x "$ocbin" ]; then
-  echo "extracting openshift-install"
+# One extract per binary: oc 5 keeps only the last of several --command flags,
+# and still succeeds.
+extract() {
+  local cmd=$1 dst=$2 tmp
+  [ -x "$dst" ] && return 0
+  echo "extracting $cmd"
   tmp=$(mktemp -d /work/extract.XXXXXX)
-  oc adm release extract --registry-config "$dir/pull-secret.json" \
-    --command=openshift-install --command=oc --to "$tmp" "$image"
-  [ -x "$bin" ] || mv "$tmp/openshift-install" "$bin"
-  [ -x "$ocbin" ] || mv "$tmp/oc" "$ocbin"
+  oc adm release extract --registry-config "$dir/pull-secret.json" --command="$cmd" --to "$tmp" "$image"
+  mv "$tmp/$cmd" "$dst"
   rm -rf "$tmp"
-fi
+}
+extract openshift-install "$bin"
+extract oc "$ocbin"
 # Which release image the binary came from, so `vsno isos` can tell whether a
 # vSNO still uses it. Older builders have binaries without one.
 [ -f "$bin.ref" ] || printf %s "$image" > "$bin.ref"

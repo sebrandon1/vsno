@@ -75,13 +75,17 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 		return nil, err
 	}
 	repo := RepoPrefix + short(digest)
-	// The release image itself is left pointing upstream on purpose: its
-	// signature is fetched from the registry the pull resolves to
-	// (use-sigstore-attachments), and a plain registry has none, so rewriting
-	// it stalls the install at the cluster-version-operator. Its payload,
-	// which is the 20 GB, is mapped below.
-	if r, ok := repoOf(o.Release.Image); ok {
-		sources = slices.DeleteFunc(sources, func(s string) bool { return s == r })
+	// Both the payload and the release image itself are mapped to the mirror.
+	// The agent installer reads the release image before it registers the
+	// cluster, from a container that trusts only the registry's CA, so it can
+	// not read it from upstream; and the guest's kubelet fetches the image's
+	// signature from whichever registry the pull resolves to
+	// (use-sigstore-attachments), which is why the signature is copied too.
+	// The release's references name only the payload's repository, so the
+	// release image's own is added here.
+	if r, ok := repoOf(o.Release.Image); ok && !slices.Contains(sources, r) {
+		sources = append(sources, r)
+		slices.Sort(sources)
 	}
 	m, err := load(ctx, e.Kube, o.Namespace)
 	if err != nil {
@@ -98,20 +102,32 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 	} else if ent, elapsed, err = mirrorEntry(ctx, e, o, reg, addr, repo, short(digest), digest, oldRequested(prev), m); err != nil {
 		return nil, err
 	}
+	// Every use, not only a fresh mirror: entries mirrored before signatures
+	// were copied get theirs here, and a copy that's present costs one lookup.
+	sig, err := copySignature(ctx, e, o, reg, addr, repo, digest)
+	if err != nil {
+		return nil, err
+	}
+	o.line("release signature: " + sig)
 	ent.LastUsed = e.Now()
 	ent.Requested = appendUnique(oldRequested(m.Entries[digest]), o.Release.Requested)
 	if err := saveEntry(ctx, e, o.Namespace, digest, ent); err != nil {
 		return nil, err
 	}
+	return prepared(ctx, e, reg, addr, repo, sources, &Prepared{Hit: hit, Entry: ent, Elapsed: elapsed})
+}
+
+// prepared fills in what a guest needs to install from the mirror: the pull
+// secret with the registry's login, its CA, and every source mapped to repo.
+func prepared(ctx context.Context, e Env, reg registry.Registry, addr, repo string, sources []string, p *Prepared) (*Prepared, error) {
 	ps, err := pullSecret(ctx, e.Kube)
 	if err != nil {
 		return nil, err
 	}
-	merged, err := registry.AddAuth(ps, addr, reg.User, reg.Password)
-	if err != nil {
+	if p.PullSecret, err = registry.AddAuth(ps, addr, reg.User, reg.Password); err != nil {
 		return nil, err
 	}
-	p := &Prepared{Hit: hit, Entry: ent, PullSecret: merged, TrustBundle: reg.CA, Elapsed: elapsed}
+	p.TrustBundle = reg.CA
 	for _, s := range sources {
 		p.Sources = append(p.Sources, ImageDigestSource{Source: s, Mirrors: []string{addr + "/" + repo}})
 	}
@@ -177,6 +193,46 @@ func repoSize(ctx context.Context, e Env, reg registry.Registry, repo string) (i
 	return n, nil
 }
 
+// credentials is the tar mirror.sh and signature.sh read on stdin: the cluster
+// pull secret with the registry's login added, and the registry's CA.
+func credentials(ctx context.Context, e Env, reg registry.Registry, addr string) ([]byte, error) {
+	ps, err := pullSecret(ctx, e.Kube)
+	if err != nil {
+		return nil, err
+	}
+	auth, err := registry.AddAuth(ps, addr, reg.User, reg.Password)
+	if err != nil {
+		return nil, err
+	}
+	return builder.Tar(map[string]string{"auth.json": auth, "ca.crt": reg.CA})
+}
+
+// copySignature puts the release image's sigstore signature next to its
+// mirrored copy and says what it did: copied, present (an earlier use copied
+// it) or none (the release has no signature, as nightlies don't).
+func copySignature(ctx context.Context, e Env, o EnsureOptions, reg registry.Registry, addr, repo, digest string) (string, error) {
+	src, ok := repoOf(o.Release.Image)
+	if !ok {
+		return "", fmt.Errorf("release image %q names no repository", o.Release.Image)
+	}
+	files, err := credentials(ctx, e, reg, addr)
+	if err != nil {
+		return "", err
+	}
+	var stdout, stderr bytes.Buffer
+	err = e.Builder.Run(ctx, script("signature.sh"), []string{src, digest, addr, repo},
+		builder.IO{Stdin: bytes.NewReader(files), Stdout: &stdout, Stderr: &stderr})
+	if err != nil {
+		return "", fmt.Errorf("copying %s's signature into the mirror: %w%s", o.Release.Requested, err, tail(stderr.String()))
+	}
+	out := strings.TrimSpace(stdout.String())
+	switch out {
+	case "copied", "present", "none":
+		return out, nil
+	}
+	return "", fmt.Errorf("copying %s's signature into the mirror: unexpected output %q", o.Release.Requested, out)
+}
+
 // mirror copies the release's payload into the registry, after checking there
 // is room, and returns how much the volume grew and how long that took. The
 // growth undercounts when the blobs were already stored, so the caller records
@@ -196,15 +252,7 @@ func mirror(ctx context.Context, e Env, o EnsureOptions, reg registry.Registry, 
 	if total > 0 && free < est+est/4 {
 		o.line(fmt.Sprintf("the registry has %s free: mirroring %s needs about %s", bytesText(free), o.Release.Requested, bytesText(est)))
 	}
-	ps, err := pullSecret(ctx, e.Kube)
-	if err != nil {
-		return 0, 0, err
-	}
-	auth, err := registry.AddAuth(ps, addr, reg.User, reg.Password)
-	if err != nil {
-		return 0, 0, err
-	}
-	files, err := builder.Tar(map[string]string{"auth.json": auth, "ca.crt": reg.CA})
+	files, err := credentials(ctx, e, reg, addr)
 	if err != nil {
 		return 0, 0, err
 	}
