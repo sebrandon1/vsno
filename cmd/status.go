@@ -68,13 +68,11 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 			r.Support = append(r.Support, *c)
 		}
 		// r.VSNOs are already listed: they say which releases are in use.
-		users := map[string][]string{}
-		for _, g := range r.VSNOs {
-			if g.Image != "" {
-				users[g.Image] = append(users[g.Image], g.Name)
-			}
-		}
-		if rep, err := cache.List(cmd.Context(), cache.Env{Kube: c.Kube, Dyn: c.Dyn, Config: c.Config, Builder: env.Builder}, namespace, users); err == nil {
+		users := cacheUsers(r.VSNOs)
+		rep, cerr := cache.List(cmd.Context(), cache.Env{Kube: c.Kube, Dyn: c.Dyn, Config: c.Config, Builder: env.Builder}, namespace, users)
+		if cerr != nil {
+			r.Support = append(r.Support, status.Component{Name: "release cache", Status: precheck.Warn, Detail: cerr.Error()})
+		} else {
 			r.ReleaseCache = rep
 		}
 	}

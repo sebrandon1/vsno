@@ -7,7 +7,20 @@ import (
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/cache"
+	"github.com/sebrandon1/vsno/lib/guest"
 )
+
+func TestCacheUsers(t *testing.T) {
+	gs := []guest.Guest{
+		{Name: "cached", Image: "img", Cached: true},
+		{Name: "plain", Image: "img"},
+		{Name: "nameless", Cached: true},
+	}
+	users := cacheUsers(gs)
+	if len(users) != 1 || len(users["img"]) != 1 || users["img"][0] != "cached" {
+		t.Errorf("users = %v", users)
+	}
+}
 
 func TestRenderCache(t *testing.T) {
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)

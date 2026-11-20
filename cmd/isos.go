@@ -176,6 +176,9 @@ func runIsoPrune(cmd *cobra.Command, _ []string) error {
 			shown = true
 		},
 	})
+	if err != nil { // a refused prune has no result to render
+		return err
+	}
 	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
 	if outputFormat == formatJSON {
 		if rerr := writeJSON(w, res); rerr != nil && err == nil {

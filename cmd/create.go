@@ -122,13 +122,13 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		Namespace: namespace, Name: name, Version: crVersion, Node: crNode,
 		Cores: crCores, MemoryGiB: crMemory, DiskGiB: crDisk, Wait: crWatch, NoCache: crNoCache,
 	})
-	if g == nil {
+	if g == nil || err != nil {
 		return err
 	}
-	if rerr := renderCreated(cmd.OutOrStdout(), g, err == nil && crWatch, palette(cmd.OutOrStdout())); rerr != nil && err == nil {
-		err = rerr
+	if rerr := renderCreated(cmd.OutOrStdout(), g, crWatch, palette(cmd.OutOrStdout())); rerr != nil {
+		return rerr
 	}
-	return err
+	return nil
 }
 
 func renderCreated(w io.Writer, g *guest.Guest, ready bool, pal ui.Palette) error {

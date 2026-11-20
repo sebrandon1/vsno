@@ -162,6 +162,9 @@ func waitForPod(ctx context.Context, e Env, ns string, up bool) error {
 		return (last == nil) == up, nil
 	})
 	if err != nil {
+		if last == nil {
+			last = errors.New("it still has a pod")
+		}
 		if up {
 			return fmt.Errorf("the registry didn't come back: %w", last)
 		}

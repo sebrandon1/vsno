@@ -167,6 +167,9 @@ func runCachePrune(cmd *cobra.Command, args []string) error {
 		shown = true
 	}
 	res, err := cache.Prune(cmd.Context(), env, o)
+	if err != nil { // a refused prune has no result to render
+		return err
+	}
 	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
 	if outputFormat == formatJSON {
 		if rerr := writeJSON(w, res); rerr != nil && err == nil {
@@ -206,16 +209,16 @@ func runCacheGC(cmd *cobra.Command, _ []string) error {
 	}
 	start := time.Now()
 	ps := newProgress().Start("Collecting the registry's garbage")
-	before, _, _ := env.Volume(cmd.Context(), namespace)
+	before, _, berr := env.Volume(cmd.Context(), namespace)
 	if err := cache.GarbageCollect(cmd.Context(), env, namespace); err != nil {
 		ps.Fail(err.Error())
 		return err
 	}
-	after, _, _ := env.Volume(cmd.Context(), namespace)
+	after, _, aerr := env.Volume(cmd.Context(), namespace)
 	elapsed := ui.FormatElapsed(time.Since(start))
 	ps.Done("done in " + elapsed)
 	freed := "nothing was left to free"
-	if before > after {
+	if berr == nil && aerr == nil && before > after { // an unread volume is not a zero
 		freed = "freeing " + bytesText(before-after)
 	}
 	fmt.Fprintf(w, "%s Collected the registry's garbage in %s, %s.\n", pal.Icon("✓"), elapsed, freed)
@@ -229,19 +232,25 @@ func renderCachePlan(w io.Writer, p *cache.PrunePlan, pal ui.Palette) {
 	fmt.Fprintf(w, "\n%s\n", pal.Dim("Frees about "+bytesText(p.Bytes)+" once the registry's garbage is collected."))
 }
 
-// releaseUsers maps a release image to the vSNOs running it.
+// releaseUsers maps a release image to the vSNOs running it from the mirror.
 func releaseUsers(cmd *cobra.Command, genv guest.Env) (map[string][]string, error) {
-	users := map[string][]string{}
 	gs, err := guest.List(cmd.Context(), genv, namespace)
 	if err != nil {
 		return nil, err
 	}
+	return cacheUsers(gs), nil
+}
+
+// cacheUsers maps a release image to the vSNOs that installed it from the
+// mirror: a --no-cache guest runs the same image but does not need the cache.
+func cacheUsers(gs []guest.Guest) map[string][]string {
+	users := map[string][]string{}
 	for _, g := range gs {
-		if g.Image != "" {
+		if g.Cached && g.Image != "" {
 			users[g.Image] = append(users[g.Image], g.Name)
 		}
 	}
-	return users, nil
+	return users
 }
 
 func runCacheList(cmd *cobra.Command, _ []string) error {
