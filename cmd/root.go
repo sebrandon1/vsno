@@ -22,6 +22,7 @@ import (
 // Output formats for -o.
 const (
 	formatTable = "table"
+	formatWide  = "wide"
 	formatJSON  = "json"
 )
 
@@ -52,10 +53,10 @@ Start with:  vsno precheck`,
 			}
 		}
 		switch outputFormat {
-		case formatTable, formatJSON:
+		case formatTable, formatWide, formatJSON:
 			return nil
 		default:
-			return fmt.Errorf("invalid --output %q (want table or json)", outputFormat)
+			return fmt.Errorf("invalid --output %q (want table, wide or json)", outputFormat)
 		}
 	},
 }
@@ -65,13 +66,13 @@ func init() {
 	pf.StringVar(&kubeconfig, "kubeconfig", "", "path to the host cluster kubeconfig (default: $KUBECONFIG, then ~/.kube/config)")
 	pf.StringVar(&kubeContext, "context", "", "kubeconfig context to use")
 	pf.StringVarP(&namespace, "namespace", "n", "vsno", "namespace that holds the vSNO environment")
-	pf.StringVarP(&outputFormat, "output", "o", formatTable, "output format: table or json")
+	pf.StringVarP(&outputFormat, "output", "o", formatTable, "output format: table, wide or json")
 	pf.BoolVar(&noColor, "no-color", false, "don't color the output (also: NO_COLOR=1)")
 }
 
 // palette colors table output written to a terminal.
 func palette(w io.Writer) ui.Palette {
-	return ui.Palette{On: outputFormat == formatTable && ui.ColorEnabled(w)}
+	return ui.Palette{On: outputFormat != formatJSON && ui.ColorEnabled(w)}
 }
 
 // SetVersion is called from main with the build-time version.

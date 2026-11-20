@@ -74,11 +74,11 @@ func runPrecheck(cmd *cobra.Command, _ []string) error {
 	}
 	env.Progress = precheckProgress{newProgress()}
 
-	if outputFormat == formatTable {
+	if outputFormat != formatJSON {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Checking %s (context %q)...\n\n", c.Config.Host, c.Context)
 	}
 	report := precheck.Run(cmd.Context(), env, pcReq, precheck.Options{Node: pcNode})
-	if outputFormat == formatTable {
+	if outputFormat != formatJSON {
 		fmt.Fprintln(cmd.ErrOrStderr())
 	}
 
@@ -101,7 +101,7 @@ func runPrecheck(cmd *cobra.Command, _ []string) error {
 		if err := os.WriteFile(pcWriteConfig, b, 0o600); err != nil {
 			return fmt.Errorf("writing %s: %w", pcWriteConfig, err)
 		}
-		if outputFormat == formatTable {
+		if outputFormat != formatJSON {
 			fmt.Fprintf(out, "\nWrote suggested settings to %s\n", pcWriteConfig)
 		}
 	}

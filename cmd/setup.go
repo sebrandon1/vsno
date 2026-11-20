@@ -135,7 +135,7 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		Progress: progress,
 		Timeout:  suTimeout,
 	}
-	if outputFormat == formatTable {
+	if outputFormat != formatJSON {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Setting up %s in %s (context %q)...\n\n", namespace, c.Config.Host, c.Context)
 	}
 	res, err := setup.Run(cmd.Context(), env, setup.Options{
@@ -143,7 +143,7 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		UpgradeOperators: suUpgrade, Channels: channels, DryRun: suDryRun, Images: manifests.DefaultImages(),
 		RegistrySize: suRegSize,
 	})
-	if outputFormat == formatTable {
+	if outputFormat != formatJSON {
 		fmt.Fprintln(cmd.ErrOrStderr())
 	}
 	if rerr := renderSetup(cmd.OutOrStdout(), res, suDryRun, palette(cmd.OutOrStdout())); rerr != nil && err == nil {

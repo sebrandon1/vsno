@@ -53,6 +53,7 @@ type CreateOptions struct {
 // returns the vSNO as far as it got.
 func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 	e.defaults()
+	start := e.Now()
 	if o.Name == "" {
 		name, err := FreeName(ctx, e, o.Namespace)
 		if err != nil {
@@ -68,7 +69,8 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 	}
 	ps.Done(fmt.Sprintf("%s on %s, %d vCPU / %d GiB / %d GiB", describe(spec.Release), spec.Node, spec.Cores, spec.MemoryGiB, spec.DiskGiB))
 
-	if err := cacheRelease(ctx, e, o, spec, &sec); err != nil {
+	cached, err := cacheRelease(ctx, e, o, spec, &sec)
+	if err != nil {
 		return nil, err
 	}
 	objs, err := Objects(spec, dnsIP, sec)
@@ -76,7 +78,8 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 		return nil, err
 	}
 	g := &Guest{Name: spec.Name, State: Starting, Version: spec.Release.Version, Requested: spec.Release.Requested,
-		Image: spec.Release.Image, Node: spec.Node, Cores: int64(spec.Cores), MemoryGiB: spec.MemoryGiB, DiskGiB: spec.DiskGiB, API: API(spec.Name)}
+		Image: spec.Release.Image, Node: spec.Node, Cores: int64(spec.Cores), MemoryGiB: spec.MemoryGiB, DiskGiB: spec.DiskGiB,
+		API: API(spec.Name), Cached: cached}
 
 	// The Service first: the builder reaches the guest through its ClusterIP.
 	if err := step(e, "Service and DNS for "+spec.Name, func(precheck.ProgressStep) (string, error) {
@@ -96,11 +99,13 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 			ann[AnnVersion] = v             // a pullspec: the installer knows the version
 			objs[2].SetAnnotations(ann)
 		}
+		g.Timings.ISO = dur(e.Now().Sub(start))
 		return v, err
 	}); err != nil {
 		return g, err
 	}
 
+	started := e.Now()
 	if err := step(e, "Creating VM "+spec.Name, func(precheck.ProgressStep) (string, error) {
 		_, err := e.Applier.Apply(ctx, objs[1:])
 		return fmt.Sprintf("ISO DataVolume %s-iso, root disk %d GiB", spec.Name, spec.DiskGiB), err
@@ -108,23 +113,23 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 		return g, err
 	}
 	if !o.Wait {
-		return g, nil
+		return g, record(ctx, e, spec.Namespace, g)
 	}
-	if err = waitInstalled(ctx, e, g, o); err != nil {
+	if err = waitInstalled(ctx, e, g, o, started); err != nil {
 		return g, err
 	}
 	eject(ctx, e, spec.Namespace, spec.Name)
-	return g, nil
+	return g, record(ctx, e, spec.Namespace, g)
 }
 
 // cacheRelease mirrors the release into the environment's registry and points
 // the install at it. The ISO build pulls the release too, so this runs before
 // it.
-func cacheRelease(ctx context.Context, e Env, o CreateOptions, spec Spec, sec *Secrets) error {
+func cacheRelease(ctx context.Context, e Env, o CreateOptions, spec Spec, sec *Secrets) (bool, error) {
 	if e.Cache == nil || o.NoCache {
-		return nil
+		return false, nil
 	}
-	return step(e, "Caching release "+describe(spec.Release), func(ps precheck.ProgressStep) (string, error) {
+	err := step(e, "Caching release "+describe(spec.Release), func(ps precheck.ProgressStep) (string, error) {
 		p, err := e.Cache.Ensure(ctx, spec.Namespace, spec.Release, ps.Update)
 		if err != nil {
 			return "", fmt.Errorf("%w (pass --no-cache to install from the internet)", err)
@@ -135,6 +140,7 @@ func cacheRelease(ctx context.Context, e Env, o CreateOptions, spec Spec, sec *S
 		}
 		return "mirrored " + p.Repo, nil
 	})
+	return err == nil, err
 }
 
 // eject drops the install ISO of a vSNO that just became ready, freeing the
@@ -363,14 +369,15 @@ func buildISO(ctx context.Context, e Env, s Spec, dnsIP string, sec Secrets, ps 
 var errStuck = errors.New("install stuck")
 
 // waitInstalled polls until the vSNO is ready, failed, stuck or out of time.
-func waitInstalled(ctx context.Context, e Env, g *Guest, o CreateOptions) error {
+// started is when the VM was created: the timings are measured from there.
+func waitInstalled(ctx context.Context, e Env, g *Guest, o CreateOptions, started time.Time) error {
 	stuckAfter := o.StuckAfter
 	if stuckAfter == 0 {
 		stuckAfter = 15 * time.Minute
 	}
 	ps := e.Progress.Start("Installing " + g.Name)
 	deadline := e.Now().Add(e.Timeout)
-	var insufficientSince time.Time
+	var insufficientSince, rebooted time.Time
 	for {
 		st, detail, ver, err := observeOne(ctx, e, o.Namespace, g.Name)
 		if err != nil {
@@ -383,10 +390,12 @@ func waitInstalled(ctx context.Context, e Env, g *Guest, o CreateOptions) error 
 		}
 		ps.Update(string(st) + " " + detail)
 		ps.SetProgress(percent(st, detail), 100)
+		markReboot(&rebooted, st, e.Now())
 		switch {
 		case st == Ready:
 			ps.Done(g.Version)
-			return recordVersion(ctx, e, o.Namespace, g)
+			g.timed(started, rebooted, e.Now())
+			return nil
 		case st == Failed || st == Stopped:
 			ps.Fail(string(st) + ": " + detail)
 			return fmt.Errorf("vSNO %s %s: %s; see `vsno list`, or `vsno delete %s` and retry", g.Name, st, detail, g.Name)
@@ -433,15 +442,55 @@ func observeOne(ctx context.Context, e Env, ns, name string) (State, string, str
 	return st, detail, ver, nil
 }
 
-// recordVersion stores the installed version on the VM, for a vSNO created
-// from a pullspec and for list while the vSNO is stopped.
-func recordVersion(ctx context.Context, e Env, ns string, g *Guest) error {
-	if g.Version == "" {
+// markReboot notes when the guest's API first answered, which is when its
+// first reboot is done.
+func markReboot(rebooted *time.Time, st State, now time.Time) {
+	if st == Finishing && rebooted.IsZero() {
+		*rebooted = now
+	}
+}
+
+// timed fills in how long the install and the reboot took.
+func (g *Guest) timed(started, rebooted, ready time.Time) {
+	g.Timings.Reboot = dur(ready.Sub(rebooted))
+	g.Timings.Install = dur(rebooted.Sub(started))
+	if rebooted.IsZero() {
+		g.Timings.Install, g.Timings.Reboot = dur(ready.Sub(started)), ""
+	}
+}
+
+// record stores what create measured on the VM: the version a pullspec turned
+// out to be, whether it installed from the mirror, and how long each phase
+// took.
+func record(ctx context.Context, e Env, ns string, g *Guest) error {
+	ann := map[string]string{AnnVersion: g.Version, AnnTimingISO: g.Timings.ISO, AnnTimingInstall: g.Timings.Install,
+		AnnTimingReboot: g.Timings.Reboot, AnnTimingAvailable: g.Timings.Available}
+	if g.Cached {
+		ann[AnnCached] = "true"
+	}
+	clean := map[string]string{}
+	for k, v := range ann {
+		if v != "" {
+			clean[k] = v
+		}
+	}
+	if len(clean) == 0 {
 		return nil
 	}
-	patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, AnnVersion, g.Version)
-	_, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Patch(ctx, g.Name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": clean}})
+	if err != nil {
+		return err
+	}
+	_, err = e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Patch(ctx, g.Name, types.MergePatchType, patch, metav1.PatchOptions{})
 	return err
+}
+
+// dur is d rounded to the second, or "" when it wasn't measured.
+func dur(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return d.Round(time.Second).String()
 }
 
 var rePercent = regexp.MustCompile(`(\d+)(\.\d+)?%`)

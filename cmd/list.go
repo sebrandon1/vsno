@@ -119,14 +119,23 @@ func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 		fmt.Fprintf(w, "No vSNOs in %s. Create one with `vsno create <name> --version 4.20`.\n", l.Namespace)
 	} else {
 		var t ui.Table
-		t.Row(pal.Bold("NAMESPACE"), pal.Bold("NAME"), pal.Bold("STATE"), pal.Bold("VERSION"), pal.Bold("AGE"), pal.Bold("CPU"), pal.Bold("MEMORY"), pal.Bold("DISK"), pal.Bold("API"), pal.Bold("DETAIL"))
+		head := []string{pal.Bold("NAMESPACE"), pal.Bold("NAME"), pal.Bold("STATE"), pal.Bold("VERSION"), pal.Bold("AGE"),
+			pal.Bold("CPU"), pal.Bold("MEMORY"), pal.Bold("DISK"), pal.Bold("API"), pal.Bold("DETAIL")}
+		if outputFormat == formatWide {
+			head = append(head, pal.Bold("CACHED"), pal.Bold("ISO"), pal.Bold("INSTALL"), pal.Bold("REBOOT"), pal.Bold("READY"))
+		}
+		t.Row(head...)
 		for _, g := range l.VSNOs {
 			api := "-"
 			if g.ServiceIP != "" {
 				api = fmt.Sprintf("api.%s (%s)", g.Name, g.ServiceIP)
 			}
-			t.Row(g.Namespace, g.Name, stateText(pal, g.State), g.ShownVersion(), age(now.Sub(g.Created)), size(g.Cores, ""),
-				size(g.MemoryGiB, "Gi"), size(g.DiskGiB, "Gi"), api, pal.Dim(g.Detail))
+			row := []string{g.Namespace, g.Name, stateText(pal, g.State), g.ShownVersion(), age(now.Sub(g.Created)), size(g.Cores, ""),
+				size(g.MemoryGiB, "Gi"), size(g.DiskGiB, "Gi"), api, pal.Dim(g.Detail)}
+			if outputFormat == formatWide {
+				row = append(row, yesNo(g.Cached), orDash(g.Timings.ISO), orDash(g.Timings.Install), orDash(g.Timings.Reboot), orDash(g.Timings.Available))
+			}
+			t.Row(row...)
 		}
 		t.Write(w)
 	}
@@ -135,6 +144,22 @@ func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 			c.Node, c.FreeMemoryGiB, c.FitDefault, guest.DefaultMemoryGiB)
 	}
 	return nil
+}
+
+// yesNo is "yes" or "-" for a measurement that may not have happened.
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "-"
+}
+
+// orDash is s, or "-" when create didn't measure it.
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // stateText colors a state: ready green, failed red, stopped and unknown dim,

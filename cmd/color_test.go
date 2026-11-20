@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/precheck"
@@ -52,6 +53,12 @@ func TestColorKeepsLayout(t *testing.T) {
 		"setup":         func(b *bytes.Buffer, p ui.Palette) { _ = renderSetup(b, setupResult(), false, p) },
 		"setup dry run": func(b *bytes.Buffer, p ui.Palette) { _ = renderSetup(b, dryRunResult(), true, p) },
 		"teardown":      func(b *bytes.Buffer, p ui.Palette) { _ = renderTeardown(b, targets, errors.New("x"), false, p) },
+		"list wide": func(b *bytes.Buffer, p ui.Palette) {
+			old := outputFormat
+			outputFormat = formatWide
+			defer func() { outputFormat = old }()
+			_ = renderList(b, testListing(), time.Now(), p)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var p, c bytes.Buffer

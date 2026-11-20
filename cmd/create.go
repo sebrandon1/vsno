@@ -115,7 +115,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	} else if name, err = guest.FreeName(cmd.Context(), env, namespace); err != nil {
 		return err
 	}
-	if outputFormat == formatTable {
+	if outputFormat != formatJSON {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Creating vSNO %s in %s on %s (context %q)...\n\n", name, namespace, c.Config.Host, c.Context)
 	}
 	g, err := guest.Create(cmd.Context(), env, guest.CreateOptions{

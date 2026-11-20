@@ -81,6 +81,24 @@ type Guest struct {
 	Created   time.Time `json:"created"`
 	// Unhealthy counts ClusterOperators that are Degraded or not Available, once known.
 	Unhealthy *int `json:"unhealthyOperators,omitempty"`
+	// Cached is true when the guest installed from the registry mirror.
+	Cached bool `json:"cached,omitempty"`
+	// Timings are how long create's phases took; empty when not measured.
+	Timings Timings `json:"timings,omitempty"`
+}
+
+// Timings are the durations create records as it goes.
+type Timings struct {
+	ISO       string `json:"iso,omitempty"`
+	Install   string `json:"install,omitempty"`
+	Reboot    string `json:"reboot,omitempty"`
+	Available string `json:"available,omitempty"`
+}
+
+// Empty is true when nothing was measured, such as for a vSNO created without
+// --watch.
+func (t Timings) Empty() bool {
+	return t == Timings{}
 }
 
 // ShownVersion is the installed version, or the requested one until it's known.
@@ -231,6 +249,8 @@ func observe(ctx context.Context, e Env, vm *unstructured.Unstructured) (Guest, 
 		}
 	}
 	g.Node, _, _ = unstructured.NestedString(vm.Object, "spec", "template", "spec", "nodeSelector", "kubernetes.io/hostname")
+	g.Cached = ann[AnnCached] == "true"
+	g.Timings = Timings{ISO: ann[AnnTimingISO], Install: ann[AnnTimingInstall], Reboot: ann[AnnTimingReboot], Available: ann[AnnTimingAvailable]}
 
 	o := Observed{VMStatus: nested(vm, "status", "printableStatus")}
 	if dv, err := e.Dyn.Resource(GVRDataVolume).Namespace(ns).Get(ctx, name+"-iso", metav1.GetOptions{}); err == nil {

@@ -113,7 +113,7 @@ func runSeedCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if outputFormat == formatTable {
+	if outputFormat != formatJSON {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Making a seed image from vSNO %s in %s...\n\n", args[0], namespace)
 	}
 	res, err := seed.Create(cmd.Context(), env, seed.CreateOptions{Namespace: namespace, Name: args[0], Image: sdImage, Stop: sdStop})
@@ -146,7 +146,7 @@ func runSeedPrecheck(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if outputFormat == formatTable {
+	if outputFormat != formatJSON {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Checking what a seed from vSNO %s in %s needs...\n\n", args[0], namespace)
 	}
 	res, err := seed.Precheck(cmd.Context(), env, seed.PrecheckOptions{
