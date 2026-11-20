@@ -155,8 +155,8 @@ func TestPlanFor(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := planFor(rep, 0)
-	if !slices.Equal(p.VSNOs, []string{"gone"}) {
-		t.Errorf("vSNOs = %q", p.VSNOs)
+	if !slices.Equal(p.VSNOs, []VSNOFiles{{Name: "gone", Size: 1395864371 + 1073741824}}) {
+		t.Errorf("vSNOs = %+v", p.VSNOs)
 	}
 	// The unknown installer (no .ref) is left alone; the two unused go.
 	if len(p.Installers) != 2 || p.Installers[0].Name != "openshift-install-bbbb" || p.Installers[1].Name != "openshift-install-cccc" {

@@ -117,36 +117,43 @@ func List(ctx context.Context, e Env, ns string) (*Report, error) {
 	}
 	for _, l := range lines {
 		switch l.Kind {
-		case "volume":
+		case volume:
 			rep.Used, rep.Total = l.Used, l.Total
-			continue
 		case Base:
 			rep.Entries = append(rep.Entries, Entry{Kind: Base, Name: l.Name, Size: l.Size})
-			continue
+		default:
+			rep.Entries = append(rep.Entries, entryFor(l, vms))
 		}
-		ent := Entry{Kind: l.Kind, Name: l.Name, Release: l.Release, Version: l.Version, Size: l.Size, Modified: l.Modified}
-		switch l.Kind {
-		case Served, Build:
-			if _, ok := vms[l.Name]; ok {
-				ent.Use, ent.Users = InUse, []string{l.Name}
-			} else {
-				ent.Use = Orphaned
-			}
-		case Installer:
-			ent.Users = users(vms, l.Release)
-			switch {
-			case l.Release == "":
-				ent.Use = Unknown // an older binary, with no .ref to match on
-			case len(ent.Users) > 0:
-				ent.Use = InUse
-			default:
-				ent.Use = Unused
-			}
-		}
-		rep.Entries = append(rep.Entries, ent)
 	}
 	rep.Disks, rep.DiskBytes, err = disks(ctx, e, ns, vms)
 	return rep, err
+}
+
+// volume is the line kind that carries the builder volume's usage.
+const volume Kind = "volume"
+
+// entryFor classifies one served ISO, build directory or installer against
+// the vSNOs in the namespace.
+func entryFor(l line, vms map[string]string) Entry {
+	ent := Entry{Kind: l.Kind, Name: l.Name, Release: l.Release, Version: l.Version, Size: l.Size, Modified: l.Modified}
+	if l.Kind == Installer {
+		ent.Users = users(vms, l.Release)
+		switch {
+		case l.Release == "":
+			ent.Use = Unknown // an older binary, with no .ref to match on
+		case len(ent.Users) > 0:
+			ent.Use = InUse
+		default:
+			ent.Use = Unused
+		}
+		return ent
+	}
+	if _, ok := vms[l.Name]; ok {
+		ent.Use, ent.Users = InUse, []string{l.Name}
+	} else {
+		ent.Use = Orphaned
+	}
+	return ent
 }
 
 // list runs isos.sh and parses its lines. Without a builder, there are none.

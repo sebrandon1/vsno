@@ -122,9 +122,12 @@ func dash(s string) string {
 	return s
 }
 
-// useText says what still uses an entry.
+// useText says what still uses an entry, or "-" when nothing tracks it.
 func useText(u isos.Use, users []string) string {
-	if len(users) > 0 && u == isos.InUse {
+	switch {
+	case u == "":
+		return "-"
+	case len(users) > 0 && u == isos.InUse:
 		return string(u) + " (" + users[0] + ")"
 	}
 	return string(u)
@@ -168,8 +171,8 @@ func runIsosPrune(cmd *cobra.Command, _ []string) error {
 }
 
 func renderPrunePlan(w io.Writer, p *isos.Plan, pal ui.Palette) {
-	for _, name := range p.VSNOs {
-		fmt.Fprintf(w, "  %s vSNO %s's ISO and build directory\n", pal.Red("remove"), name)
+	for _, v := range p.VSNOs {
+		fmt.Fprintf(w, "  %s vSNO %s's ISO and build directory\n", pal.Red("remove"), v.Name)
 	}
 	for _, e := range p.Installers {
 		fmt.Fprintf(w, "  %s %s  %s\n", pal.Red("remove"), e.Name, pal.Dim(bytesText(e.Size)+" "+e.Version))

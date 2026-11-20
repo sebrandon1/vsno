@@ -46,7 +46,7 @@ func TestRenderIsos(t *testing.T) {
 
 func TestRenderPrunePlan(t *testing.T) {
 	p := &isos.Plan{
-		VSNOs:      []string{"gone"},
+		VSNOs:      []isos.VSNOFiles{{Name: "gone", Size: 4 << 30}},
 		Installers: []isos.Entry{{Name: "openshift-install-x", Version: "4.19.9", Size: 700 << 20}},
 		Disks:      []isos.Disk{{Name: "gone-iso", Size: 3 << 30}},
 		Bytes:      5 << 30,

@@ -26,14 +26,20 @@ type PruneOptions struct {
 
 // Plan is what a prune removes.
 type Plan struct {
-	// VSNOs are the names whose served ISO and build directory are orphaned.
-	VSNOs []string `json:"vsnos,omitempty"`
+	// VSNOs are the served ISOs and build directories whose vSNO is gone.
+	VSNOs []VSNOFiles `json:"vsnos,omitempty"`
 	// Installers are the unused openshift-install binaries.
 	Installers []Entry `json:"installers,omitempty"`
 	// Disks are the orphaned ISO DataVolumes.
 	Disks []Disk `json:"disks,omitempty"`
 	// Bytes is what removing all of it frees.
 	Bytes int64 `json:"bytes"`
+}
+
+// VSNOFiles is one orphaned vSNO's files in the builder.
+type VSNOFiles struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
 }
 
 // Empty reports whether there is nothing to prune.
@@ -71,11 +77,11 @@ func Prune(ctx context.Context, e Env, o PruneOptions) (*Result, error) {
 			return res, errors.New("not confirmed; rerun with --yes to skip the question")
 		}
 	}
-	for _, name := range res.Plan.VSNOs {
-		if err := e.Builder.Run(ctx, rmVsno, []string{name}, builder.IO{}); err != nil {
-			return res, fmt.Errorf("removing %s's files: %w", name, err)
+	for _, v := range res.Plan.VSNOs {
+		if err := e.Builder.Run(ctx, rmVsno, []string{v.Name}, builder.IO{}); err != nil {
+			return res, fmt.Errorf("removing %s's files: %w", v.Name, err)
 		}
-		res.removed("vSNO "+name, res.Plan.Bytes)
+		res.removed("vSNO "+v.Name, v.Size)
 	}
 	for _, ent := range res.Plan.Installers {
 		if err := e.Builder.Run(ctx, rmInstaller, []string{ent.Name}, builder.IO{}); err != nil {
@@ -105,20 +111,22 @@ func (r *Result) removed(what string, size int64) {
 // directory count once: they go together.
 func planFor(rep *Report, keep int) Plan {
 	var p Plan
-	seen := map[string]bool{}
+	at := map[string]int{} // a vSNO's entry in p.VSNOs
 	var installers []Entry
 	for _, ent := range rep.Entries {
 		switch {
 		case ent.Kind == Served || ent.Kind == Build:
-			if ent.Use == Orphaned && !seen[ent.Name] {
-				seen[ent.Name] = true
-				p.VSNOs = append(p.VSNOs, ent.Name)
-				p.Bytes += ent.Size
+			if ent.Use != Orphaned {
 				continue
 			}
-			if ent.Use == Orphaned {
-				p.Bytes += ent.Size // the second half of a pair
+			i, ok := at[ent.Name]
+			if !ok {
+				i = len(p.VSNOs)
+				at[ent.Name] = i
+				p.VSNOs = append(p.VSNOs, VSNOFiles{Name: ent.Name})
 			}
+			p.VSNOs[i].Size += ent.Size // its served ISO and build directory
+			p.Bytes += ent.Size
 		case ent.Kind == Installer && ent.Use == Unused:
 			installers = append(installers, ent)
 		}
