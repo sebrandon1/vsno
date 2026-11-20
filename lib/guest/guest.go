@@ -169,6 +169,11 @@ func newRenderData(s Spec, dnsIP string, sec Secrets) renderData {
 	if s.Release.Version != "" {
 		ann[AnnVersion] = s.Release.Version
 	}
+	if len(sec.ImageDigestSources) > 0 {
+		// Known before the install finishes, so a cache user is visible (and
+		// protected from `cache prune`) from the moment its VM exists.
+		ann[AnnCached] = "true"
+	}
 	return renderData{
 		Spec: s, LabelName: LabelName, BaseDomain: manifests.DefaultBaseDomain,
 		GuestIP: manifests.GuestIP, Gateway: gateway, DNS: dnsIP, MAC: MAC(s.Namespace, s.Name),

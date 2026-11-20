@@ -293,6 +293,38 @@ func TestCreateWaits(t *testing.T) {
 	}
 }
 
+// A watch outlives a blip: one failed read of the vSNO must not kill a 45
+// minute install.
+func TestCreateWaitsThroughATransientError(t *testing.T) {
+	w := newWorld(t)
+	w.runner.outputs["probe.sh"] = probeLine("seed", `"cv":{"version":"4.20.46","available":true}`)
+	o := createOpts("seed", "4.20")
+	o.Wait = true
+	e := w.env()
+	e.Applier = statusApplier{tracker{w.dyn}}
+	if _, err := w.kube.CoreV1().Services(ns).Create(context.Background(), svc("seed", "172.30.9.9"), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	fails := 1
+	w.dyn.PrependReactor("get", "virtualmachines", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		name := a.(k8stesting.GetAction).GetName()
+		// Let prepare's "does it exist" check through; fail only reads of the
+		// VM that create just made, which is what the watch does.
+		if _, err := w.dyn.Tracker().Get(cluster.GVRVirtualMachine, ns, name); err != nil || fails == 0 {
+			return false, nil, nil
+		}
+		fails--
+		return true, nil, errors.New("the API server is restarting")
+	})
+	g, err := Create(context.Background(), e, o)
+	if err != nil || g.State != Ready {
+		t.Fatalf("%v %+v", err, g)
+	}
+	if fails != 0 {
+		t.Errorf("the reactor still fails: %d", fails)
+	}
+}
+
 // statusApplier applies, then gives VMs a Running status like KubeVirt would.
 type statusApplier struct{ tracker }
 

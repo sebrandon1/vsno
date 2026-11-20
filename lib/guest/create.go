@@ -91,6 +91,7 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 		return g, err
 	}
 
+	isoStart := e.Now()
 	if err := step(e, "Building the agent ISO", func(ps precheck.ProgressStep) (string, error) {
 		v, err := buildISO(ctx, e, spec, dnsIP, sec, ps)
 		if spec.Release.Version == "" && v != "" {
@@ -99,7 +100,8 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 			ann[AnnVersion] = v             // a pullspec: the installer knows the version
 			objs[2].SetAnnotations(ann)
 		}
-		g.Timings.ISO = dur(e.Now().Sub(start))
+		// The build alone: prepare and the release mirror are their own time.
+		g.Timings.ISO = dur(e.Now().Sub(isoStart))
 		return v, err
 	}); err != nil {
 		return g, err
@@ -371,6 +373,10 @@ func buildISO(ctx context.Context, e Env, s Spec, dnsIP string, sec Secrets, ps 
 // errStuck is an install that won't finish by itself.
 var errStuck = errors.New("install stuck")
 
+// maxPollErrors is how many polls in a row may fail to read the vSNO before a
+// watch gives up: about a minute at the default 10s poll.
+const maxPollErrors = 6
+
 // waitInstalled polls until the vSNO is ready, failed, stuck or out of time.
 // started is when the VM was created: the timings are measured from there.
 func waitInstalled(ctx context.Context, e Env, g *Guest, o CreateOptions, started time.Time) error {
@@ -381,19 +387,28 @@ func waitInstalled(ctx context.Context, e Env, g *Guest, o CreateOptions, starte
 	ps := e.Progress.Start("Installing " + g.Name)
 	deadline := e.Now().Add(e.Timeout)
 	var insufficientSince, rebooted time.Time
+	pollErrs := 0
 	for {
 		st, detail, ver, err := observeOne(ctx, e, o.Namespace, g.Name)
 		if err != nil {
-			ps.Fail(err.Error())
-			return err
+			// The guest installs whether or not the watch can see it: fail only
+			// when the API stays unreachable for a few polls in a row.
+			if pollErrs++; pollErrs > maxPollErrors {
+				ps.Fail(err.Error())
+				return err
+			}
+			ps.Update("cannot read the vSNO: " + err.Error())
+			st, detail = Unknown, ""
+		} else {
+			pollErrs = 0
+			g.State, g.Detail = st, detail
+			if ver != "" {
+				g.Version = ver
+			}
+			ps.Update(string(st) + " " + detail)
+			ps.SetProgress(percent(st, detail), 100)
+			markReboot(&rebooted, st, e.Now())
 		}
-		g.State, g.Detail = st, detail
-		if ver != "" {
-			g.Version = ver
-		}
-		ps.Update(string(st) + " " + detail)
-		ps.SetProgress(percent(st, detail), 100)
-		markReboot(&rebooted, st, e.Now())
 		switch {
 		case st == Ready:
 			ps.Done(g.Version)
