@@ -2,12 +2,15 @@ package guest
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/apply"
+	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/release"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -289,5 +292,82 @@ func TestPercent(t *testing.T) {
 		if got := percent(c.st, c.detail); got != c.want {
 			t.Errorf("percent(%s, %q) = %d, want %d", c.st, c.detail, got, c.want)
 		}
+	}
+}
+
+// fakeCache answers the guest package's Cache, recording its calls.
+type fakeCache struct {
+	calls int
+	p     *cache.Prepared
+	err   error
+}
+
+func (f *fakeCache) Ensure(_ context.Context, _ string, _ release.Release, onLine func(string)) (*cache.Prepared, error) {
+	f.calls++
+	if onLine != nil {
+		onLine("mirroring")
+	}
+	return f.p, f.err
+}
+
+func mirrored() *cache.Prepared {
+	return &cache.Prepared{
+		Entry:      cache.Entry{Repo: "ocp/release/1111111111111111"},
+		PullSecret: `{"auths":{"quay.io":{},"172.30.0.5:5000":{"auth":"QQ=="}}}`,
+		Sources: []cache.ImageDigestSource{
+			{Source: "quay.io/openshift-release-dev/ocp-release", Mirrors: []string{"172.30.0.5:5000/ocp/release/1111111111111111"}},
+		},
+		TrustBundle: "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n",
+	}
+}
+
+func TestCreateUsesTheCache(t *testing.T) {
+	w := newWorld(t)
+	fc := &fakeCache{p: mirrored()}
+	env := w.env()
+	env.Cache = fc
+	if _, err := Create(context.Background(), env, createOpts("seed", "4.20")); err != nil {
+		t.Fatal(err)
+	}
+	if fc.calls != 1 {
+		t.Fatalf("cache called %d times", fc.calls)
+	}
+	iso := w.runner.ran("iso.sh")
+	for _, want := range []string{"imageDigestSources:", "172.30.0.5:5000/ocp/release/1111111111111111",
+		"additionalTrustBundle:", "172.30.0.5:5000"} {
+		if !strings.Contains(iso[0].stdin, want) {
+			t.Errorf("ISO tarball lacks %q", want)
+		}
+	}
+}
+
+func TestCreateNoCache(t *testing.T) {
+	w := newWorld(t)
+	fc := &fakeCache{p: mirrored()}
+	env := w.env()
+	env.Cache = fc
+	o := createOpts("seed", "4.20")
+	o.NoCache = true
+	if _, err := Create(context.Background(), env, o); err != nil {
+		t.Fatal(err)
+	}
+	if fc.calls != 0 {
+		t.Errorf("cache called %d times", fc.calls)
+	}
+	if iso := w.runner.ran("iso.sh"); strings.Contains(iso[0].stdin, "imageDigestSources") {
+		t.Error("the install config points at a mirror anyway")
+	}
+}
+
+func TestCreateFailsWhenMirroringFails(t *testing.T) {
+	w := newWorld(t)
+	env := w.env()
+	env.Cache = &fakeCache{err: errors.New("registry full")}
+	_, err := Create(context.Background(), env, createOpts("seed", "4.20"))
+	if err == nil || !strings.Contains(err.Error(), "registry full") || !strings.Contains(err.Error(), "--no-cache") {
+		t.Errorf("got %v", err)
+	}
+	if len(w.runner.ran("iso.sh")) != 0 {
+		t.Error("built an ISO after the mirror failed")
 	}
 }

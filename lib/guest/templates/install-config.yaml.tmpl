@@ -21,3 +21,16 @@ platform:
   none: {}
 pullSecret: {{ quote .PullSecret }}
 sshKey: {{ quote .SSHPublicKey }}
+{{- if .ImageDigestSources }}
+imageDigestSources:
+{{- range .ImageDigestSources }}
+- source: {{ quote .Source }}
+  mirrors:
+{{- range .Mirrors }}
+  - {{ quote . }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .AdditionalTrustBundle }}
+additionalTrustBundle: {{ quote .AdditionalTrustBundle }}
+{{- end }}

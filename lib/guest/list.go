@@ -39,6 +39,9 @@ type Env struct {
 	Resolver interface {
 		Resolve(ctx context.Context, version string) (release.Release, error)
 	}
+	// Cache mirrors the release into the environment's registry so the guest
+	// installs from it; nil pulls from the internet.
+	Cache    Cache
 	Progress precheck.Progress // nil = silent
 	Poll     time.Duration     // 0 = 10s
 	Timeout  time.Duration     // limit for an install; 0 = 90m

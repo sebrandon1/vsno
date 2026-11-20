@@ -9,6 +9,7 @@ import (
 
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/builder"
+	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/release"
@@ -24,6 +25,7 @@ var (
 	crMemory  int64
 	crDisk    int64
 	crWatch   bool
+	crNoCache bool
 	crTimeout time.Duration
 )
 
@@ -57,6 +59,7 @@ func init() {
 	f.IntVar(&crCores, "cores", guest.DefaultCores, "vCPUs")
 	f.Int64Var(&crMemory, "memory", guest.DefaultMemoryGiB, "memory, GiB")
 	f.Int64Var(&crDisk, "disk", guest.DefaultDiskGiB, "root disk, GiB")
+	f.BoolVar(&crNoCache, "no-cache", false, "install from the internet instead of the environment registry's mirror")
 	f.BoolVarP(&crWatch, "watch", "w", false, "follow the install until the vSNO is ready")
 	f.DurationVar(&crTimeout, "timeout", 90*time.Minute, "how long to wait for the install")
 	_ = createCmd.MarkFlagRequired("version")
@@ -78,13 +81,23 @@ func guestEnvFor(c *kube.Clients, ns string, timeout time.Duration) (guest.Env, 
 	if err != nil {
 		return guest.Env{}, err
 	}
-	return guest.Env{
+	be := builder.Exec{Config: c.Config, Kube: c.Kube, Namespace: ns}
+	env := guest.Env{
 		Kube: c.Kube, Dyn: c.Dyn, Applier: apply.NewSSA(dc, c.Dyn),
-		Builder:  builder.Exec{Config: c.Config, Kube: c.Kube, Namespace: ns},
+		Builder:  be,
 		Resolver: release.Resolver{},
 		Progress: precheckProgress{newProgress()},
 		Timeout:  timeout,
-	}, nil
+	}
+	env.Cache = cacheClient{env: cache.Env{Kube: c.Kube, Dyn: c.Dyn, Config: c.Config, Builder: be}}
+	return env, nil
+}
+
+// cacheClient adapts the cache package to the guest package's interface.
+type cacheClient struct{ env cache.Env }
+
+func (c cacheClient) Ensure(ctx context.Context, ns string, rel release.Release, onLine func(string)) (*cache.Prepared, error) {
+	return cache.Ensure(ctx, c.env, cache.EnsureOptions{Namespace: ns, Release: rel, OnLine: onLine})
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
@@ -107,7 +120,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 	g, err := guest.Create(cmd.Context(), env, guest.CreateOptions{
 		Namespace: namespace, Name: name, Version: crVersion, Node: crNode,
-		Cores: crCores, MemoryGiB: crMemory, DiskGiB: crDisk, Wait: crWatch,
+		Cores: crCores, MemoryGiB: crMemory, DiskGiB: crDisk, Wait: crWatch, NoCache: crNoCache,
 	})
 	if g == nil {
 		return err

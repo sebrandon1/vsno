@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/release"
 	"sigs.k8s.io/yaml"
 )
@@ -180,4 +181,18 @@ func TestScripts(t *testing.T) {
 		}
 	}()
 	script("missing.sh")
+}
+
+func TestInstallConfigWithMirror(t *testing.T) {
+	sec := testSecrets
+	sec.ImageDigestSources = []cache.ImageDigestSource{{
+		Source:  "quay.io/openshift-release-dev/ocp-release",
+		Mirrors: []string{"172.30.0.50:5000/ocp/release/1a2b3c4d5e6f7788"},
+	}}
+	sec.AdditionalTrustBundle = "-----BEGIN CERTIFICATE-----\nMIID\n-----END CERTIFICATE-----\n"
+	files, err := InstallFiles(testSpec(), "172.30.0.53", sec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "install-config-mirror.yaml.golden", files["install-config.yaml"])
 }

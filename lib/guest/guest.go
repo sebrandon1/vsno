@@ -14,6 +14,7 @@ import (
 	"text/template"
 
 	"github.com/sebrandon1/vsno/lib/builder"
+	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/release"
@@ -136,12 +137,21 @@ type renderData struct {
 	Annotations  map[string]string
 
 	ContainersStartMiB int64
+
+	// The environment's registry as a mirror for the install; empty means the
+	// guest pulls the release from the internet.
+	ImageDigestSources    []cache.ImageDigestSource
+	AdditionalTrustBundle string
 }
 
 // Secrets are what the install config needs from the cluster.
 type Secrets struct {
 	PullSecret   string // the host's global pull secret, compact JSON
 	SSHPublicKey string // the builder's key (vsno-ssh)
+	// ImageDigestSources and AdditionalTrustBundle point the install at the
+	// environment's registry; empty means the guest pulls from the internet.
+	ImageDigestSources    []cache.ImageDigestSource
+	AdditionalTrustBundle string
 }
 
 func newRenderData(s Spec, dnsIP string, sec Secrets) renderData {
@@ -157,6 +167,7 @@ func newRenderData(s Spec, dnsIP string, sec Secrets) renderData {
 		MachineCIDR: req.GuestMachineCIDR, ClusterCIDR: req.GuestClusterCIDR, ServiceCIDR: req.GuestServiceCIDR,
 		ISOURL: ISOURL(s.Namespace, s.Name), StorageClass: manifests.DefaultStorageClass, Annotations: ann,
 		ContainersStartMiB: containersStart(s.DiskGiB),
+		ImageDigestSources: sec.ImageDigestSources, AdditionalTrustBundle: sec.AdditionalTrustBundle,
 	}
 }
 

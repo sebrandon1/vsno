@@ -1,0 +1,28 @@
+apiVersion: v1
+baseDomain: vsno.lab
+metadata:
+  name: seed
+compute:
+- name: worker
+  replicas: 0
+controlPlane:
+  name: master
+  replicas: 1
+networking:
+  networkType: OVNKubernetes
+  machineNetwork:
+  - cidr: 10.0.2.0/24
+  clusterNetwork:
+  - cidr: 10.132.0.0/14
+    hostPrefix: 23
+  serviceNetwork:
+  - 172.31.0.0/16
+platform:
+  none: {}
+pullSecret: "{\"auths\":{\"quay.io\":{\"auth\":\"dGVzdA==\"}}}"
+sshKey: "ssh-ed25519 AAAAtest vsno@vsno"
+imageDigestSources:
+- source: "quay.io/openshift-release-dev/ocp-release"
+  mirrors:
+  - "172.30.0.50:5000/ocp/release/1a2b3c4d5e6f7788"
+additionalTrustBundle: "-----BEGIN CERTIFICATE-----\nMIID\n-----END CERTIFICATE-----\n"

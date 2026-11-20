@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/builder"
+	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
@@ -26,6 +27,11 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
+// Cache mirrors a release into the environment's registry.
+type Cache interface {
+	Ensure(ctx context.Context, ns string, rel release.Release, onLine func(string)) (*cache.Prepared, error)
+}
+
 // CreateOptions are the user's choices for vsno create.
 type CreateOptions struct {
 	Namespace string
@@ -37,6 +43,8 @@ type CreateOptions struct {
 	DiskGiB   int64
 	// Wait for the install to finish; otherwise return once the VM exists.
 	Wait bool
+	// NoCache installs from the internet instead of the registry mirror.
+	NoCache bool
 	// StuckAfter fails an install whose validations keep failing this long; 0 = 15m.
 	StuckAfter time.Duration
 }
@@ -60,6 +68,9 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 	}
 	ps.Done(fmt.Sprintf("%s on %s, %d vCPU / %d GiB / %d GiB", describe(spec.Release), spec.Node, spec.Cores, spec.MemoryGiB, spec.DiskGiB))
 
+	if err := cacheRelease(ctx, e, o, spec, &sec); err != nil {
+		return nil, err
+	}
 	objs, err := Objects(spec, dnsIP, sec)
 	if err != nil {
 		return nil, err
@@ -104,6 +115,26 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 	}
 	eject(ctx, e, spec.Namespace, spec.Name)
 	return g, nil
+}
+
+// cacheRelease mirrors the release into the environment's registry and points
+// the install at it. The ISO build pulls the release too, so this runs before
+// it.
+func cacheRelease(ctx context.Context, e Env, o CreateOptions, spec Spec, sec *Secrets) error {
+	if e.Cache == nil || o.NoCache {
+		return nil
+	}
+	return step(e, "Caching release "+describe(spec.Release), func(ps precheck.ProgressStep) (string, error) {
+		p, err := e.Cache.Ensure(ctx, spec.Namespace, spec.Release, ps.Update)
+		if err != nil {
+			return "", fmt.Errorf("%w (pass --no-cache to install from the internet)", err)
+		}
+		sec.PullSecret, sec.ImageDigestSources, sec.AdditionalTrustBundle = p.PullSecret, p.Sources, p.TrustBundle
+		if p.Hit {
+			return "already mirrored: " + p.Repo, nil
+		}
+		return "mirrored " + p.Repo, nil
+	})
 }
 
 // eject drops the install ISO of a vSNO that just became ready, freeing the
