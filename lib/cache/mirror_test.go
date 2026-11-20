@@ -107,8 +107,11 @@ func TestEnsureMirrors(t *testing.T) {
 func TestMirrorReportsThroughput(t *testing.T) {
 	r := &mirrorRunner{runner: runner{out: releaseInfo}, delay: 50 * time.Millisecond}
 	e := mirrorEnv(t, 50<<30, r)
-	tick := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
-	e.Now = func() time.Time { tick = tick.Add(100 * time.Millisecond); return tick }
+	// The progress goroutine and the mirror share the clock, so it advances
+	// through an atomic counter rather than a captured variable.
+	clockStart := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	var ticks atomic.Int64
+	e.Now = func() time.Time { return clockStart.Add(time.Duration(ticks.Add(1)) * 100 * time.Millisecond) }
 	e.Progress = time.Millisecond
 	base := int64(1 << 30)
 	var calls atomic.Int32
