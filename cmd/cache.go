@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -38,6 +39,20 @@ cluster's pull secret, which create already requires for them.`,
 	RunE: runCacheAdd,
 }
 
+var cachePruneCmd = &cobra.Command{
+	Use:   "prune [<version>]",
+	Short: "Remove cached releases, and collect the registry's garbage",
+	Long: `prune removes a cached release, or the ones no vSNO uses (--keep N keeps the
+N most recently used). It deletes their images from the registry and then runs
+the registry's garbage collector, which is what frees the space; the registry
+is unavailable while that runs.
+
+It lists what it would remove and asks you to type "prune" first, unless
+--yes. --dry-run only lists. A release a vSNO still runs is refused.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runCachePrune,
+}
+
 var cacheListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
@@ -46,8 +61,20 @@ var cacheListCmd = &cobra.Command{
 	RunE:    runCacheList,
 }
 
+var (
+	cpKeep   int
+	cpYes    bool
+	cpDryRun bool
+	cpNoGC   bool
+)
+
 func init() {
-	cacheCmd.AddCommand(cacheAddCmd, cacheListCmd)
+	f := cachePruneCmd.Flags()
+	f.IntVar(&cpKeep, "keep", 0, "keep the N most recently used unused releases")
+	f.BoolVar(&cpYes, "yes", false, "don't ask for confirmation")
+	f.BoolVar(&cpDryRun, "dry-run", false, "list what would be removed and change nothing")
+	f.BoolVar(&cpNoGC, "no-gc", false, "skip the registry garbage collection, which is what frees the space")
+	cacheCmd.AddCommand(cacheAddCmd, cacheListCmd, cachePruneCmd)
 	rootCmd.AddCommand(cacheCmd)
 }
 
@@ -100,20 +127,83 @@ func runCacheAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCacheList(cmd *cobra.Command, _ []string) error {
+func runCachePrune(cmd *cobra.Command, args []string) error {
 	env, genv, err := cacheEnv(cmd)
 	if err != nil {
 		return err
 	}
+	users, err := releaseUsers(cmd, genv)
+	if err != nil {
+		return err
+	}
+	o := cache.PruneOptions{Namespace: namespace, Keep: cpKeep, Users: users,
+		DryRun: cpDryRun, Yes: cpYes, NoGC: cpNoGC, Confirm: confirmOnTerminal(os.Stdin, cmd.ErrOrStderr())}
+	if len(args) == 1 {
+		o.Version = args[0]
+	}
+	ew := cmd.ErrOrStderr()
+	shown := false
+	o.ShowPlan = func(p *cache.PrunePlan) {
+		renderCachePlan(ew, p, palette(ew))
+		fmt.Fprintln(ew)
+		shown = true
+	}
+	res, err := cache.Prune(cmd.Context(), env, o)
+	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
+	if outputFormat == formatJSON {
+		if rerr := writeJSON(w, res); rerr != nil && err == nil {
+			err = rerr
+		}
+		return err
+	}
+	switch {
+	case len(res.Removed) > 0:
+		fmt.Fprintf(w, "%s Removed %d cached release(s)", pal.Icon("✓"), len(res.Removed))
+		if res.Freed > 0 {
+			fmt.Fprintf(w, ", freeing %s", bytesText(res.Freed))
+		}
+		fmt.Fprintln(w)
+	case !shown && !res.Plan.Empty():
+		renderCachePlan(w, &res.Plan, pal)
+		if cpDryRun {
+			fmt.Fprintln(w, "\nDry run: nothing was changed.")
+		}
+	case res.Plan.Empty():
+		fmt.Fprintln(w, "Nothing to prune: every cached release is in use or within --keep.")
+	}
+	return err
+}
+
+func renderCachePlan(w io.Writer, p *cache.PrunePlan, pal ui.Palette) {
+	for _, e := range p.Entries {
+		fmt.Fprintf(w, "  %s %s  %s  %s\n", pal.Red("remove"), dash(e.Version), e.Repo, pal.Dim(bytesText(e.SizeBytes)))
+	}
+	fmt.Fprintf(w, "\n%s\n", pal.Dim("Frees about "+bytesText(p.Bytes)+" once the registry's garbage is collected."))
+}
+
+// releaseUsers maps a release image to the vSNOs running it.
+func releaseUsers(cmd *cobra.Command, genv guest.Env) (map[string][]string, error) {
 	users := map[string][]string{}
 	gs, err := guest.List(cmd.Context(), genv, namespace)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, g := range gs {
 		if g.Image != "" {
 			users[g.Image] = append(users[g.Image], g.Name)
 		}
+	}
+	return users, nil
+}
+
+func runCacheList(cmd *cobra.Command, _ []string) error {
+	env, genv, err := cacheEnv(cmd)
+	if err != nil {
+		return err
+	}
+	users, err := releaseUsers(cmd, genv)
+	if err != nil {
+		return err
 	}
 	rep, err := cache.List(cmd.Context(), env, namespace, users)
 	if err != nil {

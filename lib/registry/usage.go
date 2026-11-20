@@ -16,7 +16,7 @@ import (
 // Usage is the registry volume's used and total size in bytes. It reads df
 // inside the registry pod, which is the only place the volume is mounted.
 func Usage(ctx context.Context, cfg *rest.Config, kube kubernetes.Interface, ns string) (used, total int64, err error) {
-	pod, err := pod(ctx, kube, ns)
+	pod, err := Pod(ctx, kube, ns)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -31,8 +31,8 @@ func Usage(ctx context.Context, cfg *rest.Config, kube kubernetes.Interface, ns 
 // mount is where the registry Deployment mounts its volume.
 const mount = "/var/lib/registry"
 
-// pod finds the registry's pod.
-func pod(ctx context.Context, kube kubernetes.Interface, ns string) (string, error) {
+// Pod finds the registry's running pod.
+func Pod(ctx context.Context, kube kubernetes.Interface, ns string) (string, error) {
 	pods, err := kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: "app=" + Service})
 	if err != nil {
 		return "", fmt.Errorf("finding the registry pod: %w", err)

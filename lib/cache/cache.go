@@ -42,6 +42,11 @@ type Env struct {
 	// Usage reads the registry volume's used and total size; nil reads it from
 	// the registry pod.
 	Usage func(ctx context.Context, ns string) (used, total int64, err error)
+	// Digests lists a repository's manifest digests; nil reads them from the
+	// registry pod's volume.
+	Digests func(ctx context.Context, ns, repo string) ([]string, error)
+	// Poll is how often to wait for the registry and its Job; 0 = 2s.
+	Poll time.Duration
 }
 
 // usage is the registry volume's numbers, however Env gets them.

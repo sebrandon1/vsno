@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/builder"
+	"github.com/sebrandon1/vsno/lib/registry"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,15 +29,21 @@ const releaseInfo = `{"digest":"sha256:1111111111111111aaaa",
   {"from":{"name":"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:ccc"}}
  ]}}}`
 
-// runner answers release-info.sh.
+// runner answers release-info.sh and registry.sh.
 type runner struct {
 	out   string
 	err   error
 	ran   []string
 	stdin string
+	// registryCalls are registry.sh's arguments, in order.
+	registryCalls [][]string
 }
 
 func (r *runner) Run(_ context.Context, s string, args []string, io_ builder.IO) error {
+	if s == registry.Script("registry.sh") {
+		r.registryCalls = append(r.registryCalls, args)
+		return nil
+	}
 	if s != script("release-info.sh") {
 		return errors.New("unexpected script")
 	}
