@@ -393,7 +393,28 @@ func TestEnsureMapsTheReleaseAndCopiesItsSignature(t *testing.T) {
 			t.Errorf("sources = %q, missing %s", mapped, want)
 		}
 	}
-	if want := []string{rel.Image, "sha256:1111111111111111aaaa", "172.30.0.5:5000", "ocp/release/1111111111111111"}; !equal(r.sigArgs, want) {
+	if want := []string{"quay.io/openshift-release-dev/ocp-release", "sha256:1111111111111111aaaa", "172.30.0.5:5000", "ocp/release/1111111111111111"}; !equal(r.sigArgs, want) {
 		t.Errorf("signature args = %q, want %q", r.sigArgs, want)
+	}
+}
+
+// A release that does list its own repository among its references gets it
+// mapped once, not twice.
+func TestEnsureMapsTheReleaseRepositoryOnce(t *testing.T) {
+	info := `{"digest":"sha256:1111111111111111aaaa","references":{"spec":{"tags":[
+  {"from":{"name":"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:aaa"}},
+  {"from":{"name":"quay.io/openshift-release-dev/ocp-release@sha256:bbb"}}]}}}`
+	r := &mirrorRunner{runner: runner{out: info}}
+	p, err := Ensure(context.Background(), mirrorEnv(t, 50<<30, r), EnsureOptions{Namespace: ns, Release: rel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mapped []string
+	for _, s := range p.Sources {
+		mapped = append(mapped, s.Source)
+	}
+	want := []string{"quay.io/openshift-release-dev/ocp-release", "quay.io/openshift-release-dev/ocp-v4.0-art-dev"}
+	if !slices.Equal(mapped, want) {
+		t.Errorf("sources = %q, want %q", mapped, want)
 	}
 }

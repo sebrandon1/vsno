@@ -1,4 +1,4 @@
-# Usage: signature.sh <release image> <digest> <dest host> <repo>
+# Usage: signature.sh <release repository> <digest> <dest host> <repo>
 # stdin: a tar with auth.json (the cluster pull secret plus the registry's
 # credentials) and ca.crt (the registry's CA).
 # Copies the release image's sigstore signature, the tag sha256-<hex>.sig next
@@ -7,11 +7,8 @@
 # policy refuses the image without one. Prints "copied", "present" or "none"
 # (the release has no signature to copy, as nightlies don't).
 set -euo pipefail
-image=$1 digest=$2 host=$3 repo=$4
+src=$1 digest=$2 host=$3 repo=$4
 tag=sha256-${digest#sha256:}.sig
-src=${image%@*}
-# Drop a :tag, but not a registry's :port.
-case ${src##*/} in *:*) src=${src%:*} ;; esac
 
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT

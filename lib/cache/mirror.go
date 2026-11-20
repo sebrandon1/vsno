@@ -182,12 +182,16 @@ func credentials(ctx context.Context, e Env, reg registry.Registry, addr string)
 // mirrored copy and says what it did: copied, present (an earlier use copied
 // it) or none (the release has no signature, as nightlies don't).
 func copySignature(ctx context.Context, e Env, o EnsureOptions, reg registry.Registry, addr, repo, digest string) (string, error) {
+	src, ok := repoOf(o.Release.Image)
+	if !ok {
+		return "", fmt.Errorf("release image %q names no repository", o.Release.Image)
+	}
 	files, err := credentials(ctx, e, reg, addr)
 	if err != nil {
 		return "", err
 	}
 	var stdout, stderr bytes.Buffer
-	err = e.Builder.Run(ctx, script("signature.sh"), []string{o.Release.Image, digest, addr, repo},
+	err = e.Builder.Run(ctx, script("signature.sh"), []string{src, digest, addr, repo},
 		builder.IO{Stdin: bytes.NewReader(files), Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
 		return "", fmt.Errorf("copying %s's signature into the mirror: %w%s", o.Release.Requested, err, tail(stderr.String()))
