@@ -196,9 +196,18 @@ func (in *inspector) api(ctx context.Context) {
 	in.row(precheck.GroupCluster, precheck.Pass, "Cluster settled", "every ClusterOperator Available and every MachineConfigPool Updated", "")
 }
 
-// lifecycleAgent reports whether LCA is installed, or installable from the
-// vSNO's own catalog.
+// lifecycleAgent reports whether LCA is installed, deployed from a ref
+// (vsno prepare --lca-ref) or by OLM, or installable from the vSNO's own
+// catalog.
 func (in *inspector) lifecycleAgent(ctx context.Context) {
+	if image, fromSource, err := SourceLCA(ctx, in.a); err != nil {
+		in.row(GroupLCA, precheck.Fail, checkLCA, err.Error(), "")
+		return
+	} else if fromSource {
+		in.rep.LCA = image
+		in.row(GroupLCA, precheck.Pass, checkLCA, "deployed from source: "+image, "")
+		return
+	}
 	name, ok, err := LCA.CSV(ctx, in.a)
 	switch {
 	case err != nil:

@@ -87,6 +87,12 @@ var checkCases = []checkCase{
 		f.OcReplies[csvGet] = []resp{{Out: ""}}
 		f.OcReplies[pmGet] = []resp{{Out: `{"status":{"catalogSource":"redhat-operators","defaultChannel":"stable"}}`}}
 	}, "Lifecycle Agent", precheck.Fail, "not installed", "--install subscribes to redhat-operators/stable"},
+	// vsno prepare --lca-ref deploys LCA without OLM: no CSV, no olm.owner label.
+	{"LCA from source", func(f *fakeAccess) {
+		f.OcReplies[csvGet] = []resp{{Out: ""}}
+		f.OcReplies["get deployments "+LCADeployment+" -n "+LCANamespace+" --ignore-not-found"] = []resp{{Out: `{"metadata":{"labels":{}},` +
+			`"spec":{"template":{"spec":{"containers":[{"name":"manager","image":"registry.example:5000/lca:abc"}]}}}}`}}
+	}, "Lifecycle Agent", precheck.Pass, "deployed from source: registry.example:5000/lca:abc", ""},
 	{"LCA package missing", func(f *fakeAccess) { f.OcReplies[csvGet] = []resp{{Out: ""}} },
 		"Lifecycle Agent", precheck.Fail, "no lifecycle-agent package", "expected for a nightly"},
 	{"trust not set up", func(f *fakeAccess) { f.OcReplies[imgGet] = []resp{{Out: imgNone}} },
