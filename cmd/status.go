@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
+	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/isos"
 	"github.com/sebrandon1/vsno/lib/kube"
@@ -65,6 +67,16 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		if c := builderVolume(cmd.Context(), env); c != nil {
 			r.Support = append(r.Support, *c)
 		}
+		// r.VSNOs are already listed: they say which releases are in use.
+		users := map[string][]string{}
+		for _, g := range r.VSNOs {
+			if g.Image != "" {
+				users[g.Image] = append(users[g.Image], g.Name)
+			}
+		}
+		if rep, err := cache.List(cmd.Context(), cache.Env{Kube: c.Kube, Dyn: c.Dyn, Config: c.Config, Builder: env.Builder}, namespace, users); err == nil {
+			r.ReleaseCache = rep
+		}
 	}
 	if err := renderStatus(cmd.OutOrStdout(), r, palette(cmd.OutOrStdout())); err != nil {
 		return err
@@ -119,6 +131,7 @@ func renderStatus(w io.Writer, r *status.Report, pal ui.Palette) error {
 	}
 	renderVSNOs(w, r.VSNOs, pal)
 	renderVMs(w, r.VMs, pal)
+	renderReleaseCache(w, r.ReleaseCache, pal)
 	if n := len(r.Stages); n > 0 {
 		fmt.Fprintf(w, "\n%s\n", pal.Bold("Recent stages"))
 		var t ui.Table
@@ -128,6 +141,28 @@ func renderStatus(w io.Writer, r *status.Report, pal ui.Palette) error {
 		t.Write(w)
 	}
 	return nil
+}
+
+// renderReleaseCache shows what the registry holds for installs.
+func renderReleaseCache(w io.Writer, rep *cache.Report, pal ui.Palette) {
+	if rep == nil {
+		return
+	}
+	fmt.Fprintf(w, "\n%s\n", pal.Bold("Release cache"))
+	if len(rep.Entries) == 0 {
+		fmt.Fprintln(w, "  nothing cached; `vsno create` mirrors a release the first time it needs it")
+		return
+	}
+	var t ui.Table
+	t.Row("  "+pal.Bold("VERSION"), pal.Bold("SIZE"), pal.Bold("LAST USED"), pal.Bold("VSNOS"))
+	for _, e := range rep.Entries {
+		t.Row("  "+dash(e.Version), bytesText(e.SizeBytes), age(time.Since(e.LastUsed)), joinItems(e.Users))
+	}
+	t.Write(w)
+	if rep.Total > 0 {
+		fmt.Fprintf(w, "  registry volume: %s of %s used, %s free\n",
+			bytesText(rep.Used), bytesText(rep.Total), bytesText(rep.Total-rep.Used))
+	}
 }
 
 func section(w io.Writer, title string, rows []status.Component, pal ui.Palette) {

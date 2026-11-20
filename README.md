@@ -8,12 +8,11 @@ One workflow built on top of that is testing
 [lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent) **Image Based Upgrades
 (IBU)** between two vSNOs.
 
-> **Status:** milestones 1–3 are done: `precheck`, `setup`, `status`, `teardown`, and the vSNO
-> lifecycle (`create`, `list`, `delete`, `start`, `stop`, `oc`, `ssh`, `kubeconfig`, `screenshot`).
-> Planned, in order:
-> 1. fast creates from an in-cluster release cache
-> 2. IBU (`prepare`, `seed generate`, `upgrade`) and testing lifecycle-agent builds
-> 3. `vsno run`
+> **Status:** milestones 1–4 are done: `precheck`, `setup`, `status`, `teardown`, the vSNO
+> lifecycle (`create`, `list`, `delete`, `start`, `stop`, `oc`, `ssh`, `kubeconfig`, `screenshot`),
+> seed images, and fast creates from an in-cluster release cache. Planned, in order:
+> 1. IBU (`prepare`, `seed generate`, `upgrade`) and testing lifecycle-agent builds
+> 2. `vsno run`
 >
 > See the [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap).
 
@@ -244,11 +243,16 @@ Nightlies need credentials for `registry.ci.openshift.org` in the cluster pull s
 | `--version` | OpenShift version (required) |
 | `--cores`, `--memory`, `--disk` | Size: defaults 16 vCPU / 16 GiB / 200 GiB; minimum 8 / 16 / 120. Use `--memory 24` or `32` for heavier work such as IBU |
 | `--node` | Worker to run on (default: the node `setup` chose) |
+| `--no-cache` | Install from the internet instead of the registry's mirror |
 | `--watch`, `-w` | Follow the install with progress until the vSNO is ready |
 | `--timeout` | How long to wait for the install (default `90m`) |
 
 `create` refuses a vSNO that doesn't fit next to what already runs on the node, and shows the free
 memory. `vsno stop` frees a vSNO's memory and keeps its disk.
+
+The first `create` of a version also mirrors that release's payload into the environment's
+registry (15–20 GB, once), so every later vSNO of it installs from the cluster: `--no-cache` skips
+that. A vSNO created with `--watch` records how long each phase took; `list -o wide` shows it.
 
 `list` shows every vSNO in every vsno environment, with a NAMESPACE column: the namespaces vsno
 labeled, plus any that hold the builder pod (an environment assembled by hand predates the label).
@@ -337,6 +341,30 @@ The builder volume fills up with things a finished create no longer needs: `iso.
 of each ISO rather than two, `create` ejects the ISO once the vSNO is ready, and `isos prune`
 removes what a failed or deleted create left behind.
 
+## Release cache
+
+```bash
+vsno cache add 4.20.46            # mirror a release now
+vsno cache list                   # versions, size, last used, the vSNOs using each
+vsno cache prune --dry-run        # unused releases
+vsno cache prune --keep 1 --yes   # ...removing all but the newest unused one
+```
+
+The environment's registry holds mirrored OpenShift releases under `ocp/release/<digest>`. `create`
+mirrors a version the first time it needs it unless `--no-cache`; `cache add` does it ahead of time.
+The vSNO's install-config gets `imageDigestSources` pointing at the registry's **ClusterIP** (the
+guest's own `cluster.local` hides the host's Service names) and the registry's CA as
+`additionalTrustBundle`, so the installer and the cluster pull from the cluster.
+
+Nightlies work the same way; the mirror step needs `registry.ci.openshift.org` credentials in the
+cluster pull secret, which `create` already requires for nightlies.
+
+`cache prune` deletes a release's images and then runs `registry garbage-collect` in a Job over the
+registry's volume. The registry is unavailable for the seconds to minutes that takes, and that is
+what actually frees the space; `--no-gc` skips it. A release a vSNO still runs is refused.
+
+The registry's volume is 100 GiB by default (`vsno setup --registry-size`); it only ever grows.
+
 ## status
 
 ```bash
@@ -348,7 +376,7 @@ vsno status -o json
 - the host components: both operators, HyperConverged, the LVMCluster and StorageClass
 - each operator with an update available, as a warning that still exits 0
 - each support service with its readiness and Service IP
-- the registry endpoint
+- the registry endpoint, and what the release cache holds (versions, size, and what is free)
 - the VMs in the namespace
 - the last five stages recorded in `vsno-state`
 

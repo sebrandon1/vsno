@@ -93,6 +93,17 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   down it reads progress from the node's `lca-generate-seed-image` unit. `List`/`Delete` talk to the
   environment's registry through `scripts/registry.sh` (skopeo + curl, credentials on stdin) from the
   builder. Templates and the script are embedded; goldens in `testdata/`.
+- `lib/registry`: the environment's in-cluster OCI registry. `Registry{Host,User,Password,CA}`,
+  `Load` (from `registry-auth` and `registry-ca`), `Address` (the ClusterIP form guests use, because
+  their `cluster.local` hides the host's Services), `AddAuth` (merging credentials into a pull
+  secret), `Usage` (df in the registry pod), and `scripts/registry.sh` (list/delete/delete-manifests
+  via curl and skopeo, credentials on stdin). `lib/seed` re-exports it.
+- `lib/cache`: mirrored OpenShift releases. `Ensure` looks a payload's digest up in ConfigMap
+  `vsno-cache`, mirrors on a miss with `oc adm release mirror` in the builder (`scripts/mirror.sh`,
+  one repository per payload under `ocp/release/<sha16>`), and returns the install-config's
+  `imageDigestSources`, the CA, and a pull secret with the registry added. `Prune` deletes a
+  release's manifests and runs `GarbageCollect`, which stops the registry, runs its collector in a
+  Job over the same volume, and starts it again.
 - `lib/isos`: what creates leave behind. `List` runs `scripts/isos.sh` in the builder (served ISOs,
   build directories, cached `openshift-install` binaries with their `.ref` release image, the base
   ISO cache, volume usage) and classifies each against the namespace's VMs and ISO DataVolumes;
@@ -198,8 +209,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 
 Milestones 1 (`precheck`), 2 (`setup`, `status`, `teardown`, #3) and 3 (vSNO lifecycle, #4) are done. The rest are GitHub issues labeled `roadmap`:
 
-- #16, milestone 4: fast creates. Cache the tools for each version, and mirror releases into the
-  in-cluster registry.
+- #16, milestone 4: fast creates. Done: the tools are cached per release, and releases are mirrored
+  into the in-cluster registry with `vsno cache`.
 - #5, milestone 5: IBU on any two vSNOs (`prepare`, `seed generate`, `upgrade`)
 - #6, milestone 6: test an LCA branch or commit (built in the cluster) or a prebuilt image
 - #7, milestone 7: `vsno run` (kubeconfig only) and the first release; image-based install as a

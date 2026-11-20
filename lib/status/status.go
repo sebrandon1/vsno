@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/manifests"
@@ -53,6 +54,9 @@ type Report struct {
 	// VMs are the other VMs in the namespace, such as ones built by hand.
 	VMs    []VM          `json:"vms,omitempty"`
 	Stages []state.Stage `json:"stages,omitempty"`
+	// ReleaseCache is what the registry holds for vSNO installs; nil when it
+	// couldn't be read.
+	ReleaseCache *cache.Report `json:"releaseCache,omitempty"`
 }
 
 // Healthy reports whether no component failed.

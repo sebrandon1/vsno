@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
@@ -78,5 +79,33 @@ func TestRenderStatusJSON(t *testing.T) {
 	var got status.Report
 	if err := json.Unmarshal(b.Bytes(), &got); err != nil || len(got.Stages) != 7 || got.VMs[0].Node != "worker-1" {
 		t.Fatalf("json = %s (%v)", b.String(), err)
+	}
+}
+
+func TestRenderStatusReleaseCache(t *testing.T) {
+	r := statusReport()
+	r.ReleaseCache = &cache.Report{
+		Entries: []cache.Entry{
+			{Version: "4.20.46", SizeBytes: 6 << 30, LastUsed: time.Now().Add(-time.Hour), Users: []string{"a", "b"}},
+			{Version: "4.21.0", SizeBytes: 3 << 30, LastUsed: time.Now().Add(-48 * time.Hour)},
+		},
+		Used: 40 << 30, Total: 100 << 30,
+	}
+	var b bytes.Buffer
+	if err := renderStatus(&b, r, plain); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{"Release cache", "4.20.46", "a, b", "registry volume: 40.0Gi of 100.0Gi used"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	// An environment with nothing cached says so.
+	r.ReleaseCache = &cache.Report{}
+	b.Reset()
+	_ = renderStatus(&b, r, plain)
+	if !strings.Contains(b.String(), "nothing cached") {
+		t.Errorf("empty cache = %q", b.String())
 	}
 }
