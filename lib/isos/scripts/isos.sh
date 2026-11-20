@@ -23,15 +23,19 @@ for d in "$work"/guests/*; do
   emit "{\"kind\":\"build\",\"name\":\"$(basename "$d")\",\"size\":$(( $(du -sk "$d" | cut -f1) * 1024 ))}"
 done
 
-# Cached openshift-install binaries, one per release image. A .ref sidecar,
-# written by iso.sh, says which image a binary came from.
+# Cached openshift-install binaries, one per release image, with the matching
+# oc (oc-<sha>) counted as part of the same entry: prune keeps or removes both.
+# A .ref sidecar, written by iso.sh, says which image a binary came from.
 for b in "$work"/bin/openshift-install-*; do
   [ -f "$b" ] || continue
   case "$b" in *.ref) continue ;; esac
   ref=""
   [ -f "$b.ref" ] && ref=$(cat "$b.ref")
   v=$("$b" version 2>/dev/null | awk 'NR==1 {print $2}')
-  emit "{\"kind\":\"installer\",\"name\":\"$(basename "$b")\",\"release\":\"$ref\",\"version\":\"$v\",\"size\":$(stat -c %s "$b"),\"modified\":\"$(when "$b")\"}"
+  size=$(stat -c %s "$b")
+  o="$work/bin/oc-${b##*/openshift-install-}"
+  [ -f "$o" ] && size=$((size + $(stat -c %s "$o")))
+  emit "{\"kind\":\"installer\",\"name\":\"$(basename "$b")\",\"release\":\"$ref\",\"version\":\"$v\",\"size\":$size,\"modified\":\"$(when "$b")\"}"
 done
 
 # The installer's base ISO cache, about 1 GB for the latest release.

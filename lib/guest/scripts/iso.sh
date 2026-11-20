@@ -20,13 +20,18 @@ fi
 # so a builder restart doesn't download it again.
 export XDG_CACHE_HOME=/work/cache
 
-# openshift-install is cached per release image.
-bin=/work/bin/openshift-install-$(printf %s "$image" | sha256sum | cut -c1-16)
-if [ ! -x "$bin" ]; then
+# openshift-install and oc are cached per release image: the same release
+# yields the same versions, so a second create of it extracts nothing.
+sha=$(printf %s "$image" | sha256sum | cut -c1-16)
+bin=/work/bin/openshift-install-$sha
+ocbin=/work/bin/oc-$sha
+if [ ! -x "$bin" ] || [ ! -x "$ocbin" ]; then
   echo "extracting openshift-install"
   tmp=$(mktemp -d /work/extract.XXXXXX)
-  oc adm release extract --registry-config "$dir/pull-secret.json" --command=openshift-install --to "$tmp" "$image"
-  mv "$tmp/openshift-install" "$bin"
+  oc adm release extract --registry-config "$dir/pull-secret.json" \
+    --command=openshift-install --command=oc --to "$tmp" "$image"
+  [ -x "$bin" ] || mv "$tmp/openshift-install" "$bin"
+  [ -x "$ocbin" ] || mv "$tmp/oc" "$ocbin"
   rm -rf "$tmp"
 fi
 # Which release image the binary came from, so `vsno isos` can tell whether a

@@ -139,8 +139,9 @@ func sortByNewest(es []Entry) {
 // rmVsno removes one vSNO's files from the builder, as guest.Delete does.
 const rmVsno = `rm -rf "/work/guests/$1" "/work/www/$1.iso" "/work/www/$1.iso.tmp"`
 
-// rmInstaller removes one cached openshift-install binary and its .ref.
-const rmInstaller = `rm -f "/work/bin/$1" "/work/bin/$1.ref"`
+// rmInstaller removes one cached openshift-install binary, its .ref and the
+// matching per-release oc.
+const rmInstaller = `rm -f "/work/bin/$1" "/work/bin/$1.ref" "/work/bin/oc-${1#openshift-install-}"`
 
 // bytesText renders a size in GiB or MiB.
 func bytesText(n int64) string {
