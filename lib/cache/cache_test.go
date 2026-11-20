@@ -41,6 +41,8 @@ type runner struct {
 	registryFail string
 	// exists answers registry.sh exists.
 	exists string
+	// size answers registry.sh size; "" prints nothing, which fails to parse.
+	size string
 }
 
 func (r *runner) Run(_ context.Context, s string, args []string, io_ builder.IO) error {
@@ -52,6 +54,9 @@ func (r *runner) Run(_ context.Context, s string, args []string, io_ builder.IO)
 		}
 		if len(args) > 1 && args[1] == r.registryFail {
 			return errors.New("exit 1")
+		}
+		if len(args) > 1 && args[1] == "size" && r.size != "" {
+			_, _ = io.WriteString(io_.Stdout, r.size+"\n")
 		}
 		return nil
 	}

@@ -2,6 +2,7 @@
 #        registry.sh <host> delete <repo:tag>...
 #        registry.sh <host> delete-manifests <repo> <digest>...
 #        registry.sh <host> exists <repo:tag>
+#        registry.sh <host> size <repo>
 # stdin: {"user": ..., "password": ..., "ca": ...} for the registry.
 #   list:             one JSON line per tag of the repositories under prefix
 #                     (default seeds/), from skopeo inspect
@@ -10,6 +11,11 @@
 #   delete-manifests: deletes one repository's manifests by digest, which is
 #                     how a mirrored release is emptied (its images are stored
 #                     by digest, with one tag for the release image)
+#   size:             the bytes a repository's tagged images take: each
+#                     distinct config and layer blob once, following manifest
+#                     lists to their images. Blobs other repositories share
+#                     count too, so it is what the repository holds, not what
+#                     deleting it would free.
 set -euo pipefail
 host=$1 op=$2
 shift 2
@@ -59,6 +65,32 @@ delete-manifests)
   ;;
 exists)
   if skopeo inspect "${sk[@]}" "docker://$host/$1" >/dev/null 2>&1; then echo yes; else echo no; fi
+  ;;
+size)
+  repo=$1
+  accept='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
+  get() { curl -sSf -K "$tmp/curlrc" --cacert "$tmp/ca.crt" -H "Accept: $accept" "https://$host/v2/$repo/manifests/$1"; }
+  : >"$tmp/blobs"
+  : >"$tmp/seen"
+  queue=$(curl -sSf -K "$tmp/curlrc" --cacert "$tmp/ca.crt" "https://$host/v2/$repo/tags/list?n=10000" | jq -r '.tags[]?')
+  # Tags first, then the images a manifest list points at, by digest. A
+  # manifest is read once however many tags or lists name it.
+  while [ -n "$queue" ]; do
+    next=
+    for ref in $queue; do
+      m=$(get "$ref")
+      d=$(printf %s "$m" | sha256sum | cut -d' ' -f1)
+      grep -qx "$d" "$tmp/seen" && continue
+      echo "$d" >>"$tmp/seen"
+      if [ "$(jq -r 'has("manifests")' <<<"$m")" = true ]; then
+        next="$next $(jq -r '.manifests[].digest' <<<"$m")"
+      else
+        jq -r '(.config // empty), (.layers[]? ) | "\(.digest) \(.size)"' <<<"$m" >>"$tmp/blobs"
+      fi
+    done
+    queue=$next
+  done
+  sort -u "$tmp/blobs" | awk '{s += $2} END {printf "%d\n", s}'
   ;;
 *)
   echo "unknown operation $op" >&2

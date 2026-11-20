@@ -69,13 +69,19 @@ func (e *Env) defaults() {
 type Entry struct {
 	Version string `json:"version,omitempty"` // "" for a pullspec
 	// Requested are the forms of the version users asked for.
-	Requested []string  `json:"requested,omitempty"`
-	Image     string    `json:"image"`  // the release image that was mirrored
-	Digest    string    `json:"digest"` // the payload's digest, the cache key
-	Repo      string    `json:"repo"`   // ocp/release/<sha16>
-	SizeBytes int64     `json:"sizeBytes,omitempty"`
-	Mirrored  time.Time `json:"mirrored"`
-	LastUsed  time.Time `json:"lastUsed"`
+	Requested []string `json:"requested,omitempty"`
+	Image     string   `json:"image"`  // the release image that was mirrored
+	Digest    string   `json:"digest"` // the payload's digest, the cache key
+	Repo      string   `json:"repo"`   // ocp/release/<sha16>
+	SizeBytes int64    `json:"sizeBytes,omitempty"`
+	// Measured is true when SizeBytes was counted from the blobs the
+	// repository references. Entries without it recorded how much the
+	// registry volume grew during the mirror, which is too little when the
+	// blobs were already there (a second mirror of a release), so they are
+	// measured again on their next use.
+	Measured bool      `json:"measured,omitempty"`
+	Mirrored time.Time `json:"mirrored"`
+	LastUsed time.Time `json:"lastUsed"`
 	// Users are the vSNOs running this release, filled in by List.
 	Users []string `json:"users,omitempty"`
 	InUse bool     `json:"inUse,omitempty"`

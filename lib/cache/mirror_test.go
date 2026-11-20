@@ -314,3 +314,90 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+// A second mirror of a release finds its blobs already stored, so the volume
+// barely grows; the size comes from the blobs the repository references.
+func TestEnsureRecordsTheBlobSize(t *testing.T) {
+	ctx := context.Background()
+	r := &mirrorRunner{runner: runner{out: releaseInfo, size: "23371317248"}}
+	e := mirrorEnv(t, 50<<30, r) // the volume never grows
+	_ = update(ctx, e.Kube, ns, func(m *metadata) {
+		m.Entries["sha256:1111111111111111aaaa"] = &Entry{Version: "4.20.46", Image: rel.Image,
+			Digest: "sha256:1111111111111111aaaa", Repo: "ocp/release/1111111111111111", State: StateFailed}
+	})
+	p, err := Ensure(ctx, e, EnsureOptions{Namespace: ns, Release: rel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Hit || p.SizeBytes != 23371317248 || !p.Measured {
+		t.Errorf("hit = %v, size = %d, measured = %v", p.Hit, p.SizeBytes, p.Measured)
+	}
+	if last := r.registryCalls[len(r.registryCalls)-1]; !equal(last[1:], []string{"size", "ocp/release/1111111111111111"}) {
+		t.Errorf("last registry call = %q", last)
+	}
+	m, err := load(ctx, e.Kube, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Entries["sha256:1111111111111111aaaa"]; got.SizeBytes != 23371317248 || !got.Measured {
+		t.Errorf("recorded = %+v", got)
+	}
+}
+
+// When the registry can't say, the volume's growth is the best there is, and
+// the entry stays unmeasured so its next use measures it.
+func TestEnsureFallsBackToVolumeGrowth(t *testing.T) {
+	r := &mirrorRunner{runner: runner{out: releaseInfo, registryFail: "size"}}
+	e := mirrorEnv(t, 50<<30, r)
+	var calls atomic.Int64
+	e.Usage = func(context.Context, string) (int64, int64, error) {
+		if calls.Add(1) == 1 {
+			return 50 << 30, 100 << 30, nil
+		}
+		return 70 << 30, 100 << 30, nil
+	}
+	p, err := Ensure(context.Background(), e, EnsureOptions{Namespace: ns, Release: rel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.SizeBytes != 20<<30 || p.Measured {
+		t.Errorf("size = %d, measured = %v; want the volume's 20Gi growth, unmeasured", p.SizeBytes, p.Measured)
+	}
+}
+
+// A hit on an entry recorded the old way is measured once; a measured one is
+// not asked again, so a cached create pays for it only once.
+func TestEnsureHitMeasuresAnOldEntry(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name     string
+		measured bool
+		want     int64
+	}{
+		{"recorded from the volume", false, 23371317248},
+		{"already measured", true, 51 << 20},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := &mirrorRunner{runner: runner{out: releaseInfo, exists: "yes", size: "23371317248"}}
+			e := mirrorEnv(t, 50<<30, r)
+			_ = update(ctx, e.Kube, ns, func(m *metadata) {
+				m.Entries["sha256:1111111111111111aaaa"] = &Entry{Version: "4.20.46", Image: rel.Image,
+					Digest: "sha256:1111111111111111aaaa", Repo: "ocp/release/1111111111111111", SizeBytes: 51 << 20, Measured: c.measured}
+			})
+			p, err := Ensure(ctx, e, EnsureOptions{Namespace: ns, Release: rel})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !p.Hit || p.SizeBytes != c.want || !p.Measured {
+				t.Errorf("hit = %v, size = %d, measured = %v; want %d", p.Hit, p.SizeBytes, p.Measured, c.want)
+			}
+			asked := false
+			for _, call := range r.registryCalls {
+				asked = asked || (len(call) > 1 && call[1] == "size")
+			}
+			if asked == c.measured {
+				t.Errorf("asked for the size = %v with measured = %v", asked, c.measured)
+			}
+		})
+	}
+}
