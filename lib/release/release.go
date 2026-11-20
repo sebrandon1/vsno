@@ -71,7 +71,7 @@ func (r Resolver) Resolve(ctx context.Context, v string) (Release, error) {
 		}
 		rel.Version, rel.Image, rel.Nightly = name, pullSpec, true
 	case reMinor.MatchString(v):
-		versions, err := r.stable(ctx, v)
+		versions, err := r.Stable(ctx, v)
 		if err != nil {
 			return rel, err
 		}
@@ -82,7 +82,7 @@ func (r Resolver) Resolve(ctx context.Context, v string) (Release, error) {
 		rel.Image = releaseImage(rel.Version)
 	case reVersion.MatchString(v):
 		m := reVersion.FindStringSubmatch(v)
-		versions, err := r.stable(ctx, m[1]+"."+m[2])
+		versions, err := r.Stable(ctx, m[1]+"."+m[2])
 		if err != nil {
 			return rel, err
 		}
@@ -109,7 +109,8 @@ func Minor(v string) string {
 func releaseImage(v string) string { return releaseRepo + ":" + v + "-x86_64" }
 
 // stable returns the versions in channel stable-<minor>, oldest first.
-func (r Resolver) stable(ctx context.Context, minor string) ([]string, error) {
+// Stable lists minor's releases in its stable channel, oldest first.
+func (r Resolver) Stable(ctx context.Context, minor string) ([]string, error) {
 	u := r.graphURL() + "?" + url.Values{"channel": {"stable-" + minor}, "arch": {"amd64"}}.Encode()
 	var g struct {
 		Nodes []struct {
@@ -125,7 +126,7 @@ func (r Resolver) stable(ctx context.Context, minor string) ([]string, error) {
 			out = append(out, n.Version)
 		}
 	}
-	slices.SortFunc(out, compareVersions)
+	slices.SortFunc(out, Compare)
 	return out, nil
 }
 
@@ -180,8 +181,8 @@ func (r Resolver) nightlyURL() string {
 	return DefaultNightlyURL
 }
 
-// compareVersions orders x.y.z versions numerically.
-func compareVersions(a, b string) int {
+// Compare orders x.y.z versions numerically: negative when a is older.
+func Compare(a, b string) int {
 	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
 	for i := range min(len(pa), len(pb)) {
 		x, _ := strconv.Atoi(pa[i])

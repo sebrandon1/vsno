@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sebrandon1/go-toolbox/cliout"
+	"github.com/sebrandon1/go-toolbox/cobrautil"
 
 	"io"
 	"os"
@@ -79,12 +80,14 @@ func palette(w io.Writer) ui.Palette {
 // SetVersion is called from main with the build-time version.
 func SetVersion(v string) {
 	cliVersion = v
-	rootCmd.Version = v
+	cobrautil.SetVersion(rootCmd, v)
 }
 
-// Execute runs the root command.
+// Execute runs the root command. Ctrl+C or SIGTERM cancels the command's
+// context, so a command stopped mid-wait still cleans up after itself (the LCA
+// build pod, say) rather than dying where it stands.
 func Execute() error {
-	return rootCmd.Execute()
+	return cobrautil.Execute(rootCmd)
 }
 
 // useEnvironment picks the environment for commands that work in one, when -n

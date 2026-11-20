@@ -1,0 +1,386 @@
+// Package run does a whole Image Based Upgrade from a kubeconfig: it sets the
+// environment up, creates a seed and a target vSNO, makes a seed image from
+// the seed and upgrades the target with it. Each stage reuses what an earlier
+// run left (a vSNO at the right version, the seed image, an upgrade part way),
+// so running it again carries on where it stopped.
+package run
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/sebrandon1/vsno/lib/guest"
+	"github.com/sebrandon1/vsno/lib/ibu"
+	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/release"
+	"github.com/sebrandon1/vsno/lib/seed"
+	"github.com/sebrandon1/vsno/lib/state"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+)
+
+// Stage is one part of a run.
+type Stage string
+
+// The stages, in order. Delete only runs with Options.Delete.
+const (
+	StageSetup   Stage = "setup"
+	StageVSNOs   Stage = "vsnos"
+	StageSeed    Stage = "seed"
+	StageUpgrade Stage = "upgrade"
+	StageDelete  Stage = "delete"
+)
+
+// StageName is what a run records in the environment's state, per stage:
+// "run:<stage>".
+const StageName = "run"
+
+// Env is what a run needs: seed's environment (the guest package's, plus
+// access to each vSNO), a setup to run, and the releases to pick versions from.
+type Env struct {
+	seed.Env
+	// Setup prepares the environment, as vsno setup does.
+	Setup func(ctx context.Context) error
+	// Stable lists a minor's stable releases, oldest first.
+	Stable func(ctx context.Context, minor string) ([]string, error)
+	// Confirm asks the user to type answer to approve question; nil never approves.
+	Confirm func(question, answer string) bool
+}
+
+// Options are the user's choices; empty fields get the defaults below.
+type Options struct {
+	Namespace string `json:"namespace,omitempty"`
+	// TargetVersion and SeedVersion are what vsno create accepts. By default
+	// the seed is the newest stable release of the host's minor and the
+	// target the one before it.
+	TargetVersion string `json:"targetVersion,omitempty"`
+	SeedVersion   string `json:"seedVersion,omitempty"`
+	TargetName    string `json:"targetName,omitempty"` // default "target"
+	SeedName      string `json:"seedName,omitempty"`   // default "seed"
+	// SeedImage upgrades to an existing seed image: no seed vSNO is made.
+	// Its version comes from its labels, or SeedVersion.
+	SeedImage string `json:"seedImage,omitempty"`
+	// SeedRepo pushes the seed image to <repo>:<version> instead of the
+	// environment's registry.
+	SeedRepo  string        `json:"seedRepo,omitempty"`
+	LCA       ibu.LCASource `json:"lca,omitzero"`
+	Node      string        `json:"node,omitempty"`
+	Cores     int           `json:"cores,omitempty"`
+	MemoryGiB int64         `json:"memoryGiB,omitempty"`
+	// Finalize, Rollback and Delete are what to do after the upgrade.
+	Finalize bool `json:"finalize,omitempty"`
+	Rollback bool `json:"rollback,omitempty"`
+	Delete   bool `json:"delete,omitempty"`
+	// Yes approves the plan without asking.
+	Yes bool `json:"yes,omitempty"`
+}
+
+// Plan is what a run will do, shown before it starts.
+type Plan struct {
+	Namespace     string    `json:"namespace"`
+	Target        string    `json:"target"`
+	TargetVersion string    `json:"targetVersion"`
+	Seed          string    `json:"seed,omitempty"` // "" with a seed image
+	SeedVersion   string    `json:"seedVersion"`
+	SeedImage     string    `json:"seedImage,omitempty"`
+	LCA           string    `json:"lca"`
+	Then          string    `json:"then"` // finalize, rollback, delete, or keep
+	Stages        []Stage   `json:"stages"`
+	Done          []Stage   `json:"done,omitempty"` // stages an earlier run finished
+	At            time.Time `json:"-"`
+}
+
+// Result is a finished, or failed, run.
+type Result struct {
+	Plan    Plan               `json:"plan"`
+	Timings map[Stage]string   `json:"timings"`
+	Upgrade *ibu.UpgradeResult `json:"upgrade,omitempty"`
+}
+
+func (o *Options) defaults() {
+	if o.TargetName == "" {
+		o.TargetName = "target"
+	}
+	if o.SeedName == "" {
+		o.SeedName = "seed"
+	}
+}
+
+func (o Options) check() error {
+	switch {
+	case o.Finalize && o.Rollback:
+		return errors.New("--finalize and --rollback are opposites; pick one")
+	case o.Delete && (o.Finalize || o.Rollback):
+		return errors.New("--delete removes both vSNOs, so --finalize and --rollback would be undone; pick one")
+	case o.SeedImage == "" && o.TargetName == o.SeedName:
+		return fmt.Errorf("the seed and the target are both %s; name them apart", o.TargetName)
+	}
+	return nil
+}
+
+// Run plans the run, asks unless o.Yes, then runs each stage not yet done.
+func Run(ctx context.Context, e Env, o Options) (*Result, error) {
+	e.Defaults(o.Namespace)
+	o.defaults()
+	if err := o.check(); err != nil {
+		return nil, err
+	}
+	plan, err := makePlan(ctx, e, o)
+	if err != nil {
+		return nil, err
+	}
+	res := &Result{Plan: *plan, Timings: map[Stage]string{}}
+	if !o.Yes && (e.Confirm == nil || !e.Confirm(plan.String()+"\nRun it? Type y", "y")) {
+		return res, errors.New("not confirmed; pass --yes to run without asking")
+	}
+	for _, s := range plan.Stages {
+		start := e.Now()
+		err := runStage(ctx, e, o, plan, s, res)
+		res.Timings[s] = e.Now().Sub(start).Round(time.Second).String()
+		record(ctx, e, o.Namespace, s, err)
+		if err != nil {
+			return res, fmt.Errorf("%s: %w", s, err)
+		}
+	}
+	return res, nil
+}
+
+func runStage(ctx context.Context, e Env, o Options, plan *Plan, s Stage, res *Result) error {
+	switch s {
+	case StageSetup:
+		return e.Setup(ctx)
+	case StageVSNOs:
+		return ensureVSNOs(ctx, e, o, plan)
+	case StageSeed:
+		return ensureSeed(ctx, e, o, plan)
+	case StageUpgrade:
+		u, err := ibu.Upgrade(ctx, e.Env, ibu.UpgradeOptions{Namespace: o.Namespace, Target: plan.Target,
+			Seed: plan.SeedImage, SeedVersion: plan.SeedVersion, Finalize: o.Finalize, Rollback: o.Rollback, LCA: o.LCA})
+		res.Upgrade = u
+		return err
+	case StageDelete:
+		names := []string{plan.Target}
+		if plan.Seed != "" {
+			names = append(names, plan.Seed)
+		}
+		// The plan, which named them, was already approved.
+		_, err := guest.Delete(ctx, e.Env.Env, guest.DeleteOptions{Namespace: o.Namespace, Names: names, Yes: true})
+		return err
+	}
+	return fmt.Errorf("unknown stage %s", s)
+}
+
+// makePlan resolves the versions and names, and notes what an earlier run
+// already finished.
+func makePlan(ctx context.Context, e Env, o Options) (*Plan, error) {
+	p := &Plan{Namespace: o.Namespace, Target: o.TargetName, TargetVersion: o.TargetVersion, SeedVersion: o.SeedVersion,
+		SeedImage: o.SeedImage, LCA: lcaText(o.LCA), Then: then(o), At: e.Now()}
+	if o.SeedImage == "" {
+		p.Seed = o.SeedName
+	}
+	if p.TargetVersion == "" || (p.SeedVersion == "" && o.SeedImage == "") {
+		target, seedV, err := defaultVersions(ctx, e)
+		if err != nil {
+			return nil, err
+		}
+		if p.TargetVersion == "" {
+			p.TargetVersion = target
+		}
+		if p.SeedVersion == "" && o.SeedImage == "" {
+			p.SeedVersion = seedV
+		}
+	}
+	if p.SeedVersion != "" && release.Compare(p.TargetVersion, p.SeedVersion) >= 0 {
+		return nil, fmt.Errorf("the target (%s) must be older than the seed (%s)", p.TargetVersion, p.SeedVersion)
+	}
+	p.Stages = []Stage{StageSetup, StageVSNOs}
+	if o.SeedImage == "" {
+		p.Stages = append(p.Stages, StageSeed)
+	}
+	p.Stages = append(p.Stages, StageUpgrade)
+	if o.Delete {
+		p.Stages = append(p.Stages, StageDelete)
+	}
+	p.Done = finished(ctx, e, o.Namespace)
+	return p, nil
+}
+
+// defaultVersions are the newest stable release of the host's minor (the
+// seed) and the one before it (the target).
+func defaultVersions(ctx context.Context, e Env) (target, seedVersion string, err error) {
+	cv, err := e.Dyn.Resource(precheck.GVRClusterVersion).Get(ctx, "version", metav1.GetOptions{})
+	if err != nil {
+		return "", "", fmt.Errorf("reading the host's version to pick defaults (pass --target-version and --seed-version): %w", err)
+	}
+	v, _, _ := unstructured.NestedString(cv.Object, "status", "desired", "version")
+	minor := minorOf(v)
+	vs, err := e.Stable(ctx, minor)
+	if err != nil {
+		return "", "", err
+	}
+	if len(vs) < 2 {
+		return "", "", fmt.Errorf("stable-%s has %d release(s); an upgrade needs two (pass --target-version and --seed-version)", minor, len(vs))
+	}
+	return vs[len(vs)-2], vs[len(vs)-1], nil
+}
+
+// ensureVSNOs creates the seed and the target unless they exist, starting
+// both before waiting for either, and waits until both are ready.
+func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan) error {
+	all, err := guest.List(ctx, e.Env.Env, o.Namespace)
+	if err != nil {
+		return err
+	}
+	want := map[string]string{plan.Target: plan.TargetVersion}
+	if plan.Seed != "" {
+		want[plan.Seed] = plan.SeedVersion
+	}
+	var started []string
+	for _, name := range sortedKeys(want) {
+		if i := slices.IndexFunc(all, func(g guest.Guest) bool { return g.Name == name }); i >= 0 {
+			if err := matches(all[i], want[name]); err != nil {
+				return err
+			}
+			started = append(started, name)
+			continue
+		}
+		if _, err := guest.Create(ctx, e.Env.Env, guest.CreateOptions{Namespace: o.Namespace, Name: name, Version: want[name],
+			Node: o.Node, Cores: o.Cores, MemoryGiB: o.MemoryGiB}); err != nil {
+			return fmt.Errorf("creating %s: %w", name, err)
+		}
+		started = append(started, name)
+	}
+	for _, name := range started {
+		if st, err := guest.WaitState(ctx, e.Env.Env, o.Namespace, name, guest.Ready); err != nil {
+			return fmt.Errorf("waiting for %s (%s): %w", name, st, err)
+		}
+	}
+	return nil
+}
+
+// matches refuses a vSNO of that name at another version: it isn't the one
+// the plan asked for, and upgrading or seeding from it would mislead.
+func matches(g guest.Guest, version string) error {
+	have := g.ShownVersion()
+	if have == "" || version == "" || have == version || strings.HasPrefix(have, version+".") || g.Requested == version {
+		return nil
+	}
+	return fmt.Errorf("vSNO %s already exists at %s, not %s; delete it or pass another name", g.Name, have, version)
+}
+
+// ensureSeed makes the seed image from the seed vSNO unless it exists, and
+// sets plan.SeedImage to it.
+func ensureSeed(ctx context.Context, e Env, o Options, plan *Plan) error {
+	if !o.LCA.FromCatalog() {
+		if _, err := ibu.Prepare(ctx, e.Env, ibu.PrepareOptions{Namespace: o.Namespace, Names: []string{plan.Seed}, Role: ibu.RoleSeed, LCA: o.LCA}); err != nil {
+			return err
+		}
+	}
+	image := ""
+	if o.SeedRepo != "" {
+		image = o.SeedRepo + ":" + plan.SeedVersion
+	} else if imgs, err := seed.List(ctx, e.Env, o.Namespace); err == nil {
+		for _, img := range seed.Match(imgs, plan.Seed+":"+plan.SeedVersion) {
+			plan.SeedImage = img.Ref // made by an earlier run
+			return nil
+		}
+	}
+	r, err := seed.Create(ctx, e.Env, seed.CreateOptions{Namespace: o.Namespace, Name: plan.Seed, Image: image, Stop: true})
+	if err != nil {
+		return err
+	}
+	plan.SeedImage = r.Image
+	return nil
+}
+
+// record notes a stage's outcome in the environment's state, best effort:
+// the run's own output is what the user reads.
+func record(ctx context.Context, e Env, ns string, s Stage, err error) {
+	st, _, lerr := state.Load(ctx, e.Kube, ns)
+	if lerr != nil {
+		return
+	}
+	status, detail := state.Done, ""
+	if err != nil {
+		status, detail = state.Failed, err.Error()
+	}
+	st.Record(StageName+":"+string(s), status, detail, e.Now())
+	_ = state.Save(ctx, e.Kube, ns, st)
+}
+
+// finished lists the stages the environment's state says a run finished,
+// most recent outcome per stage.
+func finished(ctx context.Context, e Env, ns string) []Stage {
+	st, _, err := state.Load(ctx, e.Kube, ns)
+	if err != nil {
+		return nil
+	}
+	var out []Stage
+	for _, s := range []Stage{StageSetup, StageVSNOs, StageSeed, StageUpgrade, StageDelete} {
+		if last, ok := st.Last(StageName + ":" + string(s)); ok && last.Status == state.Done {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// String is the plan as the confirmation shows it.
+func (p Plan) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Plan for %s:\n", p.Namespace)
+	if p.Seed != "" {
+		fmt.Fprintf(&b, "  seed     vSNO %s at %s, made into a seed image\n", p.Seed, p.SeedVersion)
+	} else {
+		fmt.Fprintf(&b, "  seed     image %s\n", p.SeedImage)
+	}
+	fmt.Fprintf(&b, "  target   vSNO %s at %s, upgraded to the seed's version\n", p.Target, p.TargetVersion)
+	fmt.Fprintf(&b, "  LCA      %s\n", p.LCA)
+	fmt.Fprintf(&b, "  then     %s\n", p.Then)
+	if len(p.Done) > 0 {
+		fmt.Fprintf(&b, "  resuming: an earlier run finished %v\n", p.Done)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func then(o Options) string {
+	switch {
+	case o.Finalize:
+		return "finalize the upgrade"
+	case o.Rollback:
+		return "roll the upgrade back"
+	case o.Delete:
+		return "delete both vSNOs"
+	}
+	return "leave the target in UpgradeCompleted"
+}
+
+func lcaText(s ibu.LCASource) string {
+	switch {
+	case s.FromCatalog():
+		return "each vSNO's catalog"
+	case s.Image != "":
+		return "image " + s.Image
+	}
+	return "built from " + s.Ref
+}
+
+func minorOf(v string) string {
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[0] + "." + parts[1]
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}

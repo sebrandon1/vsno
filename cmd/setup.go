@@ -124,23 +124,9 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	dc, err := discovery.NewDiscoveryClientForConfig(c.Config)
+	env, err := setupEnv(cmd, c, !suNoProbe, suTimeout)
 	if err != nil {
 		return err
-	}
-	progress := precheckProgress{newProgress()}
-	env := setup.Env{
-		Kube: c.Kube, Dyn: c.Dyn, Applier: apply.NewSSA(dc, c.Dyn),
-		Precheck: func(ctx context.Context, node string) *precheck.Report {
-			pe := &precheck.Env{Kube: c.Kube, Dyn: c.Dyn, Namespace: namespace, Progress: progress}
-			if !suNoProbe {
-				pe.Prober = &precheck.PodProber{Kube: c.Kube, Image: precheck.DefaultProbeImage, Timeout: 3 * time.Minute}
-			}
-			return precheck.Run(ctx, pe, precheck.DefaultRequirements(), precheck.Options{Node: node})
-		},
-		Confirm:  confirmOnTerminal(os.Stdin, cmd.ErrOrStderr()),
-		Progress: progress,
-		Timeout:  suTimeout,
 	}
 	if outputFormat != formatJSON {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Setting up %s in %s (context %q)...\n\n", namespace, c.Config.Host, c.Context)
@@ -157,6 +143,30 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		err = rerr
 	}
 	return err
+}
+
+// setupEnv wires setup to the cluster: server-side apply, a precheck (with
+// the hardware probe when probe is true), confirmation on the terminal, and
+// progress on stderr.
+func setupEnv(cmd *cobra.Command, c *kube.Clients, probe bool, timeout time.Duration) (setup.Env, error) {
+	dc, err := discovery.NewDiscoveryClientForConfig(c.Config)
+	if err != nil {
+		return setup.Env{}, err
+	}
+	progress := precheckProgress{newProgress()}
+	return setup.Env{
+		Kube: c.Kube, Dyn: c.Dyn, Applier: apply.NewSSA(dc, c.Dyn),
+		Precheck: func(ctx context.Context, node string) *precheck.Report {
+			pe := &precheck.Env{Kube: c.Kube, Dyn: c.Dyn, Namespace: namespace, Progress: progress}
+			if probe {
+				pe.Prober = &precheck.PodProber{Kube: c.Kube, Image: precheck.DefaultProbeImage, Timeout: 3 * time.Minute}
+			}
+			return precheck.Run(ctx, pe, precheck.DefaultRequirements(), precheck.Options{Node: node})
+		},
+		Confirm:  confirmOnTerminal(os.Stdin, cmd.ErrOrStderr()),
+		Progress: progress,
+		Timeout:  timeout,
+	}, nil
 }
 
 // setupSettings reads --config and applies --node/--disk over it.
