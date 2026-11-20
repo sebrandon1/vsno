@@ -147,7 +147,7 @@ func poll(ctx context.Context, e Env, limit time.Duration, fn func() (bool, erro
 }
 
 // LCA is the Lifecycle Agent, which makes seed images and runs upgrades.
-var LCA = guestctl.Operator{Name: "LCA", Package: "lifecycle-agent", Namespace: LCANamespace, Management: true}
+var LCA = guestctl.Operator{Name: "LCA", Package: "lifecycle-agent", CSVPrefix: "lifecycle-agent.", Namespace: LCANamespace, Management: true}
 
 // ensureLCA installs LCA from the vSNO's own catalog unless it's there.
 func ensureLCA(ctx context.Context, e Env, a Access, ps precheck.ProgressStep) (string, error) {

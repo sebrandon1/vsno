@@ -36,8 +36,8 @@ func golden(t *testing.T, name, got string) {
 }
 
 var (
-	lca  = guestctl.Operator{Name: "LCA", Package: "lifecycle-agent", Namespace: "openshift-lifecycle-agent", Management: true}
-	oadp = guestctl.Operator{Name: "OADP", Package: "redhat-oadp-operator", Namespace: "openshift-adp"}
+	lca  = guestctl.Operator{Name: "LCA", Package: "lifecycle-agent", CSVPrefix: "lifecycle-agent.", Namespace: "openshift-lifecycle-agent", Management: true}
+	oadp = guestctl.Operator{Name: "OADP", Package: "redhat-oadp-operator", CSVPrefix: "oadp-operator.", Namespace: "openshift-adp"}
 )
 
 // LCA's manifests are what seed rendered before they were shared, so guests
@@ -60,9 +60,9 @@ func TestOperatorCSV(t *testing.T) {
 	f := &guestctltest.Fake{OcReplies: map[string][]guestctltest.Reply{
 		"get clusterserviceversions -n openshift-adp --ignore-not-found": {{Out: `{"items":[
 			{"metadata":{"name":"lifecycle-agent.v4.21.5"},"status":{"phase":"Succeeded"}},
-			{"metadata":{"name":"redhat-oadp-operator.v1.5.2"},"status":{"phase":"Installing"}}]}`}},
+			{"metadata":{"name":"oadp-operator.v1.5.2"},"status":{"phase":"Installing"}}]}`}},
 	}}
-	if name, ok, err := oadp.CSV(ctx, f); err != nil || name != "redhat-oadp-operator.v1.5.2" || ok {
+	if name, ok, err := oadp.CSV(ctx, f); err != nil || name != "oadp-operator.v1.5.2" || ok {
 		t.Errorf("csv = %q succeeded = %v err = %v", name, ok, err)
 	}
 	if name, _, err := lca.CSV(ctx, &guestctltest.Fake{}); err != nil || name != "" {
@@ -74,8 +74,8 @@ func TestOperatorEnsure(t *testing.T) {
 	ctx := context.Background()
 	csvs := "get clusterserviceversions -n openshift-adp --ignore-not-found"
 	catalog := "get packagemanifests redhat-oadp-operator -n openshift-marketplace --ignore-not-found"
-	installing := guestctltest.Reply{Out: `{"items":[{"metadata":{"name":"redhat-oadp-operator.v1.5.2"},"status":{"phase":"Installing"}}]}`}
-	done := guestctltest.Reply{Out: `{"items":[{"metadata":{"name":"redhat-oadp-operator.v1.5.2"},"status":{"phase":"Succeeded"}}]}`}
+	installing := guestctltest.Reply{Out: `{"items":[{"metadata":{"name":"oadp-operator.v1.5.2"},"status":{"phase":"Installing"}}]}`}
+	done := guestctltest.Reply{Out: `{"items":[{"metadata":{"name":"oadp-operator.v1.5.2"},"status":{"phase":"Succeeded"}}]}`}
 	pm := guestctltest.Reply{Out: `{"status":{"catalogSource":"redhat-operators","catalogSourceNamespace":"openshift-marketplace","defaultChannel":"stable"}}`}
 	now := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
 	c := guestctl.Clock{Every: time.Millisecond, Now: func() time.Time { now = now.Add(time.Minute); return now }}
@@ -84,7 +84,7 @@ func TestOperatorEnsure(t *testing.T) {
 	t.Run("installs and waits", func(t *testing.T) {
 		f := &guestctltest.Fake{OcReplies: map[string][]guestctltest.Reply{csvs: {{Out: `{"items":[]}`}, installing, done}, catalog: {pm}}}
 		name, err := oadp.Ensure(ctx, f, c, time.Hour, ps)
-		if err != nil || name != "redhat-oadp-operator.v1.5.2" || !f.Ran("oc apply -f -") || !strings.Contains(f.Stdin[0], "channel: \"stable\"") {
+		if err != nil || name != "oadp-operator.v1.5.2" || !f.Ran("oc apply -f -") || !strings.Contains(f.Stdin[0], "channel: \"stable\"") {
 			t.Errorf("name = %q err = %v calls = %q", name, err, f.Calls)
 		}
 	})

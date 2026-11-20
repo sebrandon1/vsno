@@ -17,8 +17,12 @@ import (
 // Operator is an OLM operator vsno installs on a vSNO from the vSNO's own
 // catalog, so its version matches the vSNO's.
 type Operator struct {
-	Name      string // shown in progress and errors, e.g. "LCA"
-	Package   string // the OLM package, which also names its Subscription and OperatorGroup
+	Name    string // shown in progress and errors, e.g. "LCA"
+	Package string // the OLM package, which also names its Subscription and OperatorGroup
+	// CSVPrefix starts the names of its ClusterServiceVersions, which needn't
+	// be the package's: OADP's package is redhat-oadp-operator, its CSVs
+	// oadp-operator.v1.5.8.
+	CSVPrefix string
 	Namespace string
 	// Management marks the namespace for management workloads, which LCA's
 	// pods need on a single-node cluster with workload partitioning.
@@ -42,7 +46,7 @@ func (op Operator) CSV(ctx context.Context, a Access) (string, bool, error) {
 		return "", false, err
 	}
 	for _, c := range csvs.Items {
-		if strings.HasPrefix(c.Metadata.Name, op.Package+".") {
+		if strings.HasPrefix(c.Metadata.Name, op.CSVPrefix) {
 			return c.Metadata.Name, c.Status.Phase == "Succeeded", nil
 		}
 	}

@@ -198,7 +198,7 @@ func TestPrepare(t *testing.T) {
 	t.Run("seed role skips the target's pieces", func(t *testing.T) {
 		f := targetFake()
 		out, err := Prepare(ctx, testEnv(map[string]guestctl.Access{"s": f}), PrepareOptions{Namespace: ns, Names: []string{"s"}, Role: RoleSeed})
-		if err != nil || len(out) != 1 || out[0].LCA != "lifecycle-agent.v4.21.5" || out[0].OADP != "redhat-oadp-operator.v1.5.2" {
+		if err != nil || len(out) != 1 || out[0].LCA != "lifecycle-agent.v4.21.5" || out[0].OADP != "oadp-operator.v1.5.2" {
 			t.Fatalf("out = %+v, err = %v", out, err)
 		}
 		if f.Ran("oc "+bslGet) || strings.Contains(strings.Join(f.Stdin, ""), "DataProtectionApplication") {

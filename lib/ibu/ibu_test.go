@@ -278,7 +278,7 @@ func identityReplies(f *guestctltest.Fake) {
 func targetFake() *guestctltest.Fake {
 	f := &guestctltest.Fake{OcReplies: map[string][]guestctltest.Reply{
 		lcaCSVs:  {{Out: `{"items":[{"metadata":{"name":"lifecycle-agent.v4.21.5"},"status":{"phase":"Succeeded"}}]}`}},
-		oadpCSVs: {{Out: `{"items":[{"metadata":{"name":"redhat-oadp-operator.v1.5.2"},"status":{"phase":"Succeeded"}}]}`}},
+		oadpCSVs: {{Out: `{"items":[{"metadata":{"name":"oadp-operator.v1.5.2"},"status":{"phase":"Succeeded"}}]}`}},
 		bslGet:   {{Out: `{"items":[{"metadata":{"name":"default"},"status":{"phase":"Available"}}]}`}},
 	}}
 	identityReplies(f)

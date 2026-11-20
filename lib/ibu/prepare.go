@@ -31,7 +31,7 @@ const (
 
 // OADP is the OpenShift API for Data Protection, which LCA backs the target's
 // applications up with before the upgrade and restores them from after.
-var OADP = guestctl.Operator{Name: "OADP", Package: "redhat-oadp-operator", Namespace: oadpNamespace}
+var OADP = guestctl.Operator{Name: "OADP", Package: "redhat-oadp-operator", CSVPrefix: "oadp-operator.", Namespace: oadpNamespace}
 
 const (
 	oadpNamespace = "openshift-adp"
