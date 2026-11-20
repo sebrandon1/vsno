@@ -92,20 +92,27 @@ func (e Exec) run(ctx context.Context, script string, args []string, s IO) error
 	if err != nil {
 		return err
 	}
-	req := e.Kube.CoreV1().RESTClient().Post().Resource("pods").Namespace(e.Namespace).Name(pod).SubResource("exec").
+	return ExecPod(ctx, e.Config, e.Kube, e.Namespace, pod, Container,
+		append([]string{"bash", "-c", script, "vsno"}, args...), s)
+}
+
+// ExecPod runs command in pod's container. It is how vsno reads a container's
+// filesystem, such as the registry's volume, without a shell of its own.
+func ExecPod(ctx context.Context, cfg *rest.Config, kube kubernetes.Interface, ns, pod, container string, command []string, s IO) error {
+	req := kube.CoreV1().RESTClient().Post().Resource("pods").Namespace(ns).Name(pod).SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
-			Container: Container,
-			Command:   append([]string{"bash", "-c", script, "vsno"}, args...),
+			Container: container,
+			Command:   command,
 			Stdin:     s.Stdin != nil,
 			Stdout:    s.Stdout != nil,
 			Stderr:    s.Stderr != nil && !s.TTY, // a TTY merges stderr into stdout
 			TTY:       s.TTY,
 		}, scheme.ParameterCodec)
-	ws, err := remotecommand.NewWebSocketExecutor(e.Config, "GET", req.URL().String())
+	ws, err := remotecommand.NewWebSocketExecutor(cfg, "GET", req.URL().String())
 	if err != nil {
 		return err
 	}
-	spdy, err := remotecommand.NewSPDYExecutor(e.Config, "POST", req.URL())
+	spdy, err := remotecommand.NewSPDYExecutor(cfg, "POST", req.URL())
 	if err != nil {
 		return err
 	}
