@@ -348,6 +348,7 @@ vsno cache add 4.20.46            # mirror a release now
 vsno cache list                   # versions, size, last used, the vSNOs using each
 vsno cache prune --dry-run        # unused releases
 vsno cache prune --keep 1 --yes   # ...removing all but the newest unused one
+vsno cache gc                     # free the space of images already deleted
 ```
 
 The environment's registry holds mirrored OpenShift releases under `ocp/release/<digest>`. `create`
@@ -361,7 +362,9 @@ cluster pull secret, which `create` already requires for nightlies.
 
 `cache prune` deletes a release's images and then runs `registry garbage-collect` in a Job over the
 registry's volume. The registry is unavailable for the seconds to minutes that takes, and that is
-what actually frees the space; `--no-gc` skips it. A release a vSNO still runs is refused.
+what actually frees the space; `--no-gc` skips it, and `vsno cache gc` runs it on its own (after
+`vsno seed delete`, for instance). A release a vSNO still runs is refused, and so is a collection
+while a mirror is pushing.
 
 The registry's volume is 100 GiB by default (`vsno setup --registry-size`); it only ever grows.
 
