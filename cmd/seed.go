@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/kube"
+	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/seed"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
@@ -19,6 +20,9 @@ var (
 	sdTimeout time.Duration
 	sdYes     bool
 	sdDryRun  bool
+	spImage   string
+	spInstall bool
+	spTimeout time.Duration
 )
 
 var seedCmd = &cobra.Command{
@@ -42,6 +46,23 @@ The image goes to the environment's registry as seeds/<vsno>:<version>, unless
 for its registry). It takes about 15-30 minutes.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSeedCreate,
+}
+
+var seedPrecheckCmd = &cobra.Command{
+	Use:   "precheck <vsno>",
+	Short: "Check what a seed generation needs, and set it up with --install",
+	Long: `precheck reports everything making a seed image from a vSNO needs, before
+starting the 15-30 minute generation: the vSNO is ready, the environment's
+registry is usable, the vSNO's API answers and its cluster is settled, the
+Lifecycle Agent is installed (or the vSNO's catalog has it), the vSNO trusts
+the registry's CA, and the seed image can be pushed.
+
+It only reads, and exits non-zero if anything is missing. --install sets up
+the two things vsno can: it subscribes to LCA from the vSNO's own catalog and
+makes the vSNO trust the registry, then reports again. seed create runs the
+same checks first.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSeedPrecheck,
 }
 
 var seedListCmd = &cobra.Command{
@@ -68,9 +89,13 @@ func init() {
 	f.StringVar(&sdImage, "image", "", "push the seed here instead of the environment's registry")
 	f.BoolVar(&sdStop, "stop", false, "stop the vSNO afterwards, to free its memory")
 	f.DurationVar(&sdTimeout, "timeout", time.Hour, "how long to wait for the seed generation")
+	f = seedPrecheckCmd.Flags()
+	f.StringVar(&spImage, "image", "", "the seed image reference to check, instead of the environment's registry")
+	f.BoolVar(&spInstall, "install", false, "install LCA and set up registry trust where they're missing")
+	f.DurationVar(&spTimeout, "timeout", time.Hour, "how long --install may wait for each install")
 	seedDeleteCmd.Flags().BoolVar(&sdYes, "yes", false, "don't ask for confirmation")
 	seedDeleteCmd.Flags().BoolVar(&sdDryRun, "dry-run", false, "list what would be deleted and change nothing")
-	seedCmd.AddCommand(seedCreateCmd, seedListCmd, seedDeleteCmd)
+	seedCmd.AddCommand(seedCreateCmd, seedPrecheckCmd, seedListCmd, seedDeleteCmd)
 	rootCmd.AddCommand(seedCmd)
 }
 
@@ -104,6 +129,56 @@ func runSeedCreate(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(w, "vSNO %s is stopped; `vsno start %s` brings it back.\n", res.Name, res.Name)
 	}
 	fmt.Fprintln(w, "See it with `vsno seed list`.")
+	return nil
+}
+
+// seedSections are the seed precheck's report sections, in order.
+var seedSections = []reportSection{
+	{seed.GroupVSNO, "vSNO"},
+	{precheck.GroupCluster, "Cluster"},
+	{seed.GroupRegistry, "Registry"},
+	{seed.GroupLCA, "Lifecycle Agent"},
+	{seed.GroupTarget, "Seed target"},
+}
+
+func runSeedPrecheck(cmd *cobra.Command, args []string) error {
+	env, err := seedEnv(cmd, spTimeout)
+	if err != nil {
+		return err
+	}
+	if outputFormat == formatTable {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Checking what a seed from vSNO %s in %s needs...\n\n", args[0], namespace)
+	}
+	res, err := seed.Precheck(cmd.Context(), env, seed.PrecheckOptions{
+		Namespace: namespace, Name: args[0], Image: spImage, Install: spInstall,
+	})
+	if err != nil {
+		return err
+	}
+	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
+	if outputFormat == formatJSON {
+		if err := writeJSON(w, res); err != nil {
+			return err
+		}
+	} else {
+		renderSections(w, res.Results, nil, "", seedSections, pal)
+		for _, s := range res.Installed {
+			fmt.Fprintf(w, "%s installed %s\n", pal.Icon("✓"), s)
+		}
+		for _, s := range res.Warnings {
+			fmt.Fprintf(w, "%s %s\n", pal.Yellow("!"), s)
+		}
+		if res.Failed() > 0 {
+			if !spInstall {
+				fmt.Fprintf(w, "\nRun `vsno seed precheck %s --install` to set up what can be set up.\n", args[0])
+			}
+		} else {
+			fmt.Fprintf(w, "\n%s Ready: `vsno seed create %s` makes the seed image %s.\n", pal.Icon("✓"), args[0], res.Image)
+		}
+	}
+	if n := res.Failed(); n > 0 {
+		return fmt.Errorf("seed precheck: %d check(s) failed", n)
+	}
 	return nil
 }
 

@@ -1,0 +1,355 @@
+package seed
+
+import (
+	"context"
+	"errors"
+	"io"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/sebrandon1/vsno/lib/builder"
+	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/guest"
+	"github.com/sebrandon1/vsno/lib/precheck"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynfake "k8s.io/client-go/dynamic/fake"
+	kfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
+)
+
+const (
+	cosGet  = "get clusteroperators"
+	mcpsGet = "get machineconfigpools"
+	imgGet  = "get image.config.openshift.io cluster"
+	imgOurs = `{"spec":{"additionalTrustedCA":{"name":"` + trustConfigMap + `"}}}`
+	imgNone = `{"spec":{}}`
+	imgElse = `{"spec":{"additionalTrustedCA":{"name":"corp-ca"}}}`
+)
+
+// certTest is the ssh check ensureTrust makes for the registry's CA.
+var certTest = "test -f " + certFile(testRegistry)
+
+// readyAccess answers as a vSNO that needs nothing: settled, LCA installed,
+// trusting the registry, and the node holding the CA.
+func readyAccess() *fakeAccess {
+	return &fakeAccess{
+		oc: map[string][]resp{
+			cosGet:  {{out: cosStable}},
+			mcpsGet: {{out: mcpsStable}},
+			csvGet:  {{out: csvDone}},
+			imgGet:  {{out: imgOurs}},
+		},
+		ssh: map[string][]resp{certTest: {{}}},
+	}
+}
+
+// inspect runs the checks for a ready vSNO with fa's answers.
+func inspect(t *testing.T, fa *fakeAccess, o PrecheckOptions) (*inspector, *PrecheckReport) {
+	t.Helper()
+	g := guest.Guest{Namespace: ns, Name: "a", State: guest.Ready, Version: "4.20.46", Cores: 16, MemoryGiB: 32, DiskGiB: 200}
+	rep := &PrecheckReport{VSNO: g.Name, Version: g.ShownVersion(), Image: Ref(testRegistry, g.Name, g.ShownVersion()), Registry: testRegistry}
+	in := &inspector{Env: testEnv(fa), o: o, g: &g, a: fa, reg: testRegistry, rep: rep}
+	in.run(context.Background())
+	return in, rep
+}
+
+func rowOf(t *testing.T, rep *PrecheckReport, check string) precheck.Result {
+	t.Helper()
+	for _, res := range rep.Results {
+		if res.Check == check {
+			return res
+		}
+	}
+	t.Fatalf("no %q row in %+v", check, rep.Results)
+	return precheck.Result{}
+}
+
+// checkCase is one answer set for the checks, and the row it should produce.
+type checkCase struct {
+	name   string
+	mutate func(*fakeAccess)
+	check  string
+	want   precheck.Status
+	detail string
+	hint   string
+}
+
+var checkCases = []checkCase{
+	{"everything in place", func(*fakeAccess) {}, "Seed target", precheck.Pass, Ref(testRegistry, "a", "4.20.46"), ""},
+	{"LCA installing", func(f *fakeAccess) { f.oc[csvGet] = []resp{{out: csvPending}} },
+		"Lifecycle Agent", precheck.Warn, "not Succeeded yet", "wait for it"},
+	{"LCA missing", func(f *fakeAccess) {
+		f.oc[csvGet] = []resp{{out: ""}}
+		f.oc[pmGet] = []resp{{out: `{"status":{"catalogSource":"redhat-operators","defaultChannel":"stable"}}`}}
+	}, "Lifecycle Agent", precheck.Fail, "not installed", "--install subscribes to redhat-operators/stable"},
+	{"LCA package missing", func(f *fakeAccess) { f.oc[csvGet] = []resp{{out: ""}} },
+		"Lifecycle Agent", precheck.Fail, "no lifecycle-agent package", "expected for a nightly"},
+	{"trust not set up", func(f *fakeAccess) { f.oc[imgGet] = []resp{{out: imgNone}} },
+		"Registry trust", precheck.Fail, "no additionalTrustedCA", "--install adds ConfigMap " + trustConfigMap},
+	{"someone else's trust", func(f *fakeAccess) { f.oc[imgGet] = []resp{{out: imgElse}} },
+		"Registry trust", precheck.Fail, "openshift-config/corp-ca", "add key " + testRegistry.TrustKey()},
+	{"trust configured, node behind", func(f *fakeAccess) { f.ssh[certTest] = []resp{{err: errors.New("exit 1")}} },
+		"Registry trust", precheck.Warn, "doesn't have", "wait for the node's MachineConfig"},
+	{"cluster degraded", func(f *fakeAccess) {
+		f.oc[cosGet] = []resp{{out: `{"items":[{"metadata":{"name":"etcd"},"status":{"conditions":[{"type":"Available","status":"True"},{"type":"Degraded","status":"True"}]}}]}`}}
+	}, "Cluster settled", precheck.Fail, "etcd degraded", "waits up to"},
+	{"API down", func(f *fakeAccess) { f.oc[cosGet] = []resp{{err: errors.New("connection refused")}} },
+		"vSNO API", precheck.Fail, "connection refused", "is the vSNO running?"},
+}
+
+func TestPrecheckChecks(t *testing.T) {
+	for _, c := range checkCases {
+		t.Run(c.name, func(t *testing.T) { checkRow(t, c) })
+	}
+}
+
+func checkRow(t *testing.T, c checkCase) {
+	t.Helper()
+	fa := readyAccess()
+	c.mutate(fa)
+	_, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
+	got := rowOf(t, rep, c.check)
+	if got.Status != c.want || !strings.Contains(got.Detail, c.detail) {
+		t.Errorf("%s = %s %q, want %s with %q", c.check, got.Status, got.Detail, c.want, c.detail)
+	}
+	if c.hint != "" && !strings.Contains(got.Hint, c.hint) {
+		t.Errorf("%s hint = %q, want %q", c.check, got.Hint, c.hint)
+	}
+}
+
+func TestPrecheckRows(t *testing.T) {
+	t.Run("ready", func(t *testing.T) {
+		_, rep := inspect(t, readyAccess(), PrecheckOptions{Namespace: ns, Name: "a"})
+		if n := rep.Failed(); n != 0 || len(rep.Results) != 7 {
+			t.Fatalf("%d failed of %d: %+v", n, len(rep.Results), rep.Results)
+		}
+		for _, res := range rep.Results {
+			if res.Status != precheck.Pass {
+				t.Errorf("%s = %s %q", res.Check, res.Status, res.Detail)
+			}
+		}
+		if rep.LCA != "lifecycle-agent.v4.20.7" {
+			t.Errorf("LCA = %q", rep.LCA)
+		}
+	})
+
+	t.Run("not ready", func(t *testing.T) {
+		fa := readyAccess()
+		in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
+		in.g.State, in.g.Detail = guest.Stopped, ""
+		in.rep.Results = nil
+		in.run(context.Background())
+		if got := rowOf(t, rep, "vSNO a"); got.Status != precheck.Fail || !strings.Contains(got.Detail, "stopped") || !strings.Contains(got.Hint, "vsno start a") {
+			t.Errorf("vSNO row = %+v", got)
+		}
+	})
+
+	t.Run("external image needs no trust", func(t *testing.T) {
+		fa := readyAccess()
+		in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
+		in.Kube = registrySecrets(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "openshift-config", Name: "pull-secret"},
+			Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte(fakeAuth("quay.io", "u:p"))}})
+		in.rep.Image = "quay.io/me/seed:1"
+		in.rep.Results = nil
+		in.run(context.Background())
+		if got := rowOf(t, rep, "Registry trust"); got.Status != precheck.Info || !strings.Contains(got.Detail, "quay.io") {
+			t.Errorf("trust row = %+v", got)
+		}
+	})
+
+	t.Run("unknown version has no default image", func(t *testing.T) {
+		fa := readyAccess()
+		in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
+		in.rep.Image = ""
+		in.rep.Results = nil
+		in.run(context.Background())
+		if got := rowOf(t, rep, "Seed target"); got.Status != precheck.Fail || got.Hint != "pass --image <ref>" {
+			t.Errorf("target row = %+v", got)
+		}
+	})
+
+	t.Run("no push credentials", func(t *testing.T) {
+		fa := readyAccess()
+		in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
+		in.Kube = kfake.NewClientset()
+		in.rep.Image = "quay.io/me/seed:1"
+		in.rep.Results = nil
+		in.run(context.Background())
+		if got := rowOf(t, rep, "Seed target"); got.Status != precheck.Fail || !strings.Contains(got.Hint, "pull secret") {
+			t.Errorf("target row = %+v", got)
+		}
+	})
+}
+
+func TestPrecheckSettles(t *testing.T) {
+	fa := readyAccess()
+	fa.oc[cosGet] = []resp{
+		{out: `{"items":[{"metadata":{"name":"etcd"},"status":{"conditions":[{"type":"Available","status":"True"},{"type":"Progressing","status":"True"}]}}]}`},
+		{out: cosStable},
+	}
+	_, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a", Settle: true})
+	if got := rowOf(t, rep, "Cluster settled"); got.Status != precheck.Pass {
+		t.Errorf("settled = %+v", got)
+	}
+	if len(fa.calls) < 3 {
+		t.Errorf("calls %q", fa.calls)
+	}
+}
+
+func TestInstall(t *testing.T) {
+	ctx := context.Background()
+	fa := readyAccess()
+	fa.oc[csvGet] = []resp{{out: ""}, {out: ""}, {out: csvDone}}
+	fa.oc[pmGet] = []resp{{out: `{"status":{"catalogSource":"redhat-operators","catalogSourceNamespace":"openshift-marketplace","defaultChannel":"stable"}}`}}
+	fa.oc[imgGet] = []resp{{out: imgNone}, {out: imgOurs}}
+	fa.ssh[certTest] = []resp{{err: errors.New("exit 1")}, {}}
+	in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
+	if rep.Failed() == 0 {
+		t.Fatal("a vSNO without LCA or trust passed")
+	}
+
+	install(ctx, in.Env, in)
+	rep.Results = nil
+	in.run(ctx)
+	if n := rep.Failed(); n != 0 {
+		t.Fatalf("%d failed after --install: %+v", n, rep.Results)
+	}
+	if len(rep.Installed) != 2 || len(rep.Warnings) != 0 {
+		t.Errorf("installed %q, warnings %q", rep.Installed, rep.Warnings)
+	}
+	var subscribed, trusted bool
+	for _, s := range fa.stdin {
+		subscribed = subscribed || strings.Contains(s, `channel: "stable"`)
+		trusted = trusted || strings.Contains(s, testRegistry.TrustKey())
+	}
+	if !subscribed || !trusted {
+		t.Errorf("installed %q, applied %q", rep.Installed, fa.stdin)
+	}
+}
+
+func TestInstallLeavesOthersAlone(t *testing.T) {
+	ctx := context.Background()
+	fa := readyAccess()
+	fa.oc[imgGet] = []resp{{out: imgElse}}
+	in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
+	install(ctx, in.Env, in)
+	if len(rep.Installed) != 0 || fa.ran("oc patch image.config.openshift.io") || len(fa.stdin) != 0 {
+		t.Errorf("installed %q, calls %q", rep.Installed, fa.calls)
+	}
+	if got := rowOf(t, rep, "Registry trust"); !strings.Contains(got.Hint, "openshift-config/corp-ca") {
+		t.Errorf("hint = %q", got.Hint)
+	}
+}
+
+func TestInstallWarnsInsteadOfFailing(t *testing.T) {
+	ctx := context.Background()
+	fa := readyAccess()
+	fa.oc[csvGet] = []resp{{out: ""}}
+	fa.oc[pmGet] = []resp{{out: ""}} // no package: LCA can't be installed
+	in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
+	install(ctx, in.Env, in)
+	if len(rep.Warnings) != 1 || !strings.Contains(rep.Warnings[0], "no lifecycle-agent package") {
+		t.Errorf("warnings %q", rep.Warnings)
+	}
+}
+
+// probeRunner answers probe.sh, so guest.List sees a ready vSNO.
+type probeRunner struct {
+	out string
+	err error
+}
+
+func (p probeRunner) Run(_ context.Context, _ string, _ []string, streams builder.IO) error {
+	_, _ = io.WriteString(streams.Stdout, p.out)
+	return p.err
+}
+
+var vmListKinds = map[schema.GroupVersionResource]string{cluster.GVRVirtualMachine: "VirtualMachineList"}
+
+// world is an environment with vSNO a in it.
+func world(t *testing.T, fa *fakeAccess) Env {
+	t.Helper()
+	vm := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "kubevirt.io/v1", "kind": "VirtualMachine",
+		"metadata": map[string]any{"namespace": ns, "name": "a", "annotations": map[string]any{guest.AnnVersion: "4.20.46"}},
+		"status":   map[string]any{"printableStatus": "Running"},
+	}}
+	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), vmListKinds, vm)
+	k := registrySecrets()
+	if _, err := k.CoreV1().Services(ns).Create(context.Background(), &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "a"}, Spec: corev1.ServiceSpec{ClusterIP: "172.30.1.9"},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	e := testEnv(fa)
+	e.Kube, e.Dyn = k, dyn
+	e.Builder = probeRunner{out: `{"name":"a","cv":{"version":"4.20.46","available":true}}`}
+	e.Poll = time.Millisecond
+	return e
+}
+
+func TestPrecheck(t *testing.T) {
+	ctx := context.Background()
+	t.Run("ready", func(t *testing.T) {
+		rep, err := Precheck(ctx, world(t, readyAccess()), PrecheckOptions{Namespace: ns, Name: "a"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rep.Failed() != 0 || rep.Version != "4.20.46" || rep.Image != Ref(testRegistry, "a", "4.20.46") {
+			t.Errorf("report = %+v", rep)
+		}
+	})
+	t.Run("missing vSNO", func(t *testing.T) {
+		fa := readyAccess()
+		e := world(t, fa)
+		e.Dyn = dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), vmListKinds)
+		rep, err := Precheck(ctx, e, PrecheckOptions{Namespace: ns, Name: "ghost"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rep.Results) != 1 || rep.Failed() != 1 || !strings.Contains(rep.Results[0].Detail, "not found") {
+			t.Errorf("report = %+v", rep)
+		}
+		if len(fa.calls) != 0 {
+			t.Errorf("checked a vSNO that isn't there: %q", fa.calls)
+		}
+	})
+}
+
+// TestPrecheckErrors covers the ways Precheck itself fails, rather than a
+// vSNO being unready.
+func TestPrecheckErrors(t *testing.T) {
+	ctx := context.Background()
+	t.Run("listing fails", func(t *testing.T) {
+		e := world(t, readyAccess())
+		dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), vmListKinds)
+		dyn.PrependReactor("list", "virtualmachines", func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, errors.New("api down")
+		})
+		e.Dyn = dyn
+		if _, err := Precheck(ctx, e, PrecheckOptions{Namespace: ns, Name: "a"}); err == nil || !strings.Contains(err.Error(), "api down") {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("missing registry", func(t *testing.T) {
+		e := world(t, readyAccess())
+		e.Kube = kfake.NewClientset()
+		rep, err := Precheck(ctx, e, PrecheckOptions{Namespace: ns, Name: "a"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rowOf(t, rep, "Registry"); got.Status != precheck.Fail || !strings.Contains(got.Detail, "registry-auth") {
+			t.Errorf("registry row = %+v", got)
+		}
+		for _, res := range rep.Results {
+			if res.Check == "Registry trust" {
+				t.Errorf("trust checked without a registry: %+v", res)
+			}
+		}
+	})
+}

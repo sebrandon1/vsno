@@ -77,7 +77,7 @@ func TestNodeVerdict(t *testing.T) {
 		{"probe failed, info only", precheck.Report{}, rows(precheck.Info), "i", "not evaluated"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if icon, say := nodeVerdict(&c.r, c.block); icon != c.icon || say != c.say {
+			if icon, say := nodeVerdict(c.block, c.r.Nodes, c.r.Suggested.Node); icon != c.icon || say != c.say {
 				t.Errorf("got %s %q, want %s %q", icon, say, c.icon, c.say)
 			}
 		})

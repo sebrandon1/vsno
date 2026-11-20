@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -51,18 +50,16 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
 	res := &Result{Name: o.Name, Image: o.Image}
 	var reg Registry
 	if err := step(e, "Checking "+o.Name, func(precheck.ProgressStep) (string, error) {
-		var err error
-		reg, err = check(ctx, e, o, res)
-		return res.Version + ", " + res.Image, err
+		rep, err := Precheck(ctx, e, PrecheckOptions{Namespace: o.Namespace, Name: o.Name, Image: o.Image, Settle: true})
+		if err != nil {
+			return "", err
+		}
+		res.Version, res.Image, res.LCA, reg = rep.Version, rep.Image, rep.LCA, rep.Registry
+		return res.Version + ", " + res.Image, failure(rep)
 	}); err != nil {
 		return res, err
 	}
 	a := e.Access(o.Name)
-	if err := step(e, "Waiting for a stable cluster", func(ps precheck.ProgressStep) (string, error) {
-		return "all ClusterOperators and MachineConfigPools settled", waitStable(ctx, e, a, ps)
-	}); err != nil {
-		return res, err
-	}
 	if err := step(e, "Lifecycle Agent", func(ps precheck.ProgressStep) (string, error) {
 		var err error
 		res.LCA, err = ensureLCA(ctx, e, a, ps)
@@ -103,34 +100,6 @@ func step(e Env, title string, fn func(precheck.ProgressStep) (string, error)) e
 	}
 	ps.Done(detail)
 	return nil
-}
-
-// check requires the vSNO to be ready with healthy operators, and picks the image.
-func check(ctx context.Context, e Env, o CreateOptions, res *Result) (Registry, error) {
-	reg, err := LoadRegistry(ctx, e.Kube, o.Namespace)
-	if err != nil {
-		return reg, err
-	}
-	all, err := guest.List(ctx, e.Env, o.Namespace)
-	if err != nil {
-		return reg, err
-	}
-	i := slices.IndexFunc(all, func(g guest.Guest) bool { return g.Name == o.Name })
-	if i < 0 {
-		return reg, fmt.Errorf("no vSNO named %s in %s (see `vsno list`)", o.Name, o.Namespace)
-	}
-	g := all[i]
-	if g.State != guest.Ready {
-		return reg, fmt.Errorf("vSNO %s is %s, not ready; a seed needs a finished install (see `vsno list`)", g.Name, g.State)
-	}
-	res.Version = g.ShownVersion()
-	if res.Image == "" {
-		if res.Version == "" {
-			return reg, fmt.Errorf("vSNO %s's version is unknown; pass --image", g.Name)
-		}
-		res.Image = Ref(reg, g.Name, res.Version)
-	}
-	return reg, nil
 }
 
 // unstable lists why the cluster isn't settled: ClusterOperators not
@@ -226,6 +195,14 @@ type packageManifest struct {
 	} `json:"status"`
 }
 
+// lcaPackage looks for LCA in the vSNO's operator catalog, which is where
+// ensureLCA takes its channel and source from.
+func lcaPackage(ctx context.Context, a Access) (packageManifest, bool, error) {
+	var pm packageManifest
+	found, err := ocJSON(ctx, a, &pm, "get", "packagemanifests", "lifecycle-agent", "-n", "openshift-marketplace", "--ignore-not-found")
+	return pm, found, err
+}
+
 // ensureLCA installs LCA from the vSNO's own catalog (so it matches the
 // vSNO's version) unless it's there, and waits for its CSV.
 func ensureLCA(ctx context.Context, e Env, a Access, ps precheck.ProgressStep) (string, error) {
@@ -234,8 +211,7 @@ func ensureLCA(ctx context.Context, e Env, a Access, ps precheck.ProgressStep) (
 		return name, err
 	}
 	if name == "" {
-		var pm packageManifest
-		found, err := ocJSON(ctx, a, &pm, "get", "packagemanifests", "lifecycle-agent", "-n", "openshift-marketplace", "--ignore-not-found")
+		pm, found, err := lcaPackage(ctx, a)
 		if err != nil {
 			return "", err
 		}
@@ -265,6 +241,15 @@ func ensureLCA(ctx context.Context, e Env, a Access, ps precheck.ProgressStep) (
 	return name, err
 }
 
+// imageConfig is the part of the cluster image configuration vsno reads.
+type imageConfig struct {
+	Spec struct {
+		AdditionalTrustedCA struct {
+			Name string `json:"name"`
+		} `json:"additionalTrustedCA"`
+	} `json:"spec"`
+}
+
 // ensureTrust makes the vSNO trust the registry's CA, through
 // image.config's additionalTrustedCA, and waits until the node has it.
 func ensureTrust(ctx context.Context, e Env, a Access, r Registry, ps precheck.ProgressStep) error {
@@ -275,13 +260,7 @@ func ensureTrust(ctx context.Context, e Env, a Access, r Registry, ps precheck.P
 	if err := oc(ctx, a, y, "apply", "-f", "-"); err != nil {
 		return err
 	}
-	var img struct {
-		Spec struct {
-			AdditionalTrustedCA struct {
-				Name string `json:"name"`
-			} `json:"additionalTrustedCA"`
-		} `json:"spec"`
-	}
+	var img imageConfig
 	if _, err := ocJSON(ctx, a, &img, "get", "image.config.openshift.io", "cluster"); err != nil {
 		return err
 	}
@@ -296,7 +275,7 @@ func ensureTrust(ctx context.Context, e Env, a Access, r Registry, ps precheck.P
 		return fmt.Errorf("the vSNO already trusts CAs from ConfigMap openshift-config/%s; add key %s with the registry CA to it",
 			img.Spec.AdditionalTrustedCA.Name, r.TrustKey())
 	}
-	file := "/etc/docker/certs.d/" + r.Host + "/ca.crt"
+	file := certFile(r)
 	ps.Update("waiting for " + file)
 	err = poll(ctx, e, trustWait, func() (bool, error) {
 		return ssh(ctx, a, "test", "-f", file) == nil, nil

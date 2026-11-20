@@ -116,23 +116,27 @@ var statusIcon = map[precheck.Status]string{
 	precheck.Pass: "✓", precheck.Warn: "!", precheck.Fail: "✗", precheck.Info: "i",
 }
 
-// reportSections are the precheck table's sections, in order.
-var reportSections = []struct {
+// reportSection is one group of results, with the title it prints under.
+type reportSection struct {
 	group precheck.Group
 	title string
-}{
+}
+
+// reportSections are the precheck table's sections, in order.
+var reportSections = []reportSection{
 	{precheck.GroupCluster, "Cluster"},
 	{precheck.GroupInstall, "Operators, storage and registry"},
 	{precheck.GroupWorkers, "Workers"},
 }
 
-// renderReport prints the results by section, each worker under its own
-// heading, then the suggested settings.
-func renderReport(w io.Writer, r *precheck.Report, pal ui.Palette) {
+// renderSections prints the results of each section, leaving out empty ones.
+// nodes and chosen are for the per-worker headings; the seed precheck has
+// neither.
+func renderSections(w io.Writer, results []precheck.Result, nodes []precheck.NodeSummary, chosen string, sections []reportSection, pal ui.Palette) {
 	printed := false
-	for _, sec := range reportSections {
+	for _, sec := range sections {
 		var rows []precheck.Result
-		for _, res := range r.Results {
+		for _, res := range results {
 			if res.Group == sec.group {
 				rows = append(rows, res)
 			}
@@ -145,8 +149,14 @@ func renderReport(w io.Writer, r *precheck.Report, pal ui.Palette) {
 		}
 		printed = true
 		fmt.Fprintln(w, pal.Bold(sec.title))
-		renderRows(w, r, rows, pal)
+		renderRows(w, rows, nodes, chosen, pal)
 	}
+}
+
+// renderReport prints the results by section, each worker under its own
+// heading, then the suggested settings.
+func renderReport(w io.Writer, r *precheck.Report, pal ui.Palette) {
+	renderSections(w, r.Results, r.Nodes, r.Suggested.Node, reportSections, pal)
 
 	s := r.Suggested
 	switch {
@@ -176,7 +186,7 @@ func renderReport(w io.Writer, r *precheck.Report, pal ui.Palette) {
 
 // renderRows prints rows in order. Consecutive rows for the same node go in a
 // block under a heading with the node's verdict.
-func renderRows(w io.Writer, r *precheck.Report, rows []precheck.Result, pal ui.Palette) {
+func renderRows(w io.Writer, rows []precheck.Result, nodes []precheck.NodeSummary, chosen string, pal ui.Palette) {
 	for len(rows) > 0 {
 		n := 1
 		for n < len(rows) && rows[n].Node == rows[0].Node {
@@ -188,7 +198,7 @@ func renderRows(w io.Writer, r *precheck.Report, rows []precheck.Result, pal ui.
 			renderTable(w, "", block, false, pal)
 			continue
 		}
-		icon, verdict := nodeVerdict(r, block)
+		icon, verdict := nodeVerdict(block, nodes, chosen)
 		fmt.Fprintf(w, "%s  %s  %s\n", pal.Icon(icon), pal.Bold(block[0].Node), verdict)
 		renderTable(w, "   ", block, verdict == "not usable", pal)
 	}
@@ -217,9 +227,9 @@ func renderTable(w io.Writer, indent string, rows []precheck.Result, notUsable b
 
 // nodeVerdict is the icon and word for a node's heading. A node that wasn't
 // evaluated (its probe failed) takes the worst status of its rows.
-func nodeVerdict(r *precheck.Report, block []precheck.Result) (string, string) {
+func nodeVerdict(block []precheck.Result, nodes []precheck.NodeSummary, chosen string) (string, string) {
 	node := block[0].Node
-	idx := slices.IndexFunc(r.Nodes, func(n precheck.NodeSummary) bool { return n.Name == node })
+	idx := slices.IndexFunc(nodes, func(n precheck.NodeSummary) bool { return n.Name == node })
 	switch {
 	case idx < 0:
 		worst := precheck.Info
@@ -229,11 +239,11 @@ func nodeVerdict(r *precheck.Report, block []precheck.Result) (string, string) {
 			}
 		}
 		return statusIcon[worst], "not evaluated"
-	case node == r.Suggested.Node:
+	case node == chosen:
 		return statusIcon[precheck.Pass], "eligible, suggested"
-	case r.Nodes[idx].Eligible:
+	case nodes[idx].Eligible:
 		return statusIcon[precheck.Pass], "eligible"
-	case r.Suggested.Node != "":
+	case chosen != "":
 		// Another node will be used, so this one's failures are only context.
 		return statusIcon[precheck.Info], "not usable"
 	default:

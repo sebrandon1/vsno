@@ -267,12 +267,22 @@ it. It asks first unless you pass `--yes`, and `--dry-run` only lists what it wo
 ## Seed images
 
 ```bash
+vsno seed precheck a               # is a ready? what would create wait on?
+vsno seed precheck a --install     # ...and set up LCA and registry trust
 vsno seed create a                 # make seeds/a:4.20.46 from vSNO a
 vsno seed create a --stop          # ...and stop a afterwards, to free its memory
 vsno seed list                     # or ls, or -o json
 vsno seed delete a:4.20.46 --dry-run
 vsno seed delete a                 # all of a's seeds
 ```
+
+`seed precheck` reports everything `seed create` needs before it starts the 15–30 minute generation:
+the vSNO is ready, the environment's registry is usable, the vSNO's API answers and its cluster is
+settled, the Lifecycle Agent is installed (or the vSNO's catalog has it), the vSNO trusts the
+registry's CA, and the seed image can be pushed. It only reads, and exits non-zero if anything is
+missing. `--install` sets up the two things vsno can — subscribing to LCA from the vSNO's own catalog
+and making the vSNO trust the registry — then reports again. `create` runs the same checks first, so
+the two cannot drift.
 
 `seed create` turns a ready vSNO into an Image Based Upgrade seed image. Seed generation has to run
 on the vSNO itself, so the cluster is stopped while the Lifecycle Agent builds the image and comes
