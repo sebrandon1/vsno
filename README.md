@@ -357,8 +357,13 @@ The vSNO's install-config gets `imageDigestSources` pointing at the registry's *
 guest's own `cluster.local` hides the host's Service names) and the registry's CA as
 `additionalTrustBundle`, so the installer and the cluster pull from the cluster.
 
+Both the release image and its payload are mapped to the mirror, and the release image's sigstore
+signature (`sha256-<digest>.sig`) is copied next to it: the guest's image policy requires that
+signature and looks for it in the registry it pulls from. Each use checks the signature is there, so
+a release mirrored before signatures were copied gets it on its next create.
+
 Nightlies work the same way; the mirror step needs `registry.ci.openshift.org` credentials in the
-cluster pull secret, which `create` already requires for nightlies.
+cluster pull secret, which `create` already requires for nightlies. They have no signature to copy.
 
 `cache prune` deletes a release's images and then runs `registry garbage-collect` in a Job over the
 registry's volume. The registry is unavailable for the seconds to minutes that takes, and that is

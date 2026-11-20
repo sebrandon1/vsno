@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,9 +49,27 @@ type mirrorRunner struct {
 	mirrorErr   error
 	// delay keeps the mirror running long enough for a progress line.
 	delay time.Duration
+	// sigArgs are signature.sh's arguments; sigOut is what it prints
+	// ("copied" when empty) and sigErr makes it fail.
+	sigArgs []string
+	sigOut  string
+	sigErr  error
 }
 
 func (m *mirrorRunner) Run(ctx context.Context, s string, args []string, io_ builder.IO) error {
+	if s == script("signature.sh") {
+		m.sigArgs = args
+		if m.sigErr != nil {
+			_, _ = io.WriteString(io_.Stderr, "reading the signature: denied")
+			return m.sigErr
+		}
+		out := m.sigOut
+		if out == "" {
+			out = "copied"
+		}
+		_, _ = io.WriteString(io_.Stdout, out+"\n")
+		return nil
+	}
 	if s != script("mirror.sh") {
 		return m.runner.Run(ctx, s, args, io_)
 	}
@@ -93,16 +112,10 @@ func TestEnsureMirrors(t *testing.T) {
 	if !strings.Contains(p.PullSecret, "172.30.0.5:5000") || !strings.Contains(p.PullSecret, "quay.io") {
 		t.Errorf("pull secret = %s", p.PullSecret)
 	}
-	// The payload's repository is mapped; the release image's own is not, so the
-	// kubelet can keep fetching its signature from the source registry.
-	if len(p.Sources) != 1 || p.Sources[0].Source != "quay.io/openshift-release-dev/ocp-v4.0-art-dev" ||
-		p.Sources[0].Mirrors[0] != "172.30.0.5:5000/ocp/release/1111111111111111" {
-		t.Errorf("sources = %+v", p.Sources)
-	}
 	if p.TrustBundle != "CA" {
 		t.Errorf("trust bundle = %q", p.TrustBundle)
 	}
-	if len(progress) != 2 { // the mirror's two lines; no room warning at 50Gi free
+	if len(progress) != 3 || progress[2] != "release signature: copied" { // the mirror's two lines, then the signature; no room warning at 50Gi free
 		t.Errorf("progress = %q", progress)
 	}
 }
@@ -313,4 +326,74 @@ func equal(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// A cache hit still makes sure the signature is there, so entries mirrored
+// before signatures were copied get one on their next use.
+func TestEnsureHitChecksTheSignature(t *testing.T) {
+	ctx := context.Background()
+	r := &mirrorRunner{runner: runner{out: releaseInfo, exists: "yes"}, sigOut: "present"}
+	e := mirrorEnv(t, 50<<30, r)
+	_ = update(ctx, e.Kube, ns, func(m *metadata) {
+		m.Entries["sha256:1111111111111111aaaa"] = &Entry{Version: "4.20.46", Image: rel.Image,
+			Digest: "sha256:1111111111111111aaaa", Repo: "ocp/release/1111111111111111"}
+	})
+	var progress []string
+	p, err := Ensure(ctx, e, EnsureOptions{Namespace: ns, Release: rel, OnLine: func(s string) { progress = append(progress, s) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Hit || len(r.sigArgs) == 0 {
+		t.Errorf("hit = %v, signature args %q", p.Hit, r.sigArgs)
+	}
+	if !slices.Contains(progress, "release signature: present") {
+		t.Errorf("progress = %q", progress)
+	}
+}
+
+// A release with a signature the mirror can't serve would stall the install
+// (the kubelet refuses the image), so a failed copy fails the create.
+func TestEnsureFailsWhenTheSignatureCantBeCopied(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		r    *mirrorRunner
+		want string
+	}{
+		{"copy fails", &mirrorRunner{runner: runner{out: releaseInfo}, sigErr: errors.New("exit 1")}, "reading the signature: denied"},
+		{"unexpected output", &mirrorRunner{runner: runner{out: releaseInfo}, sigOut: "maybe"}, "unexpected output"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Ensure(context.Background(), mirrorEnv(t, 50<<30, c.r), EnsureOptions{Namespace: ns, Release: rel})
+			if err == nil || !strings.Contains(err.Error(), "signature") || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err = %v, want %q", err, c.want)
+			}
+		})
+	}
+}
+
+// The payload's repository and the release image's own are both mapped: the
+// agent installer reads the release image through the mirror, from a
+// container that trusts only the registry's CA, and its signature is copied
+// there for the kubelet.
+func TestEnsureMapsTheReleaseAndCopiesItsSignature(t *testing.T) {
+	r := &mirrorRunner{runner: runner{out: releaseInfo}}
+	p, err := Ensure(context.Background(), mirrorEnv(t, 50<<30, r), EnsureOptions{Namespace: ns, Release: rel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mapped []string
+	for _, src := range p.Sources {
+		if len(src.Mirrors) != 1 || src.Mirrors[0] != "172.30.0.5:5000/ocp/release/1111111111111111" {
+			t.Errorf("source %s mirrors to %q", src.Source, src.Mirrors)
+		}
+		mapped = append(mapped, src.Source)
+	}
+	for _, want := range []string{"quay.io/openshift-release-dev/ocp-v4.0-art-dev", "quay.io/openshift-release-dev/ocp-release"} {
+		if !slices.Contains(mapped, want) {
+			t.Errorf("sources = %q, missing %s", mapped, want)
+		}
+	}
+	if want := []string{rel.Image, "sha256:1111111111111111aaaa", "172.30.0.5:5000", "ocp/release/1111111111111111"}; !equal(r.sigArgs, want) {
+		t.Errorf("signature args = %q, want %q", r.sigArgs, want)
+	}
 }
