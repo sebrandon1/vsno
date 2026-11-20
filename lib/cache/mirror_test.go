@@ -93,7 +93,10 @@ func TestEnsureMirrors(t *testing.T) {
 	if !strings.Contains(p.PullSecret, "172.30.0.5:5000") || !strings.Contains(p.PullSecret, "quay.io") {
 		t.Errorf("pull secret = %s", p.PullSecret)
 	}
-	if len(p.Sources) != 2 || p.Sources[0].Mirrors[0] != "172.30.0.5:5000/ocp/release/1111111111111111" {
+	// The payload's repository is mapped; the release image's own is not, so the
+	// kubelet can keep fetching its signature from the source registry.
+	if len(p.Sources) != 1 || p.Sources[0].Source != "quay.io/openshift-release-dev/ocp-v4.0-art-dev" ||
+		p.Sources[0].Mirrors[0] != "172.30.0.5:5000/ocp/release/1111111111111111" {
 		t.Errorf("sources = %+v", p.Sources)
 	}
 	if p.TrustBundle != "CA" {

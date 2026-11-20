@@ -74,10 +74,13 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 		return nil, err
 	}
 	repo := RepoPrefix + short(digest)
-	// The release image is not one of the payload's references, yet the guest
-	// pulls it first; map its repository too, as `oc adm release mirror` does.
-	if r, ok := repoOf(o.Release.Image); ok && !slices.Contains(sources, r) {
-		sources = append(sources, r)
+	// The release image itself is left pointing upstream on purpose: its
+	// signature is fetched from the registry the pull resolves to
+	// (use-sigstore-attachments), and a plain registry has none, so rewriting
+	// it stalls the install at the cluster-version-operator. Its payload,
+	// which is the 20 GB, is mapped below.
+	if r, ok := repoOf(o.Release.Image); ok {
+		sources = slices.DeleteFunc(sources, func(s string) bool { return s == r })
 	}
 	m, err := load(ctx, e.Kube, o.Namespace)
 	if err != nil {
