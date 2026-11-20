@@ -74,6 +74,9 @@ func (a *Agent) Failing() []string {
 type Observed struct {
 	// VMStatus is the VM's status.printableStatus (Stopped, Provisioning, Running, ErrorUnschedulable...).
 	VMStatus string
+	// WantsRunning is true when the VM's spec says it should run. Right
+	// after it is created, KubeVirt reports such a VM Stopped for a moment.
+	WantsRunning bool
 	// ISOPhase and ISOProgress are the ISO DataVolume's status.phase and status.progress.
 	ISOPhase, ISOProgress string
 	// Probe is nil when the guest wasn't probed (not running, or no builder).
@@ -91,7 +94,7 @@ func Classify(o Observed) (State, string) {
 	switch {
 	case o.VMStatus == "Terminating":
 		return Deleting, ""
-	case o.VMStatus == "Stopped" || o.VMStatus == "Stopping":
+	case (o.VMStatus == "Stopped" || o.VMStatus == "Stopping") && !o.WantsRunning:
 		return Stopped, ""
 	case slices.Contains(vmErrors, o.VMStatus):
 		return Failed, "VM " + o.VMStatus
@@ -102,6 +105,8 @@ func Classify(o Observed) (State, string) {
 			return Importing, p
 		}
 		return Importing, ""
+	case o.VMStatus == "Stopped" || o.VMStatus == "Stopping":
+		return Starting, "" // meant to run, and about to
 	case o.VMStatus != "Running":
 		return Starting, o.VMStatus
 	case o.Probe == nil:

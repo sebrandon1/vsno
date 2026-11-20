@@ -26,6 +26,9 @@ func TestClassify(t *testing.T) {
 		{"no ISO DataVolume", Observed{VMStatus: "Starting"}, Starting, "Starting"},
 		{"not probed", Observed{VMStatus: "Running", ISOPhase: "Succeeded"}, Unknown, "not probed"},
 		{"nothing answers", running(&Probe{}), Unknown, "no answer from the installer or API"},
+		// KubeVirt reports a VM Stopped for a moment after it is created.
+		{"just created", Observed{VMStatus: "Stopped", WantsRunning: true, ISOPhase: "Succeeded"}, Starting, ""},
+		{"stopped on purpose", Observed{VMStatus: "Stopped", ISOPhase: "Succeeded"}, Stopped, ""},
 		{"agent installing", running(&Probe{Agent: &Agent{Status: "installing-in-progress", Progress: 42}}), Installing, "installing-in-progress 42%"},
 		{"validations", running(&Probe{Agent: &Agent{Status: "insufficient", Validations: validations}}), Installing, "waiting on validations: dns-wildcard-not-configured, has-memory-for-role"},
 		{"agent error", running(&Probe{Agent: &Agent{Status: "error", Info: "boom"}}), Failed, "install error: boom"},

@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -203,5 +204,24 @@ func TestGiB(t *testing.T) {
 	}
 	if API("x") != "https://api.x.vsno.lab:6443" {
 		t.Error("API")
+	}
+}
+
+func TestWantsRunning(t *testing.T) {
+	for _, c := range []struct {
+		spec map[string]any
+		want bool
+	}{
+		{map[string]any{"runStrategy": "Always"}, true},
+		{map[string]any{"runStrategy": "RerunOnFailure"}, true},
+		{map[string]any{"runStrategy": "Halted"}, false},
+		{map[string]any{"runStrategy": "Manual"}, false},
+		{map[string]any{"running": true}, true},
+		{map[string]any{}, false},
+	} {
+		vm := &unstructured.Unstructured{Object: map[string]any{"spec": c.spec}}
+		if got := wantsRunning(vm); got != c.want {
+			t.Errorf("%v = %v, want %v", c.spec, got, c.want)
+		}
 	}
 }
