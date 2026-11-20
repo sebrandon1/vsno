@@ -206,18 +206,19 @@ func runCacheGC(cmd *cobra.Command, _ []string) error {
 	}
 	start := time.Now()
 	ps := newProgress().Start("Collecting the registry's garbage")
-	before, _, _ := env.Usage(cmd.Context(), namespace)
+	before, _, _ := env.Volume(cmd.Context(), namespace)
 	if err := cache.GarbageCollect(cmd.Context(), env, namespace); err != nil {
 		ps.Fail(err.Error())
 		return err
 	}
-	after, _, _ := env.Usage(cmd.Context(), namespace)
-	ps.Done("done in " + ui.FormatElapsed(time.Since(start)))
-	freed := int64(0)
+	after, _, _ := env.Volume(cmd.Context(), namespace)
+	elapsed := ui.FormatElapsed(time.Since(start))
+	ps.Done("done in " + elapsed)
+	freed := "nothing was left to free"
 	if before > after {
-		freed = before - after
+		freed = "freeing " + bytesText(before-after)
 	}
-	fmt.Fprintf(w, "%s Collected the registry's garbage in %s, freeing %s.\n", pal.Icon("✓"), ui.FormatElapsed(time.Since(start)), bytesText(freed))
+	fmt.Fprintf(w, "%s Collected the registry's garbage in %s, %s.\n", pal.Icon("✓"), elapsed, freed)
 	return nil
 }
 

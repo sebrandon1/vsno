@@ -112,7 +112,7 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 // is room, and returns how much it took and how long that took.
 func mirror(ctx context.Context, e Env, o EnsureOptions, reg registry.Registry, addr, repo, tag string, m *metadata) (int64, time.Duration, error) {
 	start := e.Now()
-	used, total, err := e.usage(ctx, o.Namespace)
+	used, total, err := e.Volume(ctx, o.Namespace)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -144,7 +144,7 @@ func mirror(ctx context.Context, e Env, o EnsureOptions, reg registry.Registry, 
 	if err != nil {
 		return 0, elapsed, err
 	}
-	if after, _, err := e.usage(ctx, o.Namespace); err == nil && after > used {
+	if after, _, err := e.Volume(ctx, o.Namespace); err == nil && after > used {
 		return after - used, elapsed, nil
 	}
 	return 0, elapsed, nil
@@ -172,7 +172,7 @@ func (e Env) reportProgress(ctx context.Context, o EnsureOptions, base, est int6
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				used, _, err := e.usage(ctx, o.Namespace)
+				used, _, err := e.Volume(ctx, o.Namespace)
 				if err != nil || used <= base {
 					continue
 				}

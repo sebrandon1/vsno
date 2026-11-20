@@ -91,7 +91,7 @@ func apply(ctx context.Context, e Env, o PruneOptions, plan *PrunePlan, res *Pru
 	if err != nil {
 		return err
 	}
-	before, _, _ := e.usage(ctx, o.Namespace)
+	before, _, _ := e.Volume(ctx, o.Namespace)
 	for _, ent := range plan.Entries {
 		if err := deleteEntry(ctx, e, reg, o.Namespace, ent); err != nil {
 			return err
@@ -111,7 +111,7 @@ func apply(ctx context.Context, e Env, o PruneOptions, plan *PrunePlan, res *Pru
 	if err := GarbageCollect(ctx, e, o.Namespace); err != nil {
 		return err
 	}
-	if after, _, err := e.usage(ctx, o.Namespace); err == nil && before > after {
+	if after, _, err := e.Volume(ctx, o.Namespace); err == nil && before > after {
 		res.Freed = before - after
 	}
 	return nil

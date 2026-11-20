@@ -10,11 +10,14 @@ import (
 	"strings"
 
 	"github.com/sebrandon1/vsno/lib/builder"
+	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/registry"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
@@ -25,6 +28,8 @@ const (
 	gcJob = "registry-gc"
 	// gcConfig is where the Job mounts registry-config.
 	gcConfig = "/etc/registry"
+	// configName is the ConfigMap the collector reads.
+	configName = manifests.RegistryConfig
 	// gcTimeout is how long a collection may take.
 	gcTimeout = 10 * time.Minute
 )
@@ -47,9 +52,14 @@ func GarbageCollect(ctx context.Context, e Env, ns string) error {
 	if dep.Spec.Replicas != nil {
 		replicas = *dep.Spec.Replicas
 	}
+	if err := e.ensureConfig(ctx, ns); err != nil {
+		return err
+	}
 	if err := scale(ctx, e.Kube, ns, 0); err != nil {
 		return err
 	}
+	// The registry must come back whatever happens next.
+	defer func() { _ = scale(context.WithoutCancel(ctx), e.Kube, ns, replicas) }()
 	collectErr := func() error {
 		if err := waitForPod(ctx, e, ns, false); err != nil {
 			return err
@@ -73,12 +83,43 @@ func scale(ctx context.Context, kube kubernetes.Interface, ns string, replicas i
 		if err != nil {
 			return fmt.Errorf("reading the registry Deployment: %w", err)
 		}
+		if dep.Spec.Replicas != nil && *dep.Spec.Replicas == replicas {
+			return nil // already there: the restore after the collector is usually a no-op
+		}
 		dep.Spec.Replicas = &replicas
 		if _, err := deps.Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("setting the registry's replicas to %d: %w", replicas, err)
 		}
 		return nil
 	})
+}
+
+// ensureConfig makes sure the collector's ConfigMap is there: environments set
+// up before it existed have only the Deployment's environment variables.
+func (e Env) ensureConfig(ctx context.Context, ns string) error {
+	_, err := e.Kube.CoreV1().ConfigMaps(ns).Get(ctx, configName, metav1.GetOptions{})
+	if err == nil {
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("reading ConfigMap %s: %w", configName, err)
+	}
+	objs, err := manifests.Render(manifests.RegistryConfig, manifests.NamesConfig(ns))
+	if err != nil {
+		return err
+	}
+	for _, o := range objs {
+		if o.GetKind() != "ConfigMap" {
+			continue
+		}
+		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: o.GetName(),
+			Labels: map[string]string{"app.kubernetes.io/managed-by": "vsno"}}}
+		cm.Data, _, _ = unstructured.NestedStringMap(o.Object, "data")
+		if _, err := e.Kube.CoreV1().ConfigMaps(ns).Create(ctx, cm, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("creating ConfigMap %s: %w", configName, err)
+		}
+	}
+	return nil
 }
 
 // lockScript prints "yes" when a mirror holds the builder's lock.
@@ -107,10 +148,16 @@ func image(dep *appsv1.Deployment) string {
 	return ""
 }
 
+// waitUntil polls cond every e.Poll until it's true, or the collection's
+// deadline passes.
+func (e Env) waitUntil(ctx context.Context, cond func(context.Context) (bool, error)) error {
+	return wait.PollUntilContextTimeout(ctx, e.poll(), gcTimeout, true, cond)
+}
+
 // waitForPod waits until the registry has a pod (up) or has none (down).
 func waitForPod(ctx context.Context, e Env, ns string, up bool) error {
 	var last error
-	err := wait.PollUntilContextTimeout(ctx, e.poll(), gcTimeout, true, func(ctx context.Context) (bool, error) {
+	err := e.waitUntil(ctx, func(ctx context.Context) (bool, error) {
 		_, last = registry.Pod(ctx, e.Kube, ns)
 		return (last == nil) == up, nil
 	})
@@ -126,7 +173,7 @@ func waitForPod(ctx context.Context, e Env, ns string, up bool) error {
 // runGCJob runs the collector over the registry's volume and waits for it.
 func runGCJob(ctx context.Context, e Env, ns, image string) error {
 	jobs := e.Kube.BatchV1().Jobs(ns)
-	_ = jobs.Delete(ctx, gcJob, metav1.DeleteOptions{}) // a leftover from an interrupted run
+	_ = jobs.Delete(ctx, gcJob, deleteOptions()) // a leftover from an interrupted run
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: gcJob,
 			Labels: map[string]string{"app.kubernetes.io/managed-by": "vsno"}},
@@ -145,7 +192,7 @@ func runGCJob(ctx context.Context, e Env, ns, image string) error {
 				}},
 				Volumes: []corev1.Volume{
 					{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "registry-data"}}},
-					{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "registry-config"}}}},
+					{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}}},
 				},
 			}},
 		},
@@ -153,9 +200,9 @@ func runGCJob(ctx context.Context, e Env, ns, image string) error {
 	if _, err := jobs.Create(ctx, job, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("starting the registry's garbage collection: %w", err)
 	}
-	defer func() { _ = jobs.Delete(context.WithoutCancel(ctx), gcJob, metav1.DeleteOptions{}) }()
+	defer func() { _ = jobs.Delete(context.WithoutCancel(ctx), gcJob, deleteOptions()) }()
 	var failure error
-	err := wait.PollUntilContextTimeout(ctx, e.poll(), gcTimeout, true, func(ctx context.Context) (bool, error) {
+	err := e.waitUntil(ctx, func(ctx context.Context) (bool, error) {
 		got, err := jobs.Get(ctx, gcJob, metav1.GetOptions{})
 		if err != nil {
 			return false, err
@@ -170,6 +217,13 @@ func runGCJob(ctx context.Context, e Env, ns, image string) error {
 		return fmt.Errorf("waiting for the registry's garbage collection: %w", err)
 	}
 	return failure
+}
+
+// deleteOptions removes the Job's pod with the Job, so a retry leaves nothing
+// behind.
+func deleteOptions() metav1.DeleteOptions {
+	policy := metav1.DeletePropagationBackground
+	return metav1.DeleteOptions{PropagationPolicy: &policy}
 }
 
 // jobState says whether a Job finished, and why it failed.

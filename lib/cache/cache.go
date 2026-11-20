@@ -51,8 +51,8 @@ type Env struct {
 	Progress time.Duration
 }
 
-// usage is the registry volume's numbers, however Env gets them.
-func (e Env) usage(ctx context.Context, ns string) (used, total int64, err error) {
+// Volume is the registry volume's used and total size, however Env gets them.
+func (e Env) Volume(ctx context.Context, ns string) (used, total int64, err error) {
 	if e.Usage != nil {
 		return e.Usage(ctx, ns)
 	}
@@ -114,7 +114,7 @@ func List(ctx context.Context, e Env, ns string, users map[string][]string) (*Re
 		}
 		return a.Mirrored.Compare(b.Mirrored)
 	})
-	rep.Used, rep.Total, _ = e.usage(ctx, ns) // a missing pod leaves them zero
+	rep.Used, rep.Total, _ = e.Volume(ctx, ns) // a missing pod leaves them zero
 	return rep, nil
 }
 

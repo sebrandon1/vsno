@@ -178,6 +178,9 @@ func TestGarbageCollect(t *testing.T) {
 	if !slices.Equal(w.seen, []int32{0, 1}) {
 		t.Errorf("scaled %v, want down then up", w.seen)
 	}
+	if _, err := w.k.CoreV1().ConfigMaps(ns).Get(context.Background(), configName, metav1.GetOptions{}); err != nil {
+		t.Errorf("the collector's ConfigMap wasn't created: %v", err)
+	}
 	jobs, _ := w.k.BatchV1().Jobs(ns).List(context.Background(), metav1.ListOptions{})
 	for _, j := range jobs.Items {
 		if j.Name == gcJob {
@@ -288,5 +291,34 @@ func TestGarbageCollectRefusesWhileMirroring(t *testing.T) {
 	}
 	if len(w.seen) != 0 {
 		t.Errorf("scaled the registry while a mirror ran: %v", w.seen)
+	}
+}
+
+func TestEnsureConfig(t *testing.T) {
+	ctx := context.Background()
+	w := newRegWorld(t, batchv1.JobCondition{Type: batchv1.JobComplete, Status: corev1.ConditionTrue})
+	e := w.env()
+	// An environment set up before the collector existed has no ConfigMap.
+	if err := e.ensureConfig(ctx, ns); err != nil {
+		t.Fatal(err)
+	}
+	cm, err := w.k.CoreV1().ConfigMaps(ns).Get(ctx, configName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cm.Data["config.yml"], "rootdirectory: /var/lib/registry") {
+		t.Errorf("config.yml = %q", cm.Data["config.yml"])
+	}
+	// A second run leaves it alone.
+	cm.Data["config.yml"] = "custom"
+	if _, err := w.k.CoreV1().ConfigMaps(ns).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ensureConfig(ctx, ns); err != nil {
+		t.Fatal(err)
+	}
+	cm, _ = w.k.CoreV1().ConfigMaps(ns).Get(ctx, configName, metav1.GetOptions{})
+	if cm.Data["config.yml"] != "custom" {
+		t.Errorf("overwrote the ConfigMap: %q", cm.Data["config.yml"])
 	}
 }
