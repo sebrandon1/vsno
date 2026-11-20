@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -217,7 +218,7 @@ func defaultVersions(ctx context.Context, e Env) (target, seedVersion string, er
 		return "", "", fmt.Errorf("reading the host's version to pick defaults (pass --target-version and --seed-version): %w", err)
 	}
 	v, _, _ := unstructured.NestedString(cv.Object, "status", "desired", "version")
-	minor := minorOf(v)
+	minor := release.Minor(v)
 	vs, err := e.Stable(ctx, minor)
 	if err != nil {
 		return "", "", err
@@ -240,7 +241,7 @@ func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan) error {
 		want[plan.Seed] = plan.SeedVersion
 	}
 	var started []string
-	for _, name := range sortedKeys(want) {
+	for _, name := range slices.Sorted(maps.Keys(want)) {
 		if i := slices.IndexFunc(all, func(g guest.Guest) bool { return g.Name == name }); i >= 0 {
 			if err := matches(all[i], want[name]); err != nil {
 				return err
@@ -366,21 +367,4 @@ func lcaText(s ibu.LCASource) string {
 		return "image " + s.Image
 	}
 	return "built from " + s.Ref
-}
-
-func minorOf(v string) string {
-	parts := strings.SplitN(v, ".", 3)
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[0] + "." + parts[1]
-}
-
-func sortedKeys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	slices.Sort(out)
-	return out
 }
