@@ -86,8 +86,10 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   holding the `app=builder` pod, so hand-built environments are included. `Classify` turns
   observations (VM status, ISO DataVolume, probe) into a `State`; create's wait and list share it.
   Golden files in `testdata/` (`go test ./lib/guest -update`).
-- `lib/seed`: Image Based Upgrade seed images. `Create` drives the Lifecycle Agent on a vSNO
-  (`check`, `waitStable`, `ensureLCA`, `ensureTrust`, `generate`, `finish`); while the guest API is
+- `lib/seed`: Image Based Upgrade seed images. `Precheck` reports what a seed needs (vSNO state,
+  registry, guest API and cluster settling, LCA, registry trust, the image and its push credentials)
+  and with `Install` sets up LCA and trust; `Create` runs it first, then drives the Lifecycle Agent
+  (`waitStable`, `ensureLCA`, `ensureTrust`, `generate`, `finish`); while the guest API is
   down it reads progress from the node's `lca-generate-seed-image` unit. `List`/`Delete` talk to the
   environment's registry through `scripts/registry.sh` (skopeo + curl, credentials on stdin) from the
   builder. Templates and the script are embedded; goldens in `testdata/`.
