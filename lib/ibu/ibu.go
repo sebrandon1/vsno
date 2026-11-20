@@ -90,27 +90,29 @@ const (
 )
 
 // Toward says how far u has got toward stage s, and LCA's message about it.
+// On a failure LCA's completed condition says only "Prep failed"; the
+// in-progress one says why, so its message is the one reported.
 func (u IBU) Toward(s Stage) (Progress, string) {
 	c := stageConditions[s]
-	if done := u.Status.Conditions.Find(c.completed); done != nil {
-		if done.Status == "True" && u.Spec.Stage == s {
-			return Arrived, done.Message
-		}
-		if slices.Contains(failedReasons, done.Reason) {
-			return Stuck, done.Message
-		}
+	done := u.Status.Conditions.Find(c.completed)
+	var cur *guestctl.Condition
+	if c.inProgress != "" {
+		cur = u.Status.Conditions.Find(c.inProgress)
 	}
-	if c.inProgress == "" {
-		return Moving, ""
-	}
-	cur := u.Status.Conditions.Find(c.inProgress)
+	failed := func(x *guestctl.Condition) bool { return x != nil && slices.Contains(failedReasons, x.Reason) }
 	switch {
-	case cur == nil:
-		return Moving, ""
-	case slices.Contains(failedReasons, cur.Reason):
+	case done != nil && done.Status == "True" && u.Spec.Stage == s:
+		return Arrived, done.Message
+	case failed(cur) && cur.Message != "":
 		return Stuck, cur.Message
+	case failed(done):
+		return Stuck, done.Message
+	case failed(cur):
+		return Stuck, cur.Message
+	case cur != nil:
+		return Moving, cur.Message
 	}
-	return Moving, cur.Message
+	return Moving, ""
 }
 
 // precacheRe reads LCA's precache progress, "total: 190 (pulled: 12, failed: 0)".

@@ -300,3 +300,40 @@ func TestBackupLocationAppearsLater(t *testing.T) {
 		t.Error("a failed apply must fail")
 	}
 }
+
+// A seed made from a vSNO installed from the release cache (it has
+// openshift-config/user-ca-bundle) can't upgrade a target installed without
+// it, and the other way round: LCA refuses at Prep, so vsno refuses first.
+func TestUpgradeRefusesAMismatchedTrustBundle(t *testing.T) {
+	bundle := "get configmap user-ca-bundle -n openshift-config --ignore-not-found"
+	seedVSNO := &guestctltest.Fake{OcReplies: map[string][]guestctltest.Reply{
+		lcaCSVs: {{Out: `{"items":[{"metadata":{"name":"lifecycle-agent.v4.21.5"},"status":{"phase":"Succeeded"}}]}`}},
+	}}
+	target := &lca{Fake: targetFake()}
+	target.OcReplies[bundle] = []guestctltest.Reply{{Out: `{"metadata":{"name":"user-ca-bundle"}}`}}
+	_, err := upgrade(t, target, UpgradeOptions{}, map[string]guestctl.Access{"shiny-crane": seedVSNO})
+	if err == nil || !strings.Contains(err.Error(), "the target has openshift-config/user-ca-bundle and the seed vSNO shiny-crane doesn't have") || len(target.patches) != 0 {
+		t.Errorf("err = %v, patches = %q", err, target.patches)
+	}
+	// Both with it: fine.
+	seedVSNO.OcReplies[bundle] = []guestctltest.Reply{{Out: `{"metadata":{"name":"user-ca-bundle"}}`}}
+	if _, err := upgrade(t, &lca{Fake: target.Fake}, UpgradeOptions{To: StagePrep}, map[string]guestctl.Access{"shiny-crane": seedVSNO}); err != nil {
+		t.Errorf("both have it: err = %v", err)
+	}
+}
+
+func TestUpgradeAbort(t *testing.T) {
+	ctx := context.Background()
+	inPrep := &lca{Fake: targetFake(), stage: StagePrep, image: seedRef, prepFails: true}
+	res, err := Upgrade(ctx, testEnv(map[string]guestctl.Access{"t": inPrep}), UpgradeOptions{Namespace: ns, Target: "t", Abort: true})
+	if err != nil || res.Stage != StageIdle || len(inPrep.patches) != 1 || inPrep.patches[0] != `{"spec":{"stage":"Idle"}}` {
+		t.Fatalf("err = %v, stage = %s, patches = %q", err, res.Stage, inPrep.patches)
+	}
+	upgraded := &lca{Fake: targetFake(), stage: StageUpgrade, image: seedRef}
+	if _, err := Upgrade(ctx, testEnv(map[string]guestctl.Access{"t": upgraded}), UpgradeOptions{Namespace: ns, Target: "t", Abort: true}); err == nil || !strings.Contains(err.Error(), "use --rollback") || len(upgraded.patches) != 0 {
+		t.Errorf("after Upgrade: err = %v, patches = %q", err, upgraded.patches)
+	}
+	if err := (UpgradeOptions{Target: "t", Abort: true, Seed: "s"}).check(); err == nil || !strings.Contains(err.Error(), "--abort takes only the target") {
+		t.Errorf("abort with a seed: err = %v", err)
+	}
+}

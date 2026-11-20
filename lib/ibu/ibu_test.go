@@ -77,6 +77,10 @@ func TestToward(t *testing.T) {
 		{"prep precaching", ibuWith(StagePrep, seedRef, cond("PrepInProgress", "True", "InProgress", "total: 4 (pulled: 1, failed: 0)")), StagePrep, Moving, "total: 4 (pulled: 1, failed: 0)"},
 		{"prep done", ibuWith(StagePrep, seedRef, cond("PrepCompleted", "True", "Completed", "Prep stage completed successfully")), StagePrep, Arrived, "Prep stage completed successfully"},
 		{"prep failed", ibuWith(StagePrep, seedRef, cond("PrepInProgress", "False", "Failed", "pull failed"), cond("PrepCompleted", "False", "Failed", "pull failed")), StagePrep, Stuck, "pull failed"},
+		// As LCA reports it: the completed condition is generic, the in-progress one says why.
+		{"prep failed, the reason on in-progress", ibuWith(StagePrep, seedRef, cond("PrepCompleted", "False", "Failed", "Prep failed"),
+			cond("PrepInProgress", "False", "Failed", "failed to validate seed image info")), StagePrep, Stuck, "failed to validate seed image info"},
+		{"failed with only the completed condition", ibuWith(StagePrep, seedRef, cond("PrepCompleted", "False", "Failed", "Prep failed")), StagePrep, Stuck, "Prep failed"},
 		{"prep refused", ibuWith(StagePrep, seedRef, cond("PrepInProgress", "False", "InvalidTransition", "bad stage")), StagePrep, Stuck, "bad stage"},
 		{"upgrade timed out", ibuWith(StageUpgrade, seedRef, cond("UpgradeCompleted", "False", "TimedOut", "too slow")), StageUpgrade, Stuck, "too slow"},
 		{"upgrade blocked", ibuWith(StageUpgrade, seedRef, cond("UpgradeInProgress", "False", "Blocked", "IPC running")), StageUpgrade, Stuck, "IPC running"},

@@ -18,6 +18,7 @@ var (
 	upTo          string
 	upFinalize    bool
 	upRollback    bool
+	upAbort       bool
 )
 
 var prepareCmd = &cobra.Command{
@@ -34,7 +35,7 @@ target itself, so this is for checking a vSNO ahead of time.`,
 }
 
 var upgradeCmd = &cobra.Command{
-	Use:   "upgrade <target> --seed <vsno|image>",
+	Use:   "upgrade <target> {--seed <vsno|image> | --abort}",
 	Short: "Upgrade a vSNO to a seed image's version with an Image Based Upgrade",
 	Long: `upgrade runs an Image Based Upgrade on the target vSNO with the Lifecycle
 Agent. --seed is a seed image (vsno seed list) or a vSNO, meaning its newest
@@ -48,7 +49,8 @@ It reports the identity before and after, which must differ only in version,
 and the time each stage and phase took.
 
 --to prep stops after Prep. --finalize goes on to Idle, dropping the old
-version; --rollback goes back to it. Run again with the same seed, upgrade
+version; --rollback goes back to it. --abort cancels a Prep (one that failed,
+say), moving the target back to Idle. Run again with the same seed, upgrade
 carries on from where the target is, so a finished upgrade can be finalized
 later with --finalize.`,
 	Args: cobra.ExactArgs(1),
@@ -58,12 +60,12 @@ later with --finalize.`,
 func init() {
 	prepareCmd.Flags().StringVar(&prRole, "role", string(ibu.RoleTarget), "what the vSNOs are for: seed or target")
 	f := upgradeCmd.Flags()
-	f.StringVar(&upSeed, "seed", "", "the seed: an image, <vsno>:<version>, or a vSNO for its newest seed (required)")
+	f.StringVar(&upSeed, "seed", "", "the seed: an image, <vsno>:<version>, or a vSNO for its newest seed (required unless --abort)")
 	f.StringVar(&upSeedVersion, "seed-version", "", "the seed's OpenShift version, for an image outside the environment's registry")
 	f.StringVar(&upTo, "to", "upgrade", "stop after this stage: prep or upgrade")
 	f.BoolVar(&upFinalize, "finalize", false, "finalize the upgrade (stage Idle), dropping the old version")
 	f.BoolVar(&upRollback, "rollback", false, "roll the upgrade back to the old version")
-	_ = upgradeCmd.MarkFlagRequired("seed")
+	f.BoolVar(&upAbort, "abort", false, "cancel the target's Prep, moving it back to Idle (no --seed)")
 	rootCmd.AddCommand(prepareCmd, upgradeCmd)
 }
 
@@ -107,9 +109,13 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	o := ibu.UpgradeOptions{Namespace: namespace, Target: args[0], Seed: upSeed, SeedVersion: upSeedVersion,
-		To: to, Finalize: upFinalize, Rollback: upRollback}
+		To: to, Finalize: upFinalize, Rollback: upRollback, Abort: upAbort}
 	if outputFormat != formatJSON {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Upgrading vSNO %s in %s with seed %s...\n\n", args[0], namespace, upSeed)
+		if upAbort {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Canceling the Prep of vSNO %s in %s...\n\n", args[0], namespace)
+		} else {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Upgrading vSNO %s in %s with seed %s...\n\n", args[0], namespace, upSeed)
+		}
 	}
 	res, err := ibu.Upgrade(cmd.Context(), env, o)
 	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())

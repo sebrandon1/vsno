@@ -36,6 +36,9 @@ type UpgradeOptions struct {
 	// Finalize moves to Idle once the upgrade completed, dropping the old
 	// stateroot; Rollback goes back to it instead.
 	Finalize, Rollback bool
+	// Abort moves a target in Prep back to Idle, which is how LCA cancels a
+	// Prep, failed or not. It needs no seed.
+	Abort bool
 }
 
 // UpgradeResult is a finished, or failed, upgrade.
@@ -65,6 +68,9 @@ func Upgrade(ctx context.Context, e Env, o UpgradeOptions) (*UpgradeResult, erro
 		return nil, err
 	}
 	res := &UpgradeResult{Target: o.Target}
+	if o.Abort {
+		return abort(ctx, e, o, res)
+	}
 	a, at, from, err := begin(ctx, e, o, res)
 	if err != nil {
 		return res, err
@@ -74,7 +80,7 @@ func Upgrade(ctx context.Context, e Env, o UpgradeOptions) (*UpgradeResult, erro
 
 // begin finds the seed, prepares the target and reads where it is: the stage
 // it's at and the one to start from. Starting from Prep, it records the
-// target's identity and checks its LCA matches the seed's.
+// target's identity and checks it matches the seed's vSNO (checkSeed).
 func begin(ctx context.Context, e Env, o UpgradeOptions, res *UpgradeResult) (a guestctl.Access, at, from Stage, err error) {
 	var madeFrom string // the vSNO the seed was made from, when it's one here
 	if res.SeedImage, res.SeedVersion, madeFrom, err = resolveSeed(ctx, e, o); err != nil {
@@ -96,7 +102,7 @@ func begin(ctx context.Context, e Env, o UpgradeOptions, res *UpgradeResult) (a 
 		if res.Before, err = identity(ctx, a); err != nil {
 			return a, "", "", err
 		}
-		if err := checkLCA(ctx, e, madeFrom, o.Target, a, res); err != nil {
+		if err := checkSeed(ctx, e, madeFrom, o.Target, a, res); err != nil {
 			return a, "", "", err
 		}
 	}
@@ -144,6 +150,10 @@ func drive(ctx context.Context, e Env, o UpgradeOptions, a guestctl.Access, at, 
 
 func (o UpgradeOptions) check() error {
 	switch {
+	case o.Abort && (o.Finalize || o.Rollback || o.Seed != ""):
+		return errors.New("--abort takes only the target: it cancels its Prep")
+	case o.Abort:
+		return nil
 	case o.Target == "" || o.Seed == "":
 		return errors.New("a target and a seed are required")
 	case o.To != StagePrep && o.To != StageUpgrade:
@@ -154,6 +164,31 @@ func (o UpgradeOptions) check() error {
 		return errors.New("--finalize and --rollback come after the upgrade, so they can't go with --to prep")
 	}
 	return nil
+}
+
+// abort moves a target in Prep back to Idle. After Upgrade the way back is
+// Rollback, which LCA allows from there instead.
+func abort(ctx context.Context, e Env, o UpgradeOptions, res *UpgradeResult) (*UpgradeResult, error) {
+	a := e.Access(o.Target)
+	u, err := current(ctx, a)
+	if err != nil {
+		return res, err
+	}
+	if u.Spec.Stage != StagePrep {
+		return finish(ctx, a, res, fmt.Errorf("only Prep can be aborted, and the target is in %s; after Upgrade, use --rollback", orIdle(u.Spec.Stage)))
+	}
+	err = guestctl.Step(e.Progress, "Aborting Prep", func(ps precheck.ProgressStep) (string, error) {
+		return moveTo(ctx, a, e.Clock(), StagePrep, StageIdle, finalizeWait, res, ps)
+	})
+	return finish(ctx, a, res, err)
+}
+
+// orIdle names a stage, the unset one being Idle.
+func orIdle(s Stage) Stage {
+	if s == "" {
+		return StageIdle
+	}
+	return s
 }
 
 // finish records where the target ended, and its history, on any outcome.
@@ -216,16 +251,20 @@ func resumeFrom(u IBU, image string) (Stage, error) {
 	return "", fmt.Errorf("the target is in %s; wait for it to finish", u.Spec.Stage)
 }
 
-// checkLCA requires the vSNO the seed was made from, when it's one here and
-// answers, to run the same LCA version as the target: LCA doesn't support
-// mixing them.
-func checkLCA(ctx context.Context, e Env, from, targetName string, target guestctl.Access, res *UpgradeResult) error {
+// checkSeed requires the vSNO the seed was made from, when it's here and
+// answers, to match the target where LCA requires it: the same LCA version,
+// and openshift-config/user-ca-bundle on both or neither. A vSNO installed
+// from the release cache has that ConfigMap (the registry's CA) and one
+// installed from the internet doesn't, so a seed and target must have been
+// installed the same way.
+func checkSeed(ctx context.Context, e Env, from, targetName string, target guestctl.Access, res *UpgradeResult) error {
 	if from == "" || from == targetName {
 		return nil
 	}
-	theirs, _, err := seed.LCA.CSV(ctx, e.Access(from))
+	sa := e.Access(from)
+	theirs, _, err := seed.LCA.CSV(ctx, sa)
 	if err != nil || theirs == "" {
-		res.Warnings = append(res.Warnings, "can't read the seed vSNO "+from+"'s LCA version, so it isn't compared with the target's")
+		res.Warnings = append(res.Warnings, "can't read the seed vSNO "+from+", so it isn't compared with the target (LCA version, trust bundle)")
 		return nil //nolint:nilerr // a stopped seed vSNO is normal after seed generation
 	}
 	ours, _, err := seed.LCA.CSV(ctx, target)
@@ -235,7 +274,33 @@ func checkLCA(ctx context.Context, e Env, from, targetName string, target guestc
 	if ours != theirs {
 		return fmt.Errorf("the seed was made with %s and the target runs %s; LCA must be the same version on both", theirs, ours)
 	}
+	seedHas, err := hasUserCABundle(ctx, sa)
+	if err != nil {
+		return err
+	}
+	targetHas, err := hasUserCABundle(ctx, target)
+	if err != nil {
+		return err
+	}
+	if seedHas != targetHas {
+		return fmt.Errorf("the target %s openshift-config/user-ca-bundle and the seed vSNO %s %s; LCA needs both or neither. "+
+			"A vSNO installed from the release cache has it and one installed with --no-cache doesn't: make the seed from a vSNO installed the same way as the target",
+			hasText(targetHas), from, hasText(seedHas))
+	}
 	return nil
+}
+
+// hasUserCABundle reports whether the vSNO has openshift-config/user-ca-bundle.
+func hasUserCABundle(ctx context.Context, a guestctl.Access) (bool, error) {
+	var cm guestctl.Object
+	return guestctl.Get(ctx, a, &cm, "get", "configmap", "user-ca-bundle", "-n", "openshift-config", "--ignore-not-found")
+}
+
+func hasText(has bool) string {
+	if has {
+		return "has"
+	}
+	return "doesn't have"
 }
 
 // moveTo asks LCA for stage s, unless the target is already there (at), and
