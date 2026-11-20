@@ -9,9 +9,11 @@ import (
 	"github.com/sebrandon1/vsno/lib/ibu"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
+	lcaSource     ibu.LCASource
 	prRole        string
 	upSeed        string
 	upSeedVersion string
@@ -57,8 +59,18 @@ later with --finalize.`,
 	RunE: runUpgrade,
 }
 
+// addLCAFlags lets a command take LCA from a git ref or an image instead of
+// the vSNO's catalog.
+func addLCAFlags(f *pflag.FlagSet) {
+	f.StringVar(&lcaSource.Ref, "lca-ref", "", "build LCA from this branch, tag or SHA in the cluster and deploy it, instead of the catalog's")
+	f.StringVar(&lcaSource.Repo, "lca-repo", "", "the git repository --lca-ref is in (default "+ibu.DefaultLCARepo+"); forks work")
+	f.StringVar(&lcaSource.Image, "lca-image", "", "deploy this prebuilt LCA image instead of building one, with --lca-ref's manifests (default main)")
+}
+
 func init() {
 	prepareCmd.Flags().StringVar(&prRole, "role", string(ibu.RoleTarget), "what the vSNOs are for: seed or target")
+	addLCAFlags(prepareCmd.Flags())
+	addLCAFlags(upgradeCmd.Flags())
 	f := upgradeCmd.Flags()
 	f.StringVar(&upSeed, "seed", "", "the seed: an image, <vsno>:<version>, or a vSNO for its newest seed (required unless --abort)")
 	f.StringVar(&upSeedVersion, "seed-version", "", "the seed's OpenShift version, for an image outside the environment's registry")
@@ -81,7 +93,7 @@ func runPrepare(cmd *cobra.Command, args []string) error {
 	if outputFormat != formatJSON {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Preparing %s in %s as %s...\n\n", strings.Join(args, ", "), namespace, role)
 	}
-	out, err := ibu.Prepare(cmd.Context(), env, ibu.PrepareOptions{Namespace: namespace, Names: args, Role: role})
+	out, err := ibu.Prepare(cmd.Context(), env, ibu.PrepareOptions{Namespace: namespace, Names: args, Role: role, LCA: lcaSource})
 	if err != nil {
 		return err
 	}
@@ -96,6 +108,14 @@ func runPrepare(cmd *cobra.Command, args []string) error {
 		t.Row(p.Name, string(p.Role), p.LCA, p.OADP)
 	}
 	t.Write(w)
+	for _, p := range out {
+		for _, warn := range p.Warnings {
+			fmt.Fprintf(w, "%s %s: %s\n", pal.Yellow("!"), p.Name, warn)
+		}
+	}
+	if len(out) > 0 && out[0].Built != nil {
+		fmt.Fprintf(w, "\nLCA built from %s at %s (version %s): %s\n", out[0].Built.Repo, out[0].Built.Ref, orDash(out[0].Built.Version), out[0].Built.Image)
+	}
 	return nil
 }
 
@@ -109,7 +129,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	o := ibu.UpgradeOptions{Namespace: namespace, Target: args[0], Seed: upSeed, SeedVersion: upSeedVersion,
-		To: to, Finalize: upFinalize, Rollback: upRollback, Abort: upAbort}
+		To: to, Finalize: upFinalize, Rollback: upRollback, Abort: upAbort, LCA: lcaSource}
 	if outputFormat != formatJSON {
 		if upAbort {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Canceling the Prep of vSNO %s in %s...\n\n", args[0], namespace)

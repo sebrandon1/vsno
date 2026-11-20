@@ -122,7 +122,7 @@ func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 		head := []string{pal.Bold("NAMESPACE"), pal.Bold("NAME"), pal.Bold("STATE"), pal.Bold("VERSION"), pal.Bold("AGE"),
 			pal.Bold("CPU"), pal.Bold("MEMORY"), pal.Bold("DISK"), pal.Bold("API"), pal.Bold("DETAIL")}
 		if outputFormat == formatWide {
-			head = append(head, pal.Bold("CACHED"), pal.Bold("ISO"), pal.Bold("INSTALL"), pal.Bold("REBOOT"), pal.Bold("READY"))
+			head = append(head, pal.Bold("CACHED"), pal.Bold("ISO"), pal.Bold("INSTALL"), pal.Bold("REBOOT"), pal.Bold("READY"), pal.Bold("LCA"))
 		}
 		t.Row(head...)
 		for _, g := range l.VSNOs {
@@ -133,7 +133,7 @@ func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 			row := []string{g.Namespace, g.Name, stateText(pal, g.State), g.ShownVersion(), age(now.Sub(g.Created)), size(g.Cores, ""),
 				size(g.MemoryGiB, "Gi"), size(g.DiskGiB, "Gi"), api, pal.Dim(detailText(g))}
 			if outputFormat == formatWide {
-				row = append(row, yesNo(g.Cached), orDash(g.Timings.ISO), orDash(g.Timings.Install), orDash(g.Timings.Reboot), orDash(g.Timings.Available))
+				row = append(row, yesNo(g.Cached), orDash(g.Timings.ISO), orDash(g.Timings.Install), orDash(g.Timings.Reboot), orDash(g.Timings.Available), lcaText(g.LCA))
 			}
 			t.Row(row...)
 		}
@@ -144,6 +144,14 @@ func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 			c.Node, c.FreeMemoryGiB, c.FitDefault, guest.DefaultMemoryGiB)
 	}
 	return nil
+}
+
+// lcaText is where a vSNO's LCA came from: "catalog", or the ref it was built from.
+func lcaText(src string) string {
+	if src == "" {
+		return "catalog"
+	}
+	return src
 }
 
 // detailText is a vSNO's detail, led by its IBU stage when one is under way.

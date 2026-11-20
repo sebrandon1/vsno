@@ -83,6 +83,8 @@ type Guest struct {
 	Unhealthy *int `json:"unhealthyOperators,omitempty"`
 	// IBU is the Image Based Upgrade stage, such as "Upgrade done"; "" when idle.
 	IBU string `json:"ibu,omitempty"`
+	// LCA is where its LCA came from when built from a ref; "" for the catalog's.
+	LCA string `json:"lca,omitempty"`
 	// Cached is true when the guest installed from the registry mirror.
 	Cached bool `json:"cached,omitempty"`
 	// Timings are how long create's phases took; empty when not measured.
@@ -253,6 +255,7 @@ func observe(ctx context.Context, e Env, vm *unstructured.Unstructured) (Guest, 
 	}
 	g.Node, _, _ = unstructured.NestedString(vm.Object, "spec", "template", "spec", "nodeSelector", "kubernetes.io/hostname")
 	g.Cached = ann[AnnCached] == "true"
+	g.LCA = ann[AnnLCASource]
 	g.Timings = Timings{ISO: ann[AnnTimingISO], Install: ann[AnnTimingInstall], Reboot: ann[AnnTimingReboot], Available: ann[AnnTimingAvailable]}
 
 	o := Observed{VMStatus: nested(vm, "status", "printableStatus"), WantsRunning: wantsRunning(vm)}

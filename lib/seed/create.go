@@ -149,8 +149,57 @@ func poll(ctx context.Context, e Env, limit time.Duration, fn func() (bool, erro
 // LCA is the Lifecycle Agent, which makes seed images and runs upgrades.
 var LCA = guestctl.Operator{Name: "LCA", Package: "lifecycle-agent", CSVPrefix: "lifecycle-agent.", Namespace: LCANamespace, Management: true}
 
-// ensureLCA installs LCA from the vSNO's own catalog unless it's there.
+// LCADeployment is LCA's controller, as both its catalog bundle and its
+// source's config/default name it.
+const LCADeployment = "lifecycle-agent-controller-manager"
+
+// SourceLCA reports whether the vSNO runs LCA deployed from a ref rather than
+// by OLM, and its controller image: OLM labels what it deploys with olm.owner.
+func SourceLCA(ctx context.Context, a Access) (image string, fromSource bool, err error) {
+	var d struct {
+		Metadata struct {
+			Labels map[string]string `json:"labels"`
+		} `json:"metadata"`
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Name  string `json:"name"`
+						Image string `json:"image"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	found, err := guestctl.Get(ctx, a, &d, "get", "deployments", LCADeployment, "-n", LCANamespace, "--ignore-not-found")
+	if err != nil || !found || d.Metadata.Labels["olm.owner"] != "" {
+		return "", false, err
+	}
+	for _, c := range d.Spec.Template.Spec.Containers {
+		if c.Name == "manager" {
+			return c.Image, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// InstalledLCA names the LCA a vSNO runs: the controller's image when it was
+// deployed from a ref, or its CSV when OLM installed it; "" when none runs.
+func InstalledLCA(ctx context.Context, a Access) (string, error) {
+	if image, fromSource, err := SourceLCA(ctx, a); err != nil || fromSource {
+		return image, err
+	}
+	csv, _, err := LCA.CSV(ctx, a)
+	return csv, err
+}
+
+// ensureLCA installs LCA from the vSNO's own catalog unless it's there. LCA
+// deployed from a ref (vsno prepare --lca-ref) is kept: subscribing would
+// replace it.
 func ensureLCA(ctx context.Context, e Env, a Access, ps precheck.ProgressStep) (string, error) {
+	if image, fromSource, err := SourceLCA(ctx, a); err != nil || fromSource {
+		return image, err
+	}
 	return LCA.Ensure(ctx, a, e.Clock(), lcaWait, ps)
 }
 

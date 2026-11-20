@@ -49,14 +49,19 @@ type PrepareOptions struct {
 	Namespace string
 	Names     []string
 	Role      Role
+	// LCA is where LCA comes from; the zero value is the vSNO's catalog.
+	LCA LCASource
 }
 
 // Prepared is what Prepare left on one vSNO.
 type Prepared struct {
 	Name string `json:"name"`
 	Role Role   `json:"role"`
-	LCA  string `json:"lca"`
+	LCA  string `json:"lca"` // its CSV, or the image built from a ref
 	OADP string `json:"oadp"`
+	// Built is the LCA built from a ref and deployed, when not from the catalog.
+	Built    *BuiltLCA `json:"built,omitempty"`
+	Warnings []string  `json:"warnings,omitempty"`
 }
 
 // Prepare readies each vSNO for its role, reusing whatever is already there.
@@ -72,9 +77,21 @@ func Prepare(ctx context.Context, e Env, o PrepareOptions) ([]Prepared, error) {
 			return nil, err
 		}
 	}
+	var built *BuiltLCA
+	if !o.LCA.FromCatalog() {
+		if err := guestctl.Step(e.Progress, "Building LCA", func(ps precheck.ProgressStep) (string, error) {
+			built, err = buildLCA(ctx, e, o.Namespace, o.LCA, reg, ps)
+			if err != nil {
+				return "", err
+			}
+			return built.String(), nil
+		}); err != nil {
+			return nil, err
+		}
+	}
 	out := make([]Prepared, 0, len(o.Names))
 	for _, name := range o.Names {
-		p, err := prepareOne(ctx, e, name, o.Role, reg, store)
+		p, err := prepareOne(ctx, e, o.Namespace, name, o.Role, reg, store, built)
 		out = append(out, p)
 		if err != nil {
 			return out, fmt.Errorf("%s: %w", name, err)
@@ -83,21 +100,37 @@ func Prepare(ctx context.Context, e Env, o PrepareOptions) ([]Prepared, error) {
 	return out, nil
 }
 
-func prepareOne(ctx context.Context, e Env, name string, role Role, reg seed.Registry, store *backupStore) (Prepared, error) {
-	p := Prepared{Name: name, Role: role}
+func prepareOne(ctx context.Context, e Env, ns, name string, role Role, reg seed.Registry, store *backupStore, built *BuiltLCA) (Prepared, error) {
+	p := Prepared{Name: name, Role: role, Built: built}
 	a := e.Access(name)
 	c := e.Clock()
-	for _, op := range []struct {
-		dst *string
-		op  guestctl.Operator
-	}{{&p.LCA, seed.LCA}, {&p.OADP, OADP}} {
-		if err := guestctl.Step(e.Progress, name+": "+op.op.Name, func(ps precheck.ProgressStep) (string, error) {
+	if err := guestctl.Step(e.Progress, name+": LCA", func(ps precheck.ProgressStep) (string, error) {
+		if built == nil {
+			// A vSNO running LCA from a ref keeps it: subscribing to the
+			// catalog's would replace it.
+			if image, fromSource, err := seed.SourceLCA(ctx, a); err != nil || fromSource {
+				p.LCA = image
+				return image + " (from source, kept)", err
+			}
 			var err error
-			*op.dst, err = op.op.Ensure(ctx, a, c, operatorWait, ps)
-			return *op.dst, err
-		}); err != nil {
-			return p, err
+			p.LCA, err = seed.LCA.Ensure(ctx, a, c, operatorWait, ps)
+			return p.LCA, err
 		}
+		p.LCA = built.Image
+		p.Warnings = append(p.Warnings, versionWarning(ctx, a, built)...)
+		if err := deployLCA(ctx, a, c, built, reg, ps); err != nil {
+			return "", err
+		}
+		return built.String(), recordLCA(ctx, e, ns, name, built)
+	}); err != nil {
+		return p, err
+	}
+	if err := guestctl.Step(e.Progress, name+": "+OADP.Name, func(ps precheck.ProgressStep) (string, error) {
+		var err error
+		p.OADP, err = OADP.Ensure(ctx, a, c, operatorWait, ps)
+		return p.OADP, err
+	}); err != nil {
+		return p, err
 	}
 	if err := guestctl.Step(e.Progress, name+": trusting the environment registry", func(ps precheck.ProgressStep) (string, error) {
 		return reg.Host, seed.EnsureTrust(ctx, e, a, reg, ps)
@@ -119,6 +152,16 @@ func prepareOne(ctx context.Context, e Env, name string, role Role, reg seed.Reg
 		}
 		return seed.LCANamespace + "/" + PullSecret, guestctl.Apply(ctx, a, y)
 	})
+}
+
+// versionWarning warns when b's version isn't the vSNO's OpenShift minor:
+// LCA releases follow OpenShift's, and a mismatch is rarely what was meant.
+func versionWarning(ctx context.Context, a guestctl.Access, b *BuiltLCA) []string {
+	id, err := identity(ctx, a)
+	if err != nil || b.Version == "" || minorOf(b.Version) == minorOf(id.Version) {
+		return nil
+	}
+	return []string{fmt.Sprintf("LCA %s at %s is version %s, but the vSNO runs OpenShift %s", b.Ref, b.SHA, b.Version, id.Version)}
 }
 
 // backupStore is the environment's S3, where the target's DPA keeps backups.
@@ -179,7 +222,7 @@ func ensureBackupLocation(ctx context.Context, a guestctl.Access, c guestctl.Clo
 	return err
 }
 
-//go:embed templates/*.tmpl
+//go:embed templates/*.tmpl scripts/*.sh
 var files embed.FS
 
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{"quote": strconv.Quote}).ParseFS(files, "templates/*.tmpl"))

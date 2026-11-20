@@ -39,6 +39,8 @@ type UpgradeOptions struct {
 	// Abort moves a target in Prep back to Idle, which is how LCA cancels a
 	// Prep, failed or not. It needs no seed.
 	Abort bool
+	// LCA is where the target's LCA comes from, as for Prepare.
+	LCA LCASource
 }
 
 // UpgradeResult is a finished, or failed, upgrade.
@@ -86,7 +88,7 @@ func begin(ctx context.Context, e Env, o UpgradeOptions, res *UpgradeResult) (a 
 	if res.SeedImage, res.SeedVersion, madeFrom, err = resolveSeed(ctx, e, o); err != nil {
 		return nil, "", "", err
 	}
-	if _, err := Prepare(ctx, e, PrepareOptions{Namespace: o.Namespace, Names: []string{o.Target}, Role: RoleTarget}); err != nil {
+	if _, err := Prepare(ctx, e, PrepareOptions{Namespace: o.Namespace, Names: []string{o.Target}, Role: RoleTarget, LCA: o.LCA}); err != nil {
 		return nil, "", "", err
 	}
 	a = e.Access(o.Target)
@@ -262,12 +264,12 @@ func checkSeed(ctx context.Context, e Env, from, targetName string, target guest
 		return nil
 	}
 	sa := e.Access(from)
-	theirs, _, err := seed.LCA.CSV(ctx, sa)
+	theirs, err := seed.InstalledLCA(ctx, sa)
 	if err != nil || theirs == "" {
 		res.Warnings = append(res.Warnings, "can't read the seed vSNO "+from+", so it isn't compared with the target (LCA version, trust bundle)")
 		return nil //nolint:nilerr // a stopped seed vSNO is normal after seed generation
 	}
-	ours, _, err := seed.LCA.CSV(ctx, target)
+	ours, err := seed.InstalledLCA(ctx, target)
 	if err != nil {
 		return err
 	}
