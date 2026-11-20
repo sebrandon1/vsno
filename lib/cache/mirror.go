@@ -94,22 +94,8 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 	var elapsed time.Duration
 	if hit {
 		ent = *prev // keep what it was mirrored as, not what this request calls it
-	} else {
-		start := e.Now()
-		ent = Entry{Version: o.Release.Version, Image: o.Release.Image, Digest: digest, Repo: repo,
-			Mirrored: start, Started: start, State: StateMirroring,
-			Requested: appendUnique(oldRequested(prev), o.Release.Requested)}
-		// Say what is happening before the long part starts: a create that is
-		// mirroring should be visible in `vsno cache list`, not only in its log.
-		if err := saveEntry(ctx, e, o.Namespace, digest, ent); err != nil {
-			return nil, err
-		}
-		if ent.SizeBytes, elapsed, err = mirror(ctx, e, o, reg, addr, repo, short(digest), m); err != nil {
-			ent.State, ent.Started = StateFailed, time.Time{}
-			_ = saveEntry(ctx, e, o.Namespace, digest, ent) // best effort: the release is not usable
-			return nil, err
-		}
-		ent.State, ent.Started = "", time.Time{}
+	} else if ent, elapsed, err = mirrorEntry(ctx, e, o, reg, addr, repo, short(digest), digest, oldRequested(prev), m); err != nil {
+		return nil, err
 	}
 	ent.LastUsed = e.Now()
 	ent.Requested = appendUnique(oldRequested(m.Entries[digest]), o.Release.Requested)
@@ -129,6 +115,26 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 		p.Sources = append(p.Sources, ImageDigestSource{Source: s, Mirrors: []string{addr + "/" + repo}})
 	}
 	return p, nil
+}
+
+// mirrorEntry mirrors the release and records the entry as it goes: mirroring
+// before the long part starts (so `cache list` shows it), failed if it breaks,
+// ready when it is done.
+func mirrorEntry(ctx context.Context, e Env, o EnsureOptions, reg registry.Registry, addr, repo, tag, digest string, requested []string, m *metadata) (Entry, time.Duration, error) {
+	start := e.Now()
+	ent := Entry{Version: o.Release.Version, Image: o.Release.Image, Digest: digest, Repo: repo,
+		Mirrored: start, Started: start, State: StateMirroring, Requested: requested}
+	if err := saveEntry(ctx, e, o.Namespace, digest, ent); err != nil {
+		return ent, 0, err
+	}
+	size, elapsed, err := mirror(ctx, e, o, reg, addr, repo, tag, m)
+	if err != nil {
+		ent.State, ent.Started = StateFailed, time.Time{}
+		_ = saveEntry(ctx, e, o.Namespace, digest, ent) // best effort: the release is not usable
+		return ent, elapsed, err
+	}
+	ent.State, ent.Started, ent.SizeBytes = "", time.Time{}, size
+	return ent, elapsed, nil
 }
 
 // saveEntry writes one entry into the cache's record.
