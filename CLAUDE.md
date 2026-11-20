@@ -96,7 +96,12 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   `seed-pull-secret`. `Upgrade` resolves the seed, prepares the target, then `begin` (identity, LCA
   match, `resumeFrom`) and `drive` (`moveTo` each stage, tolerating the API's absence while the node
   reboots). `IBU.Toward` is the one classifier of LCA's conditions (`stageConditions`,
-  `failedReasons`). Tests drive a simulated LCA (`lca` in `ibu_test.go`).
+  `failedReasons`). Tests drive a simulated LCA (`lca` in `ibu_test.go`). `LCASource` (`--lca-ref`,
+  `--lca-repo`, `--lca-image`): `buildLCA` runs `scripts/lca-build.sh` in a privileged buildah pod on
+  the builder's node (it mounts `builder-work`), then `scripts/lca-render.sh` renders `config/default`
+  in the builder with the image replaced; `deployLCA` swaps the guest's OLM LCA for it.
+  `seed.SourceLCA` tells a source deployment from OLM's by the `olm.owner` label, and every LCA install
+  path keeps it.
 - `lib/seed`: Image Based Upgrade seed images. `Precheck` reports what a seed needs (vSNO state,
   registry, guest API and cluster settling, LCA, registry trust, the image and its push credentials)
   and with `Install` sets up LCA and trust; `Create` runs it first, then drives the Lifecycle Agent

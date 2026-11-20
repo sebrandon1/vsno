@@ -10,10 +10,9 @@ One workflow built on top of that is testing
 
 > **Status:** milestones 1–5 are done: `precheck`, `setup`, `status`, `teardown`, the vSNO
 > lifecycle (`create`, `list`, `delete`, `start`, `stop`, `oc`, `ssh`, `kubeconfig`, `screenshot`),
-> seed images, fast creates from an in-cluster release cache, and Image Based Upgrades (`prepare`,
-> `upgrade`). Planned, in order:
-> 1. testing lifecycle-agent builds
-> 2. `vsno run`
+> seed images, fast creates from an in-cluster release cache, Image Based Upgrades (`prepare`,
+> `upgrade`), and testing lifecycle-agent branches in them. Planned:
+> 1. `vsno run`
 >
 > See the [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap).
 
@@ -367,12 +366,41 @@ vSNO's IBU stage in its detail, such as `IBU Upgrade done`.
 
 `prepare <vsno>... --role seed` sets up only what a seed needs (LCA, OADP, registry trust).
 
+### Testing an LCA branch
+
+```bash
+vsno prepare seed-421 target --lca-ref my-fix --lca-repo https://github.com/me/lifecycle-agent
+vsno seed create seed-421                                 # the seed is made with that LCA
+vsno upgrade target --seed seed-421 --finalize            # and the upgrade runs with it
+vsno prepare target --lca-image quay.io/me/lca:test       # a prebuilt image instead of a build
+```
+
+`--lca-ref` (on `prepare` and `upgrade`) builds LCA from a branch, tag or SHA without building
+anything on your laptop. A privileged buildah pod in the environment namespace, next to the builder,
+clones the repository at the ref and builds its `Dockerfile` for `linux/amd64`, using the host
+cluster's pull secret for the base images. It pushes the result to the environment's registry as
+`lca:<sha>`, and skips the build when that tag is already there. `--lca-repo` names a fork (default
+`openshift-kni/lifecycle-agent`), and `--lca-image` deploys a prebuilt image instead of building one.
+
+Each vSNO then runs that LCA instead of its catalog's:
+- the OLM Subscription and CSV are removed; the CRDs and the ImageBasedUpgrade stay
+- the ref's `config/default` manifests are applied with the controller image replaced, as
+  `make deploy` does
+- the registry's login is added to the vSNO's pull secret
+- vsno waits for the controller to run the new image
+
+It warns when the ref's `VERSION` isn't the vSNO's OpenShift minor. The source is recorded on the
+vSNO and shown in the `LCA` column of `vsno list -o wide`. Later `prepare`, `upgrade` and
+`seed create` runs keep an LCA deployed from a ref rather than replacing it with the catalog's.
+Prepare seed and target from the same ref: `upgrade` refuses a seed made with a different LCA.
+
 | Flag | Meaning |
 |---|---|
 | `--seed` | The seed image, `<vsno>:<version>`, or a vSNO (required) |
 | `--seed-version` | The seed's OpenShift version, for an image outside the environment's registry |
 | `--to prep\|upgrade` | Stop after this stage (default `upgrade`) |
 | `--finalize`, `--rollback` | After the upgrade, finalize it or roll it back |
+| `--lca-ref`, `--lca-repo`, `--lca-image` | Run LCA built from a ref, or a prebuilt image, instead of the catalog's (also on `prepare`) |
 
 ## ISOs and caches
 
