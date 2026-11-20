@@ -58,6 +58,12 @@ type Options struct {
 	// RegistrySize is the registry's volume, e.g. 200Gi. Empty means the default,
 	// and an existing volume only ever grows.
 	RegistrySize string
+	// MemoryOvercommit sets OpenShift Virtualization's memory overcommit, in
+	// percent (150 makes each VM's pod request 2/3 of its guest memory); 0
+	// leaves it. KSM turns kernel samepage merging on for the vSNO node. Both
+	// change every VM on the cluster, so setup asks first unless Yes.
+	MemoryOvercommit int
+	KSM              bool
 }
 
 // Outcome says what a step did.
@@ -137,7 +143,7 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 	}{
 		{"OpenShift Virtualization operator", r.operator(cnv)},
 		{"LVM Storage operator", r.operator(lvms)},
-		{"HyperConverged", r.hyperConverged},
+		{"HyperConverged", r.hyperConvergedAndDensity},
 		{"LVMS storage", r.storage},
 		{"Namespace " + o.Namespace, r.namespace},
 		{"Support services", r.support},
@@ -310,6 +316,11 @@ func (r *runner) saveState(ctx context.Context, status state.StageStatus, detail
 	if status == state.Done {
 		st.Node, st.Disk, st.HostDNS = r.cfg.Node, r.cfg.DiskByID, r.cfg.HostDNS
 		st.Services, st.Versions = r.st.Services, r.st.Versions
+	}
+	// The settings before vsno first changed them: a later change mustn't
+	// replace them, or teardown would restore vsno's own values.
+	if st.PreviousDensity == nil {
+		st.PreviousDensity = r.st.PreviousDensity
 	}
 	st.Record(StageName, status, detail, r.Now())
 	return state.Save(ctx, r.Kube, r.o.Namespace, st)

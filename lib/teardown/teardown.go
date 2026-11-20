@@ -16,6 +16,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/state"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -86,6 +87,9 @@ type Result struct {
 	Blockers []string `json:"blockers,omitempty"`
 	// Forced is true when Force overrode the Blockers.
 	Forced bool `json:"forced,omitempty"`
+	// RestoreDensity is the HyperConverged density setup replaced, which a
+	// teardown without Host puts back; with Host, HyperConverged goes.
+	RestoreDensity *state.Density `json:"restoreDensity,omitempty"`
 	// Steps mirror setup's steps in reverse; Objects are their objects.
 	Steps   []Step   `json:"steps"`
 	Objects []Object `json:"objects"`
@@ -108,6 +112,11 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 	if err := p.planSteps(ctx); err != nil {
 		return res, err
 	}
+	if !o.Host {
+		if st, _, err := state.Load(ctx, e.Kube, o.Namespace); err == nil {
+			res.RestoreDensity = st.PreviousDensity
+		}
+	}
 	for i := range res.Targets {
 		res.Targets[i].Outcome = Planned // until deleted
 	}
@@ -120,27 +129,47 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 	if len(res.Targets) == 0 || o.DryRun {
 		return res, nil
 	}
-	if !o.Yes {
-		answer := o.Namespace
-		if o.Host {
-			answer = "host"
-		}
-		if e.ShowPlan != nil {
-			e.ShowPlan(res)
-		}
-		q := fmt.Sprintf("This deletes %d object(s), listed above, and everything else in the namespace. Type %q to continue",
-			apply.Count(res.Changes(), apply.Delete), answer)
-		if e.Confirm == nil || !e.Confirm(q, answer) {
-			return res, errors.New("not confirmed; rerun with --yes to skip the question")
+	if err := p.confirm(res); err != nil {
+		return res, err
+	}
+	return res, p.execute(ctx, res)
+}
+
+// confirm shows the plan and asks, unless Yes.
+func (p *planner) confirm(res *Result) error {
+	if p.o.Yes {
+		return nil
+	}
+	answer := p.o.Namespace
+	if p.o.Host {
+		answer = "host"
+	}
+	if p.ShowPlan != nil {
+		p.ShowPlan(res)
+	}
+	q := fmt.Sprintf("This deletes %d object(s), listed above, and everything else in the namespace. Type %q to continue",
+		apply.Count(res.Changes(), apply.Delete), answer)
+	if p.Confirm == nil || !p.Confirm(q, answer) {
+		return errors.New("not confirmed; rerun with --yes to skip the question")
+	}
+	return nil
+}
+
+// execute puts HyperConverged's density back, then deletes the targets in order.
+func (p *planner) execute(ctx context.Context, res *Result) error {
+	defer res.markDeleted()
+	// Before the namespace goes: its state is where the old settings are.
+	if res.RestoreDensity != nil {
+		if err := cluster.ApplyDensity(ctx, p.Dyn, *res.RestoreDensity); err != nil {
+			return err
 		}
 	}
-	defer res.markDeleted()
 	for i := range res.Targets {
 		if err := p.delete(ctx, &res.Targets[i]); err != nil {
-			return res, err
+			return err
 		}
 	}
-	return res, nil
+	return nil
 }
 
 func (e *Env) defaults() {

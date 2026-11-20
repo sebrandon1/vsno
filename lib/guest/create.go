@@ -246,11 +246,15 @@ func checkEnvironment(ctx context.Context, e Env, ns string) error {
 
 // checkCapacity refuses a vSNO that doesn't fit the node next to what runs there.
 func checkCapacity(ctx context.Context, e Env, s Spec) error {
-	c, err := NodeCapacity(ctx, e.Kube, s.Node)
+	d, err := cluster.ReadDensity(ctx, e.Dyn)
 	if err != nil {
 		return err
 	}
-	need := s.MemoryGiB + vmOverheadGiB
+	c, err := NodeCapacity(ctx, e.Kube, s.Node, d.Percent())
+	if err != nil {
+		return err
+	}
+	need := cluster.RequestGiB(s.MemoryGiB, d.Percent()) + vmOverheadGiB
 	switch {
 	case int64(s.Cores) > c.Cores:
 		return fmt.Errorf("--cores %d is more than node %s has (%d)", s.Cores, s.Node, c.Cores)

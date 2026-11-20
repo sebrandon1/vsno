@@ -503,3 +503,45 @@ func TestShort(t *testing.T) {
 		t.Errorf("short = %q", got)
 	}
 }
+
+// A plain teardown puts back the density setup replaced, before the namespace
+// (and the state that recorded it) goes; with --host, HyperConverged goes too.
+func TestRunRestoresDensity(t *testing.T) {
+	ctx := context.Background()
+	k := newKube()
+	prev := &state.Density{OvercommitPercent: 120}
+	if err := state.Save(ctx, k, ns, &state.State{Node: "worker-1", PreviousDensity: prev}); err != nil {
+		t.Fatal(err)
+	}
+	d := newDyn(host()...)
+	var order []string
+	d.PrependReactor("*", "*", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		if a.GetVerb() == "patch" || a.GetVerb() == "delete" {
+			order = append(order, a.GetVerb()+" "+a.GetResource().Resource)
+		}
+		if a.GetVerb() == "patch" {
+			return true, obj("hco.kubevirt.io/v1beta1", "HyperConverged", cluster.CNVNamespace, cluster.HyperConvergedName), nil
+		}
+		return false, nil, nil
+	})
+	res, err := Run(ctx, (&confirmer{}).env(k, d), Options{Namespace: ns, Yes: true})
+	if err != nil || res.RestoreDensity == nil || *res.RestoreDensity != *prev {
+		t.Fatalf("err = %v, restore = %+v", err, res.RestoreDensity)
+	}
+	if len(order) < 2 || order[0] != "patch hyperconvergeds" || order[1] != "delete namespaces" {
+		t.Errorf("order = %v", order)
+	}
+
+	// A dry run says so and changes nothing.
+	k = newKube()
+	_ = state.Save(ctx, k, ns, &state.State{Node: "worker-1", PreviousDensity: prev})
+	if res, err := Run(ctx, (&confirmer{}).env(k, newDyn(host()...)), Options{Namespace: ns, DryRun: true}); err != nil || res.RestoreDensity == nil {
+		t.Errorf("dry run: %v %+v", err, res.RestoreDensity)
+	}
+
+	k = newKube()
+	_ = state.Save(ctx, k, ns, &state.State{Node: "worker-1", PreviousDensity: prev})
+	if res, _ := Run(ctx, (&confirmer{}).env(k, newDyn(host()...)), Options{Namespace: ns, Host: true, DryRun: true}); res.RestoreDensity != nil {
+		t.Errorf("--host: restore = %+v", res.RestoreDensity)
+	}
+}

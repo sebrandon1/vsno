@@ -183,7 +183,7 @@ func TestCollectMissingNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Exists || r.Managed || r.Healthy() || r.Support != nil || len(r.Host) != 5 {
+	if r.Exists || r.Managed || r.Healthy() || r.Support != nil || len(r.Host) != 6 {
 		t.Errorf("report = %+v", r)
 	}
 	if c := byName(r.Host)["storage"]; c.Status != precheck.Fail {
@@ -291,7 +291,7 @@ func TestCollectErrors(t *testing.T) {
 	}
 	for _, c := range append(rep.Host, rep.Support...) {
 		want := precheck.Fail
-		if c.Name == "vms" {
+		if c.Name == "vms" || c.Name == "density" { // informational: they only warn
 			want = precheck.Warn
 		}
 		if c.Status != want || !strings.Contains(c.Detail, "down") {

@@ -255,7 +255,7 @@ func observe(ctx context.Context, e Env, vm *unstructured.Unstructured) (Guest, 
 	g.Cached = ann[AnnCached] == "true"
 	g.Timings = Timings{ISO: ann[AnnTimingISO], Install: ann[AnnTimingInstall], Reboot: ann[AnnTimingReboot], Available: ann[AnnTimingAvailable]}
 
-	o := Observed{VMStatus: nested(vm, "status", "printableStatus")}
+	o := Observed{VMStatus: nested(vm, "status", "printableStatus"), WantsRunning: wantsRunning(vm)}
 	if dv, err := e.Dyn.Resource(GVRDataVolume).Namespace(ns).Get(ctx, name+"-iso", metav1.GetOptions{}); err == nil {
 		o.ISOPhase, o.ISOProgress = nested(dv, "status", "phase"), nested(dv, "status", "progress")
 	}
@@ -332,11 +332,25 @@ type Capacity struct {
 	FitDefault int64 `json:"fitDefault"`
 }
 
+// wantsRunning reports whether a VM's spec says it should run: runStrategy
+// Always or RerunOnFailure, or the older spec.running.
+func wantsRunning(vm *unstructured.Unstructured) bool {
+	switch nested(vm, "spec", "runStrategy") {
+	case "Always", "RerunOnFailure":
+		return true
+	case "":
+		running, _, _ := unstructured.NestedBool(vm.Object, "spec", "running")
+		return running
+	}
+	return false
+}
+
 // vmOverheadGiB approximates the virt-launcher pod's memory beyond the guest's.
 const vmOverheadGiB = 1
 
-// NodeCapacity reports what's left on node.
-func NodeCapacity(ctx context.Context, kube kubernetes.Interface, node string) (Capacity, error) {
+// NodeCapacity reports what's left on node, for vSNOs whose pods request
+// their memory at percent overcommit (100 for none; see cluster.ReadDensity).
+func NodeCapacity(ctx context.Context, kube kubernetes.Interface, node string, percent int) (Capacity, error) {
 	n, err := kube.CoreV1().Nodes().Get(ctx, node, metav1.GetOptions{})
 	if err != nil {
 		return Capacity{}, fmt.Errorf("reading node %s: %w", node, err)
@@ -357,6 +371,6 @@ func NodeCapacity(ctx context.Context, kube kubernetes.Interface, node string) (
 		}
 	}
 	c := Capacity{Node: node, Cores: n.Status.Allocatable.Cpu().Value(), FreeMemoryGiB: max(0, free>>30)}
-	c.FitDefault = c.FreeMemoryGiB / (DefaultMemoryGiB + vmOverheadGiB)
+	c.FitDefault = c.FreeMemoryGiB / (cluster.RequestGiB(DefaultMemoryGiB, percent) + vmOverheadGiB)
 	return c, nil
 }

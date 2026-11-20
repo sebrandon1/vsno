@@ -63,6 +63,7 @@ var (
 	GVRInstallPlan     = schema.GroupVersionResource{Group: "operators.coreos.com", Version: "v1alpha1", Resource: "installplans"}
 	GVRCSV             = schema.GroupVersionResource{Group: "operators.coreos.com", Version: "v1alpha1", Resource: "clusterserviceversions"}
 	GVRPackageManifest = schema.GroupVersionResource{Group: "packages.operators.coreos.com", Version: "v1", Resource: "packagemanifests"}
+	GVRHyperConverged  = schema.GroupVersionResource{Group: "hco.kubevirt.io", Version: "v1beta1", Resource: "hyperconvergeds"}
 	GVRVirtualMachine  = schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}
 	GVRVMI             = schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachineinstances"}
 )

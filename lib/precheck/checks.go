@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/state"
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -22,7 +23,7 @@ import (
 var (
 	GVRClusterVersion = schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "clusterversions"}
 	GVRNetwork        = schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "networks"}
-	GVRHyperConverged = schema.GroupVersionResource{Group: "hco.kubevirt.io", Version: "v1beta1", Resource: "hyperconvergeds"}
+	GVRHyperConverged = cluster.GVRHyperConverged
 	GVRLVMCluster     = schema.GroupVersionResource{Group: "lvm.topolvm.io", Version: "v1alpha1", Resource: "lvmclusters"}
 )
 
@@ -215,6 +216,9 @@ func (e *Env) checkCatalog(ctx context.Context, r *Report) {
 func (e *Env) checkExisting(ctx context.Context, r *Report) (lvmsReady bool) {
 	e.existingOperator(ctx, r, cluster.CNV, r.Suggested.CNVChannel, "Existing: OpenShift Virtualization")
 	e.existingOperator(ctx, r, cluster.LVMS, r.Suggested.LVMSChannel, "Existing: LVM Storage operator")
+	if d, err := cluster.ReadDensity(ctx, e.Dyn); err == nil && d != (state.Density{}) {
+		r.add(Result{Check: "Existing: VM density", Status: Info, Detail: d.String() + "; vsno create counts capacity with it"})
+	}
 	if lc, err := e.Dyn.Resource(GVRLVMCluster).Namespace(storageNS).List(ctx, metav1.ListOptions{}); err == nil && len(lc.Items) > 0 {
 		r.add(Result{Check: "Existing: LVM Storage", Status: Info,
 			Detail: fmt.Sprintf("%d LVMCluster(s) present (%s)", len(lc.Items), lc.Items[0].GetName())})
