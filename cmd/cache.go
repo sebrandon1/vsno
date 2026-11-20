@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -53,6 +54,19 @@ It lists what it would remove and asks you to type "prune" first, unless
 	RunE: runCachePrune,
 }
 
+var cacheGCCmd = &cobra.Command{
+	Use:   "gc",
+	Short: "Free the space of deleted images by collecting the registry's garbage",
+	Long: `gc runs the registry's own garbage collector over its volume. It is what frees
+the space that deleted images still hold, whether they were removed by prune or
+by "vsno seed delete".
+
+The registry is unavailable while it runs, so this stops it, runs the collector
+in a Job, and starts it again; it refuses while a release mirror is running.`,
+	Args: cobra.NoArgs,
+	RunE: runCacheGC,
+}
+
 var cacheListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
@@ -62,6 +76,7 @@ var cacheListCmd = &cobra.Command{
 }
 
 var (
+	cgYes    bool
 	cpKeep   int
 	cpYes    bool
 	cpDryRun bool
@@ -74,7 +89,8 @@ func init() {
 	f.BoolVar(&cpYes, "yes", false, "don't ask for confirmation")
 	f.BoolVar(&cpDryRun, "dry-run", false, "list what would be removed and change nothing")
 	f.BoolVar(&cpNoGC, "no-gc", false, "skip the registry garbage collection, which is what frees the space")
-	cacheCmd.AddCommand(cacheAddCmd, cacheListCmd, cachePruneCmd)
+	cacheGCCmd.Flags().BoolVar(&cgYes, "yes", false, "don't ask for confirmation")
+	cacheCmd.AddCommand(cacheAddCmd, cacheListCmd, cacheGCCmd, cachePruneCmd)
 	rootCmd.AddCommand(cacheCmd)
 }
 
@@ -174,6 +190,35 @@ func runCachePrune(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(w, "Nothing to prune: every cached release is in use or within --keep.")
 	}
 	return err
+}
+
+func runCacheGC(cmd *cobra.Command, _ []string) error {
+	env, _, err := cacheEnv(cmd)
+	if err != nil {
+		return err
+	}
+	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
+	if !cgYes {
+		q := fmt.Sprintf("This stops the registry in %s for a few seconds to collect its garbage. Type %q to continue", namespace, "gc")
+		if !confirmOnTerminal(os.Stdin, cmd.ErrOrStderr())(q, "gc") {
+			return errors.New("not confirmed; rerun with --yes to skip the question")
+		}
+	}
+	start := time.Now()
+	ps := newProgress().Start("Collecting the registry's garbage")
+	before, _, _ := env.Usage(cmd.Context(), namespace)
+	if err := cache.GarbageCollect(cmd.Context(), env, namespace); err != nil {
+		ps.Fail(err.Error())
+		return err
+	}
+	after, _, _ := env.Usage(cmd.Context(), namespace)
+	ps.Done("done in " + ui.FormatElapsed(time.Since(start)))
+	freed := int64(0)
+	if before > after {
+		freed = before - after
+	}
+	fmt.Fprintf(w, "%s Collected the registry's garbage in %s, freeing %s.\n", pal.Icon("✓"), ui.FormatElapsed(time.Since(start)), bytesText(freed))
+	return nil
 }
 
 func renderCachePlan(w io.Writer, p *cache.PrunePlan, pal ui.Palette) {
