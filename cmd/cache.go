@@ -9,6 +9,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
+	"github.com/sebrandon1/vsno/lib/release"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
 )
@@ -22,6 +23,21 @@ internet. create mirrors a release the first time it is used; --no-cache turns
 that off.`,
 }
 
+var cacheAddCmd = &cobra.Command{
+	Use:   "add <version>",
+	Short: "Mirror an OpenShift release into the environment's registry",
+	Long: `add mirrors a release's payload into the environment's registry, so vSNOs of
+that version install from the cluster instead of the internet. create does
+this itself the first time it uses a version; add is for doing it ahead of
+time, or for a version you want ready.
+
+<version> takes what create accepts: 4.20.46, 4.20, a nightly, or a release
+image pullspec. Nightlies need registry.ci.openshift.org credentials in the
+cluster's pull secret, which create already requires for them.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runCacheAdd,
+}
+
 var cacheListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
@@ -31,7 +47,7 @@ var cacheListCmd = &cobra.Command{
 }
 
 func init() {
-	cacheCmd.AddCommand(cacheListCmd)
+	cacheCmd.AddCommand(cacheAddCmd, cacheListCmd)
 	rootCmd.AddCommand(cacheCmd)
 }
 
@@ -50,6 +66,38 @@ func cacheEnv(cmd *cobra.Command) (cache.Env, guest.Env, error) {
 	}
 	env := cache.Env{Kube: c.Kube, Dyn: c.Dyn, Config: c.Config, Builder: genv.Builder}
 	return env, genv, nil
+}
+
+func runCacheAdd(cmd *cobra.Command, args []string) error {
+	env, _, err := cacheEnv(cmd)
+	if err != nil {
+		return err
+	}
+	rel, err := release.Resolver{}.Resolve(cmd.Context(), args[0])
+	if err != nil {
+		return err
+	}
+	start := time.Now()
+	ps := newProgress().Start("Mirroring " + args[0])
+	p, err := cache.Ensure(cmd.Context(), env, cache.EnsureOptions{Namespace: namespace, Release: rel, OnLine: ps.Update})
+	if err != nil {
+		ps.Fail(err.Error())
+		return err
+	}
+	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
+	if outputFormat == formatJSON {
+		ps.Done("")
+		return writeJSON(w, p)
+	}
+	if p.Hit {
+		ps.Done("already cached")
+		fmt.Fprintf(w, "%s %s is already in %s.\n", pal.Icon("✓"), p.Image, p.Repo)
+		return nil
+	}
+	ps.Done("mirrored in " + ui.FormatElapsed(time.Since(start)))
+	fmt.Fprintf(w, "%s Mirrored %s into %s (%s) in %s.\n", pal.Icon("✓"), p.Image, p.Repo, bytesText(p.SizeBytes), ui.FormatElapsed(time.Since(start)))
+	fmt.Fprintln(w, "vSNOs of this version now install from the registry.")
+	return nil
 }
 
 func runCacheList(cmd *cobra.Command, _ []string) error {

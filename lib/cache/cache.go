@@ -39,6 +39,17 @@ type Env struct {
 	Config  *rest.Config
 	Builder builder.Runner
 	Now     func() time.Time
+	// Usage reads the registry volume's used and total size; nil reads it from
+	// the registry pod.
+	Usage func(ctx context.Context, ns string) (used, total int64, err error)
+}
+
+// usage is the registry volume's numbers, however Env gets them.
+func (e Env) usage(ctx context.Context, ns string) (used, total int64, err error) {
+	if e.Usage != nil {
+		return e.Usage(ctx, ns)
+	}
+	return registry.Usage(ctx, e.Config, e.Kube, ns)
 }
 
 func (e *Env) defaults() {
@@ -96,7 +107,7 @@ func List(ctx context.Context, e Env, ns string, users map[string][]string) (*Re
 		}
 		return a.Mirrored.Compare(b.Mirrored)
 	})
-	rep.Used, rep.Total, _ = registry.Usage(ctx, e.Config, e.Kube, ns) // a missing pod leaves them zero
+	rep.Used, rep.Total, _ = e.usage(ctx, ns) // a missing pod leaves them zero
 	return rep, nil
 }
 

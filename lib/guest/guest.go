@@ -4,7 +4,6 @@
 package guest
 
 import (
-	"archive/tar"
 	"bytes"
 	"crypto/sha256"
 	"embed"
@@ -14,6 +13,7 @@ import (
 	"strconv"
 	"text/template"
 
+	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/release"
@@ -195,28 +195,8 @@ func InstallFiles(s Spec, dnsIP string, sec Secrets) (map[string]string, error) 
 	return out, nil
 }
 
-// Tar packs files (path → content) for the builder script's stdin, sorted by path.
-func Tar(files map[string]string) ([]byte, error) {
-	var b bytes.Buffer
-	tw := tar.NewWriter(&b)
-	paths := make([]string, 0, len(files))
-	for p := range files {
-		paths = append(paths, p)
-	}
-	slices.Sort(paths)
-	for _, p := range paths {
-		if err := tw.WriteHeader(&tar.Header{Name: p, Mode: 0o600, Size: int64(len(files[p]))}); err != nil {
-			return nil, err
-		}
-		if _, err := tw.Write([]byte(files[p])); err != nil {
-			return nil, err
-		}
-	}
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	return b.Bytes(), nil
-}
+// Tar packs files for the builder script's stdin (see builder.Tar).
+func Tar(files map[string]string) ([]byte, error) { return builder.Tar(files) }
 
 // script returns an embedded builder script.
 func script(name string) string {
