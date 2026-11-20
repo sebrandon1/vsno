@@ -47,6 +47,8 @@ type Env struct {
 	Digests func(ctx context.Context, ns, repo string) ([]string, error)
 	// Poll is how often to wait for the registry and its Job; 0 = 2s.
 	Poll time.Duration
+	// Progress is how often a mirror reports its throughput; 0 = 5s.
+	Progress time.Duration
 }
 
 // usage is the registry volume's numbers, however Env gets them.

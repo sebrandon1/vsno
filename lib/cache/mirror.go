@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sync"
+	"time"
 
 	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/registry"
@@ -39,6 +41,8 @@ type Prepared struct {
 	// TrustBundle is the registry's CA, for install-config's
 	// additionalTrustBundle.
 	TrustBundle string `json:"-"`
+	// Elapsed is how long the mirror took; zero for a hit.
+	Elapsed time.Duration `json:"-"`
 }
 
 // EnsureOptions are the user's choices for mirroring a release.
@@ -75,11 +79,12 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 		return nil, err
 	}
 	hit := m.Entries[digest] != nil
+	var elapsed time.Duration
 	if hit {
 		ent.Mirrored, ent.SizeBytes = m.Entries[digest].Mirrored, m.Entries[digest].SizeBytes
 	} else {
 		ent.Mirrored = e.Now()
-		if ent.SizeBytes, err = mirror(ctx, e, o, reg, addr, repo, short(digest), m); err != nil {
+		if ent.SizeBytes, elapsed, err = mirror(ctx, e, o, reg, addr, repo, short(digest), m); err != nil {
 			return nil, err
 		}
 	}
@@ -96,7 +101,7 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Prepared{Hit: hit, Entry: ent, PullSecret: merged, TrustBundle: reg.CA}
+	p := &Prepared{Hit: hit, Entry: ent, PullSecret: merged, TrustBundle: reg.CA, Elapsed: elapsed}
 	for _, s := range sources {
 		p.Sources = append(p.Sources, ImageDigestSource{Source: s, Mirrors: []string{addr + "/" + repo}})
 	}
@@ -104,16 +109,17 @@ func Ensure(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 }
 
 // mirror copies the release's payload into the registry, after checking there
-// is room, and returns how much it took.
-func mirror(ctx context.Context, e Env, o EnsureOptions, reg registry.Registry, addr, repo, tag string, m *metadata) (int64, error) {
+// is room, and returns how much it took and how long that took.
+func mirror(ctx context.Context, e Env, o EnsureOptions, reg registry.Registry, addr, repo, tag string, m *metadata) (int64, time.Duration, error) {
+	start := e.Now()
 	used, total, err := e.usage(ctx, o.Namespace)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	est := estimate(m)
 	free := total - used
 	if total > 0 && free < est {
-		return 0, fmt.Errorf("the registry volume has %s free and mirroring %s needs about %s: run `vsno cache prune`, or make the volume bigger with `vsno setup --registry-size`",
+		return 0, 0, fmt.Errorf("the registry volume has %s free and mirroring %s needs about %s: run `vsno cache prune`, or make the volume bigger with `vsno setup --registry-size`",
 			bytesText(free), o.Release.Requested, bytesText(est))
 	}
 	if total > 0 && free < est+est/4 {
@@ -121,23 +127,69 @@ func mirror(ctx context.Context, e Env, o EnsureOptions, reg registry.Registry, 
 	}
 	ps, err := pullSecret(ctx, e.Kube)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	auth, err := registry.AddAuth(ps, addr, reg.User, reg.Password)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	files, err := builder.Tar(map[string]string{"auth.json": auth, "ca.crt": reg.CA})
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	if err := runMirror(ctx, e, o, files, addr, repo, tag); err != nil {
-		return 0, err
+	stop := e.reportProgress(ctx, o, used, est, start)
+	err = runMirror(ctx, e, o, files, addr, repo, tag)
+	stop()
+	elapsed := e.Now().Sub(start)
+	if err != nil {
+		return 0, elapsed, err
 	}
 	if after, _, err := e.usage(ctx, o.Namespace); err == nil && after > used {
-		return after - used, nil
+		return after - used, elapsed, nil
 	}
-	return 0, nil
+	return 0, elapsed, nil
+}
+
+// reportProgress says how much the mirror has written, and how fast, while it
+// runs: the registry's volume is the only measure of what a mirror has pushed.
+// The returned function stops it.
+func (e Env) reportProgress(ctx context.Context, o EnsureOptions, base, est int64, start time.Time) func() {
+	if o.OnLine == nil {
+		return func() {}
+	}
+	every := e.Progress
+	if every <= 0 {
+		every = 5 * time.Second
+	}
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				used, _, err := e.usage(ctx, o.Namespace)
+				if err != nil || used <= base {
+					continue
+				}
+				o.line(fmt.Sprintf("mirrored %s of about %s (%s)", bytesText(used-base), bytesText(est), Rate(used-base, e.Now().Sub(start))))
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
+}
+
+// Rate is bytes per second, as "12MiB/s".
+func Rate(bytes int64, d time.Duration) string {
+	if d <= 0 || bytes <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.0fMiB/s", float64(bytes)/d.Seconds()/(1<<20))
 }
 
 // runMirror runs mirror.sh, passing its output lines on as they arrive.

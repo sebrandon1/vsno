@@ -121,8 +121,10 @@ func runCacheAdd(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(w, "%s %s is already in %s.\n", pal.Icon("✓"), p.Image, p.Repo)
 		return nil
 	}
-	ps.Done("mirrored in " + ui.FormatElapsed(time.Since(start)))
-	fmt.Fprintf(w, "%s Mirrored %s into %s (%s) in %s.\n", pal.Icon("✓"), p.Image, p.Repo, bytesText(p.SizeBytes), ui.FormatElapsed(time.Since(start)))
+	elapsed := time.Since(start)
+	ps.Done("mirrored in " + ui.FormatElapsed(elapsed))
+	fmt.Fprintf(w, "%s Mirrored %s into %s: %s in %s (%s).\n", pal.Icon("✓"), p.Image, p.Repo,
+		bytesText(p.SizeBytes), ui.FormatElapsed(elapsed), cache.Rate(p.SizeBytes, elapsed))
 	fmt.Fprintln(w, "vSNOs of this version now install from the registry.")
 	return nil
 }

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,6 +46,8 @@ type mirrorRunner struct {
 	mirrorStdin []byte
 	lines       []string
 	mirrorErr   error
+	// delay keeps the mirror running long enough for a progress line.
+	delay time.Duration
 }
 
 func (m *mirrorRunner) Run(ctx context.Context, s string, args []string, io_ builder.IO) error {
@@ -57,6 +61,9 @@ func (m *mirrorRunner) Run(ctx context.Context, s string, args []string, io_ bui
 	}
 	for _, l := range m.lines {
 		_, _ = io.WriteString(io_.Stdout, l+"\n")
+	}
+	if m.delay > 0 {
+		time.Sleep(m.delay)
 	}
 	if m.mirrorErr != nil {
 		_, _ = io.WriteString(io_.Stderr, "some detail\nlast line")
@@ -94,6 +101,56 @@ func TestEnsureMirrors(t *testing.T) {
 	}
 	if len(progress) != 2 { // the mirror's two lines; no room warning at 50Gi free
 		t.Errorf("progress = %q", progress)
+	}
+}
+
+func TestMirrorReportsThroughput(t *testing.T) {
+	r := &mirrorRunner{runner: runner{out: releaseInfo}, delay: 50 * time.Millisecond}
+	e := mirrorEnv(t, 50<<30, r)
+	tick := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	e.Now = func() time.Time { tick = tick.Add(100 * time.Millisecond); return tick }
+	e.Progress = time.Millisecond
+	base := int64(1 << 30)
+	var calls atomic.Int32
+	e.Usage = func(context.Context, string) (int64, int64, error) {
+		return base + int64(calls.Add(1))*(1<<20), 100 << 30, nil
+	}
+	var mu sync.Mutex
+	var lines []string
+	collect := func(s string) {
+		mu.Lock()
+		lines = append(lines, s)
+		mu.Unlock()
+	}
+	p, err := Ensure(context.Background(), e, EnsureOptions{Namespace: ns, Release: rel, OnLine: collect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var said string
+	for _, l := range lines {
+		if strings.Contains(l, "MiB/s") {
+			said = l
+		}
+	}
+	if said == "" || !strings.Contains(said, "mirrored ") {
+		t.Errorf("no throughput line in %q", lines)
+	}
+	if p.Elapsed <= 0 {
+		t.Errorf("elapsed = %v", p.Elapsed)
+	}
+}
+
+func TestRate(t *testing.T) {
+	for _, c := range []struct {
+		bytes int64
+		d     time.Duration
+		want  string
+	}{{0, time.Second, "-"}, {1 << 20, 0, "-"}, {60 << 20, time.Second, "60MiB/s"}, {1 << 30, 2 * time.Second, "512MiB/s"}} {
+		if got := Rate(c.bytes, c.d); got != c.want {
+			t.Errorf("Rate(%d, %v) = %q, want %q", c.bytes, c.d, got, c.want)
+		}
 	}
 }
 
