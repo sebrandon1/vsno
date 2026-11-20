@@ -161,7 +161,7 @@ vsno setup --memory-overcommit 150 --ksm
 
 `--memory-overcommit <percent>` sets OpenShift Virtualization's
 `higherWorkloadDensity.memoryOvercommitPercentage`: at 150, a 16 GiB vSNO's pod requests about
-11 GiB. `--ksm` turns on kernel samepage merging for the vSNO node (`ksmConfiguration`), so
+11 GiB. `--ksm` turns on kernel samepage merging for the vSNO node (`ksmConfiguration`; KSM that is already on is only widened, never narrowed), so
 guests running the same OpenShift share identical memory pages. Both change every VM on the
 cluster, so setup asks first unless you pass `--yes`, and `--dry-run` shows the change.
 

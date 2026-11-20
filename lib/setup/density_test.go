@@ -71,3 +71,16 @@ func TestDensity(t *testing.T) {
 		}
 	}
 }
+
+func TestKSMWith(t *testing.T) {
+	for _, c := range []struct{ cur, want string }{
+		{"", "worker-0"},
+		{"worker-0", "worker-0"},
+		{state.KSMEveryNode, state.KSMEveryNode}, // never narrowed
+		{"worker-1", state.KSMEveryNode},         // never turned off elsewhere
+	} {
+		if got := ksmWith(c.cur, "worker-0"); got != c.want {
+			t.Errorf("ksmWith(%q) = %q, want %q", c.cur, got, c.want)
+		}
+	}
+}

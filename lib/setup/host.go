@@ -436,7 +436,7 @@ func (r *runner) density(ctx context.Context) (string, error) {
 		want.OvercommitPercent = r.o.MemoryOvercommit
 	}
 	if r.o.KSM {
-		want.KSMNode = r.cfg.Node
+		want.KSMNode = ksmWith(cur.KSMNode, r.cfg.Node)
 	}
 	change := densityChange(cur, want)
 	switch {
@@ -453,6 +453,19 @@ func (r *runner) density(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return "set " + change, nil
+}
+
+// ksmWith is the KSM setting that covers node without turning it off where
+// it is on: unchanged when it already covers node, every node when it is on
+// for another one.
+func ksmWith(cur, node string) string {
+	switch cur {
+	case "":
+		return node
+	case node, state.KSMEveryNode:
+		return cur
+	}
+	return state.KSMEveryNode
 }
 
 // densityChange says what moving from cur to want changes, or "" for nothing.
