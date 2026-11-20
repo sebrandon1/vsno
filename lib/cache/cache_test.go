@@ -37,11 +37,22 @@ type runner struct {
 	stdin string
 	// registryCalls are registry.sh's arguments, in order.
 	registryCalls [][]string
+	// registryFail makes the named registry.sh operation fail.
+	registryFail string
+	// exists answers registry.sh exists.
+	exists string
 }
 
 func (r *runner) Run(_ context.Context, s string, args []string, io_ builder.IO) error {
 	if s == registry.Script("registry.sh") {
 		r.registryCalls = append(r.registryCalls, args)
+		if len(args) > 1 && args[1] == "exists" {
+			_, _ = io.WriteString(io_.Stdout, r.exists+"\n")
+			return nil
+		}
+		if len(args) > 1 && args[1] == r.registryFail {
+			return errors.New("exit 1")
+		}
 		return nil
 	}
 	if s != script("release-info.sh") {

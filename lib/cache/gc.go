@@ -5,6 +5,11 @@ import (
 	"fmt"
 	"time"
 
+	"bytes"
+	"errors"
+	"strings"
+
+	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/registry"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -30,6 +35,9 @@ const (
 // is unavailable while that runs.
 func GarbageCollect(ctx context.Context, e Env, ns string) error {
 	e.defaults()
+	if e.mirrorRunning(ctx) {
+		return errors.New("a release mirror is running, and stopping the registry would fail it; run this again when it finishes")
+	}
 	deps := e.Kube.AppsV1().Deployments(ns)
 	dep, err := deps.Get(ctx, registry.Service, metav1.GetOptions{})
 	if err != nil {
@@ -71,6 +79,23 @@ func scale(ctx context.Context, kube kubernetes.Interface, ns string, replicas i
 		}
 		return nil
 	})
+}
+
+// lockScript prints "yes" when a mirror holds the builder's lock.
+const lockScript = `exec 9>/work/.mirror.lock
+if flock -n 9; then echo no; else echo yes; fi`
+
+// mirrorRunning reports whether a mirror is pushing to the registry. Without a
+// builder there is nothing to ask, and no mirror vsno started.
+func (e Env) mirrorRunning(ctx context.Context) bool {
+	if e.Builder == nil {
+		return false
+	}
+	var out, stderr bytes.Buffer
+	if err := e.Builder.Run(ctx, lockScript, nil, builder.IO{Stdout: &out, Stderr: &stderr}); err != nil {
+		return false
+	}
+	return strings.TrimSpace(out.String()) == "yes"
 }
 
 // image is the registry Deployment's container image: the collector must run

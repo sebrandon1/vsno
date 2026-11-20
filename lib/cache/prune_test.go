@@ -2,11 +2,13 @@ package cache
 
 import (
 	"context"
+	"io"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/sebrandon1/vsno/lib/builder"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -217,11 +219,12 @@ func TestPruneDeletesAndCollects(t *testing.T) {
 	if len(res.Removed) != 1 || !strings.Contains(res.Removed[0], "ocp/release/bbbb") {
 		t.Errorf("removed %q", res.Removed)
 	}
-	if len(r.registryCalls) != 2 || r.registryCalls[0][1] != "delete-manifests" || r.registryCalls[1][1] != "delete" {
+	// The tag goes first, then the manifests.
+	if len(r.registryCalls) != 2 || r.registryCalls[0][1] != "delete" || r.registryCalls[1][1] != "delete-manifests" {
 		t.Errorf("registry.sh calls = %q", r.registryCalls)
 	}
-	if len(r.registryCalls[0]) != 5 { // host, delete-manifests, repo, two digests
-		t.Errorf("delete-manifests args = %q", r.registryCalls[0])
+	if len(r.registryCalls[1]) != 5 { // host, delete-manifests, repo, two digests
+		t.Errorf("delete-manifests args = %q", r.registryCalls[1])
 	}
 	m, err := load(ctx, w.k, ns)
 	if err != nil || m.Entries["sha256:bbbb"] != nil {
@@ -229,5 +232,61 @@ func TestPruneDeletesAndCollects(t *testing.T) {
 	}
 	if !slices.Equal(w.seen, []int32{0, 1}) {
 		t.Errorf("scaled %v: prune must collect the garbage", w.seen)
+	}
+}
+
+func TestDeleteToleratesAGoneTag(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name   string
+		exists string
+		fail   bool
+	}{
+		{"the tag is already gone", "no", false},
+		{"the tag is still there", "yes", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newRegWorld(t, batchv1.JobCondition{Type: batchv1.JobComplete, Status: corev1.ConditionTrue})
+			r := &mirrorRunner{runner: runner{out: releaseInfo, registryFail: "delete", exists: c.exists}}
+			e := Env{Kube: w.k, Builder: r, Now: time.Now, Poll: time.Millisecond,
+				Usage:   func(context.Context, string) (int64, int64, error) { return 0, 100 << 30, nil },
+				Digests: func(context.Context, string, string) ([]string, error) { return []string{"sha256:1"}, nil }}
+			_ = update(ctx, w.k, ns, func(m *metadata) {
+				m.Entries["sha256:bbbb"] = &Entry{Version: "4.21.0", Image: "quay.io/x:4.21.0", Digest: "sha256:bbbb",
+					Repo: "ocp/release/bbbb", SizeBytes: 3 << 30}
+			})
+			_, err := Prune(ctx, e, PruneOptions{Namespace: ns, Version: "4.21.0", Yes: true, NoGC: true})
+			if c.fail != (err != nil) {
+				t.Fatalf("err = %v", err)
+			}
+			if !c.fail && len(r.registryCalls) != 3 { // delete, exists, delete-manifests
+				t.Errorf("registry.sh calls = %q", r.registryCalls)
+			}
+		})
+	}
+}
+
+// lockRunner answers the builder's mirror-lock check.
+type lockRunner struct{ held bool }
+
+func (l lockRunner) Run(_ context.Context, _ string, _ []string, io_ builder.IO) error {
+	answer := "no"
+	if l.held {
+		answer = "yes"
+	}
+	_, _ = io.WriteString(io_.Stdout, answer+"\n")
+	return nil
+}
+
+func TestGarbageCollectRefusesWhileMirroring(t *testing.T) {
+	w := newRegWorld(t, batchv1.JobCondition{Type: batchv1.JobComplete, Status: corev1.ConditionTrue})
+	e := w.env()
+	e.Builder = lockRunner{held: true}
+	err := GarbageCollect(context.Background(), e, ns)
+	if err == nil || !strings.Contains(err.Error(), "a release mirror is running") {
+		t.Fatalf("got %v", err)
+	}
+	if len(w.seen) != 0 {
+		t.Errorf("scaled the registry while a mirror ran: %v", w.seen)
 	}
 }

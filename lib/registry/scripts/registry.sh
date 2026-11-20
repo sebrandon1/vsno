@@ -1,6 +1,7 @@
 # Usage: registry.sh <host> list [<repo prefix>]
 #        registry.sh <host> delete <repo:tag>...
 #        registry.sh <host> delete-manifests <repo> <digest>...
+#        registry.sh <host> exists <repo:tag>
 # stdin: {"user": ..., "password": ..., "ca": ...} for the registry.
 #   list:             one JSON line per tag of the repositories under prefix
 #                     (default seeds/), from skopeo inspect
@@ -45,10 +46,19 @@ delete-manifests)
   repo=$1
   shift
   for digest in "$@"; do
-    curl -sSf -K "$tmp/curlrc" --cacert "$tmp/ca.crt" -X DELETE \
-      "https://$host/v2/$repo/manifests/$digest" >/dev/null
-    echo "deleted $repo@$digest"
+    # A manifest that is already gone is the outcome we want, and deleting one
+    # takes its tag with it, so a second prune of the same release is a no-op
+    # rather than a failure.
+    code=$(curl -s -o /dev/null -w '%{http_code}' -K "$tmp/curlrc" --cacert "$tmp/ca.crt" -X DELETE \
+      "https://$host/v2/$repo/manifests/$digest")
+    case $code in
+    202|404) echo "deleted $repo@$digest" ;;
+    *) echo "deleting $repo@$digest: HTTP $code" >&2; exit 1 ;;
+    esac
   done
+  ;;
+exists)
+  if skopeo inspect "${sk[@]}" "docker://$host/$1" >/dev/null 2>&1; then echo yes; else echo no; fi
   ;;
 *)
   echo "unknown operation $op" >&2

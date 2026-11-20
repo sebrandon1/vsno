@@ -163,20 +163,28 @@ func matches(ent Entry, arg string) bool {
 	return slices.Contains(ent.Requested, arg)
 }
 
-// deleteEntry removes one release's images from the registry: every manifest
-// in its repository, then its tag.
+// deleteEntry removes one release's images from the registry: its tag, then
+// every manifest left in the repository. The tag goes first because deleting
+// the manifest it points at makes the tag undeletable.
 func deleteEntry(ctx context.Context, e Env, reg registry.Registry, ns string, ent Entry) error {
+	ref := ent.Repo + ":" + short(ent.Digest)
+	if _, err := reg.Run(ctx, e.Builder, reg.Host, "delete", ref); err != nil {
+		// A tag whose image is already gone is the outcome we want; anything
+		// else is a real failure.
+		out, xerr := reg.Run(ctx, e.Builder, reg.Host, "exists", ref)
+		if xerr != nil || strings.TrimSpace(string(out)) != "no" {
+			return fmt.Errorf("deleting %s's tag: %w", ent.Repo, err)
+		}
+	}
 	digests, err := e.digests(ctx, ns, ent.Repo)
 	if err != nil {
 		return err
 	}
-	if len(digests) > 0 {
-		if _, err := reg.Run(ctx, e.Builder, append([]string{reg.Host, "delete-manifests", ent.Repo}, digests...)...); err != nil {
-			return fmt.Errorf("deleting %s's images: %w", ent.Repo, err)
-		}
+	if len(digests) == 0 {
+		return nil
 	}
-	if _, err := reg.Run(ctx, e.Builder, reg.Host, "delete", ent.Repo+":"+short(ent.Digest)); err != nil {
-		return fmt.Errorf("deleting %s's tag: %w", ent.Repo, err)
+	if _, err := reg.Run(ctx, e.Builder, append([]string{reg.Host, "delete-manifests", ent.Repo}, digests...)...); err != nil {
+		return fmt.Errorf("deleting %s's images: %w", ent.Repo, err)
 	}
 	return nil
 }
