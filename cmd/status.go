@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 
 	"github.com/sebrandon1/vsno/lib/guest"
+	"github.com/sebrandon1/vsno/lib/isos"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
@@ -60,6 +62,9 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		if r.VSNOs, err = guest.List(cmd.Context(), env, namespace); err != nil {
 			r.Support = append(r.Support, status.Component{Name: "vsnos", Status: precheck.Warn, Detail: err.Error()})
 		}
+		if c := builderVolume(cmd.Context(), env); c != nil {
+			r.Support = append(r.Support, *c)
+		}
 	}
 	if err := renderStatus(cmd.OutOrStdout(), r, palette(cmd.OutOrStdout())); err != nil {
 		return err
@@ -68,6 +73,25 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		return errors.New("status: the environment is not ready")
 	}
 	return nil
+}
+
+// builderVolume is the builder's volume usage, warned about above 80%. It is
+// nil when the builder can't be read, so status never fails over it.
+func builderVolume(ctx context.Context, env guest.Env) *status.Component {
+	if env.Builder == nil {
+		return nil
+	}
+	rep, err := isos.List(ctx, isos.Env{Env: env}, namespace)
+	if err != nil || rep.Total == 0 {
+		return nil
+	}
+	pct := float64(rep.Used) / float64(rep.Total) * 100
+	st := precheck.Pass
+	if pct >= 80 {
+		st = precheck.Warn
+	}
+	return &status.Component{Name: "builder volume", Status: st,
+		Detail: fmt.Sprintf("%s of %s used (%.0f%%)", bytesText(rep.Used), bytesText(rep.Total), pct)}
 }
 
 func renderStatus(w io.Writer, r *status.Report, pal ui.Palette) error {

@@ -292,10 +292,34 @@ minutes; the vSNO's API is down for most of it.
 | `--stop` | Stop the vSNO afterwards |
 | `--timeout` | How long to wait for the generation (default `1h`) |
 
+When the install finishes, `create` ejects the ISO: the CD-ROM and its volume leave the VM, the
+`<name>-iso` DataVolume is deleted, and the builder's copy goes. The vSNO boots from its root disk
+from then on, which frees about 4 GB. `vsno isos eject <vsno>` does the same for a vSNO from an
+older vsno.
+
 `seed list` shows each seed image's reference, the vSNO it came from, its OpenShift version, size and
 age. `seed delete` removes tags by full reference, `<vsno>:<version>` or `<vsno>`. It asks you to
 type the arguments first unless `--yes`, and `--dry-run` only lists. The registry frees the disk
 space only when it is garbage collected, so deletion does not shrink it immediately.
+
+## ISOs and caches
+
+```bash
+vsno isos                          # what the builder and LVMS hold, and what uses it
+vsno isos prune --dry-run          # ISOs, installers and DataVolumes nothing uses
+vsno isos prune --yes              # ...and remove them
+vsno isos prune --keep 2           # keep the two newest unused installers
+vsno isos eject a                  # drop a's install ISO, if create didn't
+```
+
+`isos` lists the served ISOs, the installer's build directories, the cached `openshift-install`
+binaries (one per release image), the installer's base ISO cache, and the ISO DataVolumes, each
+marked in use, orphaned (its vSNO is gone) or unused. It ends with the builder volume's usage, which
+`vsno status` also reports, warning above 80%.
+
+The builder volume fills up with things a finished create no longer needs: `iso.sh` keeps one copy
+of each ISO rather than two, `create` ejects the ISO once the vSNO is ready, and `isos prune`
+removes what a failed or deleted create left behind.
 
 ## status
 

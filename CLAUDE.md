@@ -91,6 +91,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   down it reads progress from the node's `lca-generate-seed-image` unit. `List`/`Delete` talk to the
   environment's registry through `scripts/registry.sh` (skopeo + curl, credentials on stdin) from the
   builder. Templates and the script are embedded; goldens in `testdata/`.
+- `lib/isos`: what creates leave behind. `List` runs `scripts/isos.sh` in the builder (served ISOs,
+  build directories, cached `openshift-install` binaries with their `.ref` release image, the base
+  ISO cache, volume usage) and classifies each against the namespace's VMs and ISO DataVolumes;
+  `Prune` removes what no vSNO uses. `guest.EjectISO` drops a finished vSNO's CD-ROM and ISO
+  DataVolume; `create` calls it, with `rm.sh`, once the install is ready.
 - `lib/ui/color.go`: `Palette` (ANSI colors when `On`; status icons via `Icon`), `ColorEnabled`
   (terminal, no `NO_COLOR`, `TERM` not `dumb`), and `Table`, which aligns columns by visible width.
 - `lib/ui`: step progress. On a terminal it shows a spinner, elapsed time and an optional bar

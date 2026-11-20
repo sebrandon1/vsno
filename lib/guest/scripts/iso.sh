@@ -29,12 +29,17 @@ if [ ! -x "$bin" ]; then
   mv "$tmp/openshift-install" "$bin"
   rm -rf "$tmp"
 fi
+# Which release image the binary came from, so `vsno isos` can tell whether a
+# vSNO still uses it. Older builders have binaries without one.
+[ -f "$bin.ref" ] || printf %s "$image" > "$bin.ref"
 echo "version $("$bin" version | awk 'NR==1 {print $2}')"
 
 echo "creating the agent ISO"
 mkdir -p "$dir/build" /work/www
 cp -r "$dir/config/." "$dir/build/"
 "$bin" agent create image --dir "$dir/build" --log-level warn
-cp "$dir/build/agent.x86_64.iso" "/work/www/$name.iso.tmp"
+# Move the ISO rather than copy it: the build directory doesn't need it, and a
+# copy doubles its 1.3 GB.
+mv "$dir/build/agent.x86_64.iso" "/work/www/$name.iso.tmp"
 mv "/work/www/$name.iso.tmp" "/work/www/$name.iso"
 echo "ISO ready"

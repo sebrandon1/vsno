@@ -99,8 +99,26 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 	if !o.Wait {
 		return g, nil
 	}
-	err = waitInstalled(ctx, e, g, o)
-	return g, err
+	if err = waitInstalled(ctx, e, g, o); err != nil {
+		return g, err
+	}
+	eject(ctx, e, spec.Namespace, spec.Name)
+	return g, nil
+}
+
+// eject drops the install ISO of a vSNO that just became ready, freeing the
+// ISO DataVolume and the served ISO. A failure here doesn't fail the create:
+// `vsno isos prune` gets it later.
+func eject(ctx context.Context, e Env, ns, name string) {
+	ps := e.Progress.Start("Ejecting the install ISO")
+	if _, err := EjectISO(ctx, e, ns, name); err != nil {
+		ps.Warn(err.Error())
+		return
+	}
+	if e.Builder != nil {
+		_ = e.Builder.Run(ctx, script("rm.sh"), []string{name}, builder.IO{})
+	}
+	ps.Done("the vSNO boots from its root disk")
 }
 
 func describe(r release.Release) string {
