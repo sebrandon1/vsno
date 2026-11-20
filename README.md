@@ -164,7 +164,10 @@ CSV to reach `Succeeded` (and, for OpenShift Virtualization, for HyperConverged 
 again). The step then reports `upgraded`. `--upgrade-operators` answers yes to all of them; `--yes`
 only approves the disk. A CNV upgrade restarts OpenShift Virtualization, so the running VMs it would
 affect are named first. Without a terminal setup warns and keeps the installed version, and a rerun
-reports the operators as `reused`.
+reports the operators as `reused`. `--operator-channel cnv=candidate` (repeatable, one per operator)
+moves an operator to a channel you choose, without asking: setup patches the Subscription, approves
+the InstallPlan and waits, and refuses a channel the catalog doesn't list or one whose CSV is older
+than the installed one, since OLM does not downgrade.
 
 Setup asks before taking over an existing namespace that vsno didn't create: one with neither the
 `app.kubernetes.io/managed-by=vsno` label nor a `vsno-state` ConfigMap. It would overwrite objects
@@ -192,6 +195,7 @@ runs one (for example `-n vsno-dev` next to `vsno`) usually needs `--node`.
 | `--config <file>` | Settings written by `precheck --write-config` |
 | `--yes` | Approve taking over the disk without asking |
 | `--upgrade-operators` | Upgrade the operators that have an update available without asking |
+| `--operator-channel <op>=<channel>` | Move an operator (`cnv` or `lvms`) to another channel without asking; repeatable. Refused when the catalog doesn't list the channel or it would install an older CSV |
 | `--force` | Take over an existing namespace vsno didn't create without asking (see below) |
 | `--dry-run` | List what setup would do and change nothing (see below) |
 | `--manifests` | With `--dry-run`, also print the manifests, Secret values redacted (implies `--dry-run`) |

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/apply"
+	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
@@ -30,6 +31,7 @@ var (
 	suYes       bool
 	suForce     bool
 	suUpgrade   bool
+	suChannels  []string
 	suDryRun    bool
 	suManifests bool
 	suNoProbe   bool
@@ -84,6 +86,7 @@ func init() {
 	f.BoolVar(&suYes, "yes", false, "approve taking over the LVMS disk without asking")
 	f.BoolVar(&suForce, "force", false, "take over an existing namespace vsno didn't create without asking, overwriting objects in it")
 	f.BoolVar(&suUpgrade, "upgrade-operators", false, "upgrade operators that have an update available without asking")
+	f.StringArrayVar(&suChannels, "operator-channel", nil, "move an operator to a channel without asking, as <cnv|lvms>=<channel>; repeatable")
 	f.BoolVar(&suDryRun, "dry-run", false, "list what setup would do and change nothing")
 	f.BoolVar(&suManifests, "manifests", false, "with --dry-run, also print the manifests (Secret values redacted); implies --dry-run")
 	f.BoolVar(&suNoProbe, "no-probe", false, "skip the precheck hardware probe (then --node is required)")
@@ -96,6 +99,10 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		suDryRun = true
 	}
 	settings, err := setupSettings()
+	if err != nil {
+		return err
+	}
+	channels, err := operatorChannels(suChannels)
 	if err != nil {
 		return err
 	}
@@ -126,7 +133,7 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	}
 	res, err := setup.Run(cmd.Context(), env, setup.Options{
 		Namespace: namespace, Settings: settings, Yes: suYes, Force: suForce,
-		UpgradeOperators: suUpgrade, DryRun: suDryRun, Images: manifests.DefaultImages(),
+		UpgradeOperators: suUpgrade, Channels: channels, DryRun: suDryRun, Images: manifests.DefaultImages(),
 	})
 	if outputFormat == formatTable {
 		fmt.Fprintln(cmd.ErrOrStderr())
@@ -156,6 +163,19 @@ func setupSettings() (precheck.Suggested, error) {
 		s.Disk = suDisk
 	}
 	return s, nil
+}
+
+// operatorChannels parses --operator-channel values into operator key → channel.
+func operatorChannels(vals []string) (map[string]string, error) {
+	m := make(map[string]string, len(vals))
+	for _, v := range vals {
+		op, ch, ok := strings.Cut(v, "=")
+		if !ok || ch == "" || (op != cluster.CNV.Key && op != cluster.LVMS.Key) {
+			return nil, fmt.Errorf("--operator-channel wants <cnv|lvms>=<channel>, got %q", v)
+		}
+		m[op] = ch
+	}
+	return m, nil
 }
 
 // confirmOnTerminal asks on w and reads the answer from in. It never approves

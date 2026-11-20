@@ -324,3 +324,99 @@ func TestSetChannel(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestRequestedUpdate(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name    string
+		channel string
+		objs    []runtime.Object
+		want    string // Update.String(), or "" for none
+		wantErr string
+	}{
+		{
+			name: "moves to a channel with a newer CSV", channel: "candidate",
+			objs: []runtime.Object{csv(CNV.Namespace, csvV1, "Succeeded"),
+				subscription("stable", "", csvV1, csvV1, "AtLatestKnown"),
+				manifest(map[string]string{"stable": csvV1, "candidate": csvV2})},
+			want: csvV1 + " → " + csvV2,
+		},
+		{
+			name: "moves to a channel whose head is the CSV that runs", channel: "candidate",
+			objs: []runtime.Object{csv(CNV.Namespace, csvV1, "Succeeded"),
+				subscription("stable", "", csvV1, csvV1, "AtLatestKnown"),
+				manifest(map[string]string{"stable": csvV1, "candidate": csvV1})},
+			want: "channel stable → candidate",
+		},
+		{
+			name: "already on that channel with nothing newer", channel: "candidate",
+			objs: []runtime.Object{csv(CNV.Namespace, csvV2, "Succeeded"),
+				subscription("candidate", "", csvV2, csvV2, "AtLatestKnown"),
+				manifest(map[string]string{"candidate": csvV2})},
+		},
+		{
+			name: "refuses a downgrade", channel: "stable",
+			objs: []runtime.Object{csv(CNV.Namespace, csvV2, "Succeeded"),
+				subscription("candidate", "", csvV2, csvV2, "AtLatestKnown"),
+				manifest(map[string]string{"stable": csvV1, "candidate": csvV2})},
+			wantErr: "downgrade",
+		},
+		{
+			name: "refuses a channel the catalog doesn't have", channel: "beta",
+			objs: []runtime.Object{csv(CNV.Namespace, csvV1, "Succeeded"),
+				subscription("stable", "", csvV1, csvV1, "AtLatestKnown"),
+				manifest(map[string]string{"stable": csvV1})},
+			wantErr: "no beta channel",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			u, err := RequestedUpdate(ctx, fakeDyn(c.objs...), CNV, c.channel)
+			if c.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+					t.Fatalf("err = %v, want %q", err, c.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.want == "" {
+				if u != nil {
+					t.Fatalf("update = %+v, want none", u)
+				}
+				return
+			}
+			if u == nil || u.String() != c.want || u.Suggested != c.channel {
+				t.Fatalf("update = %+v, want %q", u, c.want)
+			}
+		})
+	}
+}
+
+func TestCSVVersion(t *testing.T) {
+	cases := []struct {
+		csv  string
+		want [3]int
+		ok   bool
+	}{
+		{"kubevirt-hyperconverged-operator.v4.22.16", [3]int{4, 22, 16}, true},
+		{"lvms-operator.v4.22.0", [3]int{4, 22, 0}, true},
+		{"operator.v1.2", [3]int{1, 2, 0}, true},
+		{"operator.v2.3.4-rc1", [3]int{2, 3, 4}, true},
+		{"operator", [3]int{}, false},
+		{"operator.vnext", [3]int{}, false},
+	}
+	for _, c := range cases {
+		got, ok := csvVersion(c.csv)
+		if got != c.want || ok != c.ok {
+			t.Errorf("%s = %v %v, want %v %v", c.csv, got, ok, c.want, c.ok)
+		}
+	}
+	if !older("x.v4.22.15", "x.v4.22.16") || older("x.v4.22.16", "x.v4.22.16") || older("x.v4.23.0", "x.v4.22.9") {
+		t.Error("older ordered badly")
+	}
+	if older("x", "x.v1") || older("x.v1", "x") {
+		t.Error("unversioned names must not count as older")
+	}
+}

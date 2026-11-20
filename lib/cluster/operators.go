@@ -124,16 +124,23 @@ func OperatorUpdate(ctx context.Context, dyn dynamic.Interface, op Operator, sug
 	if u.Available, u.Suggested, err = targetCSV(ctx, dyn, op.Package, st, suggested); err != nil {
 		return nil, err
 	}
-	if st.Approval == "Manual" {
-		if u.Plan, err = pendingPlan(ctx, dyn, op, installed); err != nil {
-			return nil, err
-		}
+	if u.Plan, err = manualPlan(ctx, dyn, op, st, installed); err != nil {
+		return nil, err
 	}
 	newer := u.Available != "" && u.Available != installed
 	if !newer && u.Suggested == "" && st.State != "UpgradePending" && u.Plan == "" {
 		return nil, nil
 	}
 	return u, nil
+}
+
+// manualPlan returns the InstallPlan waiting for approval when the Subscription
+// is Manual, or "".
+func manualPlan(ctx context.Context, dyn dynamic.Interface, op Operator, st SubscriptionStatus, installed string) (string, error) {
+	if st.Approval != "Manual" {
+		return "", nil
+	}
+	return pendingPlan(ctx, dyn, op, installed)
 }
 
 // targetCSV returns the CSV an upgrade would install and the channel to move to
@@ -160,6 +167,89 @@ func targetCSV(ctx context.Context, dyn dynamic.Interface, pkg string, st Subscr
 // versioned reports whether channel pins an OCP minor, as stable-4.22 does.
 func versioned(channel string) bool {
 	return strings.HasPrefix(channel, "stable-")
+}
+
+// RequestedUpdate reports what moving op to channel would install, for a
+// channel the user asked for. It is nil when the operator already sits on the
+// channel with nothing newer, and an error when the catalog doesn't list the
+// channel or it would install an older CSV than the one running: OLM does not
+// downgrade.
+func RequestedUpdate(ctx context.Context, dyn dynamic.Interface, op Operator, channel string) (*Update, error) {
+	sub, err := Subscription(ctx, dyn, op)
+	if err != nil || sub == nil {
+		return nil, err
+	}
+	st := SubscriptionStatusOf(sub)
+	installed, err := InstalledCSV(ctx, dyn, op)
+	if err != nil || installed == "" {
+		return nil, err
+	}
+	csv, found, err := channelCSV(ctx, dyn, op.Package, channel)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("the catalog has no %s channel for %s", channel, op.Package)
+	}
+	if older(csv, installed) {
+		return nil, fmt.Errorf("channel %s would downgrade %s to %s, which OLM does not do", channel, installed, csv)
+	}
+	u := &Update{Operator: op.Key, Installed: installed, Channel: st.Channel, Approval: st.Approval, Available: csv}
+	if channel != st.Channel {
+		u.Suggested = channel
+	}
+	if u.Plan, err = manualPlan(ctx, dyn, op, st, installed); err != nil {
+		return nil, err
+	}
+	if u.Suggested == "" && u.Plan == "" && st.State != "UpgradePending" && (csv == "" || csv == installed) {
+		return nil, nil
+	}
+	return u, nil
+}
+
+// older reports whether CSV a carries an older version than b. It is false when
+// either name has no version, so vsno only refuses a downgrade it can prove.
+func older(a, b string) bool {
+	va, ok := csvVersion(a)
+	if !ok {
+		return false
+	}
+	vb, ok := csvVersion(b)
+	if !ok {
+		return false
+	}
+	for i := range va {
+		if va[i] != vb[i] {
+			return va[i] < vb[i]
+		}
+	}
+	return false
+}
+
+// csvVersion is the vX.Y.Z at the end of a CSV name: 4.22.16 for
+// kubevirt-hyperconverged-operator.v4.22.16. ok is false without one.
+func csvVersion(csv string) (v [3]int, ok bool) {
+	i := strings.LastIndex(csv, ".v")
+	if i < 0 {
+		return v, false
+	}
+	for j, p := range strings.SplitN(csv[i+2:], ".", 3) {
+		n, err := strconv.Atoi(leadingDigits(p))
+		if err != nil {
+			return v, false
+		}
+		v[j] = n
+	}
+	return v, true
+}
+
+// leadingDigits keeps p's leading digits, so 16-rc1 reads as 16.
+func leadingDigits(p string) string {
+	end := 0
+	for end < len(p) && p[end] >= '0' && p[end] <= '9' {
+		end++
+	}
+	return p[:end]
 }
 
 // channelCSV returns the CSV at the head of pkg's channel, and whether the

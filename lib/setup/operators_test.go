@@ -294,12 +294,28 @@ func TestRunCNVUpgradeNamesRunningVMs(t *testing.T) {
 	s := newSim()
 	s.existingHost(t)
 	s.outdatedCNV(t)
-	vm := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"running": true}}}
+	vm := &unstructured.Unstructured{Object: map[string]any{
+		"spec":   map[string]any{"running": true},
+		"status": map[string]any{"printableStatus": "Running"},
+	}}
 	vm.SetAPIVersion("kubevirt.io/v1")
 	vm.SetKind("VirtualMachine")
 	vm.SetNamespace("vsno-dev")
 	vm.SetName("seed")
-	s.create(t, cluster.GVRVirtualMachine, vm)
+	// vsno's own VMs use a runStrategy instead of spec.running; a stopped one
+	// is left out.
+	strategy := func(name, status string) *unstructured.Unstructured {
+		u := &unstructured.Unstructured{Object: map[string]any{
+			"spec":   map[string]any{"runStrategy": "Always"},
+			"status": map[string]any{"printableStatus": status},
+		}}
+		u.SetAPIVersion("kubevirt.io/v1")
+		u.SetKind("VirtualMachine")
+		u.SetNamespace("vsno-dev")
+		u.SetName(name)
+		return u
+	}
+	s.create(t, cluster.GVRVirtualMachine, vm, strategy("target", "Running"), strategy("asleep", "Stopped"))
 
 	var asked string
 	e := s.env(report())
@@ -309,10 +325,10 @@ func TestRunCNVUpgradeNamesRunningVMs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(asked, "vsno-dev/seed") || !strings.Contains(asked, "cnv") {
+	if !strings.Contains(asked, "vsno-dev/seed, vsno-dev/target") || !strings.Contains(asked, "cnv") {
 		t.Errorf("question = %q", asked)
 	}
-	if !hasWarning(res, "affects 1 running VM(s): vsno-dev/seed") {
+	if !hasWarning(res, "affects 2 running VM(s): vsno-dev/seed, vsno-dev/target") {
 		t.Errorf("warnings = %v", res.Warnings)
 	}
 	if got := outcomes(res)["cnv"]; got != Reused {
@@ -445,5 +461,48 @@ func TestRunOperatorUpgradeMovesOnlyTheChannel(t *testing.T) {
 	}
 	if ch, _, _ := unstructured.NestedString(sub.Object, "spec", "channel"); ch != "stable-4.22" {
 		t.Errorf("channel = %q, want stable-4.22", ch)
+	}
+}
+
+func TestRunRequestedChannel(t *testing.T) {
+	ctx := context.Background()
+	s := newSim()
+	s.existingHost(t)
+	// CNV runs stable's CSV; candidate has a newer one.
+	s.create(t, cluster.GVRSubscription, cnvSub(channel1, "", cnvCSV))
+	s.create(t, cluster.GVRPackageManifest, manifestOn(cluster.CNV.Package, "candidate", cnvNewCSV))
+	e := s.env(report())
+	s.upgradeOnWait(t, &e)
+	e.Confirm = func(string, string) bool { t.Error("--operator-channel must not ask"); return false }
+	o := opts()
+	o.Channels = map[string]string{cluster.CNV.Key: "candidate"}
+
+	res, err := Run(ctx, e, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := outcomes(res)["cnv"]; got != Upgraded {
+		t.Fatalf("cnv = %q", got)
+	}
+	sub, err := s.dyn.Resource(cluster.GVRSubscription).Namespace(cluster.CNV.Namespace).Get(ctx, "hco-operatorhub", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ch, _, _ := unstructured.NestedString(sub.Object, "spec", "channel"); ch != "candidate" {
+		t.Errorf("channel = %q, want candidate", ch)
+	}
+}
+
+func TestRunRequestedChannelThatCantBeHonoured(t *testing.T) {
+	s := newSim()
+	s.existingHost(t)
+	s.create(t, cluster.GVRSubscription, cnvSub(channel1, "", cnvCSV))
+	s.create(t, cluster.GVRPackageManifest, manifestObj(cluster.CNV.Package, cnvCSV))
+	o := opts()
+	o.Channels = map[string]string{cluster.CNV.Key: "beta"}
+
+	_, err := Run(context.Background(), s.env(report()), o)
+	if err == nil || !strings.Contains(err.Error(), "no beta channel") {
+		t.Fatalf("err = %v", err)
 	}
 }

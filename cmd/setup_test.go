@@ -229,3 +229,21 @@ func TestRenderSetupJSONAndEmpty(t *testing.T) {
 		t.Errorf("failed-before-steps result: %q", b.String())
 	}
 }
+
+func TestOperatorChannels(t *testing.T) {
+	got, err := operatorChannels([]string{"cnv=candidate", "lvms=stable-4.22"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["cnv"] != "candidate" || got["lvms"] != "stable-4.22" {
+		t.Errorf("channels = %v", got)
+	}
+	if m, err := operatorChannels(nil); err != nil || len(m) != 0 {
+		t.Errorf("no channels = %v %v", m, err)
+	}
+	for _, bad := range []string{"cnv", "cnv=", "=candidate", "virt=candidate"} {
+		if _, err := operatorChannels([]string{bad}); err == nil {
+			t.Errorf("%q should not parse", bad)
+		}
+	}
+}

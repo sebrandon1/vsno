@@ -51,7 +51,10 @@ type Options struct {
 	// UpgradeOperators accepts every operator update without asking. --yes
 	// alone does not: it only approves the disk.
 	UpgradeOperators bool
-	Images           manifests.Images
+	// Channels moves an operator (cluster.CNV.Key or cluster.LVMS.Key) to the
+	// given channel without asking, the way --upgrade-operators would accept it.
+	Channels map[string]string
+	Images   manifests.Images
 }
 
 // Outcome says what a step did.
@@ -120,7 +123,9 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 		Images:       o.Images,
 		S3Bucket:     manifests.DefaultS3Bucket,
 	}, st: &state.State{Versions: map[string]string{}, Services: map[string]string{}}, upgrades: map[string]*cluster.Update{}}
-	r.offerUpdates(ctx, rep)
+	if err := r.offerUpdates(ctx, rep); err != nil {
+		return res, err
+	}
 
 	steps := []struct {
 		title string

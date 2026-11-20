@@ -73,16 +73,28 @@ func (r *runner) operator(op operatorSpec) func(context.Context, precheck.Progre
 }
 
 // offerUpdates lists the operators with an update available and, unless this is
-// a dry run or --upgrade-operators answered, asks about each. The accepted ones
-// land in r.upgrades, for the operator steps to apply.
-func (r *runner) offerUpdates(ctx context.Context, rep *precheck.Report) {
+// a dry run or --upgrade-operators answered, asks about each. A channel named
+// with --operator-channel is taken as given: it is applied without asking, and
+// a request that can't be honored fails the run. The accepted updates land in
+// r.upgrades, for the operator steps to apply.
+func (r *runner) offerUpdates(ctx context.Context, rep *precheck.Report) error {
 	for _, op := range []operatorSpec{cnv, lvms} {
-		u, err := cluster.OperatorUpdate(ctx, r.Dyn, op.Operator, op.channel(r.cfg))
-		switch {
-		case err != nil:
-			r.res.Warnings = append(r.res.Warnings, "cannot tell whether "+op.Key+" is up to date: "+err.Error())
-			continue
-		case u == nil:
+		requested := r.o.Channels[op.Key]
+		var u *cluster.Update
+		var err error
+		if requested != "" {
+			u, err = cluster.RequestedUpdate(ctx, r.Dyn, op.Operator, requested)
+			if err != nil {
+				return fmt.Errorf("%s: %w", op.Key, err)
+			}
+		} else {
+			u, err = cluster.OperatorUpdate(ctx, r.Dyn, op.Operator, op.channel(r.cfg))
+			if err != nil {
+				r.res.Warnings = append(r.res.Warnings, "cannot tell whether "+op.Key+" is up to date: "+err.Error())
+				continue
+			}
+		}
+		if u == nil {
 			continue
 		}
 		r.res.Updates = append(r.res.Updates, *u)
@@ -98,7 +110,7 @@ func (r *runner) offerUpdates(ctx context.Context, rep *precheck.Report) {
 			}
 		}
 		switch {
-		case r.o.DryRun, r.o.UpgradeOperators:
+		case r.o.DryRun, r.o.UpgradeOperators, requested != "":
 		case r.Confirm == nil || !r.Confirm(q, "y"):
 			r.res.Warnings = append(r.res.Warnings,
 				op.Key+" update "+u.String()+" not applied; pass --upgrade-operators to upgrade it")
@@ -109,6 +121,7 @@ func (r *runner) offerUpdates(ctx context.Context, rep *precheck.Report) {
 	if rep.HubManaged && len(r.upgrades) > 0 {
 		r.res.Warnings = append(r.res.Warnings, "an ACM hub manages this cluster: its policies may revert an operator upgrade")
 	}
+	return nil
 }
 
 // updateTarget is what an upgrade installs, for a question.
@@ -119,8 +132,8 @@ func updateTarget(u *cluster.Update) string {
 	return u.Available
 }
 
-// runningVMs names the running VirtualMachines on the cluster as ns/name: a CNV
-// upgrade restarts them wherever they live.
+// runningVMs names the VirtualMachines that a CNV upgrade would restart, as
+// ns/name: the ones that keep an instance up, wherever they live.
 func (r *runner) runningVMs(ctx context.Context) []string {
 	l, err := r.Dyn.Resource(cluster.GVRVirtualMachine).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -129,13 +142,26 @@ func (r *runner) runningVMs(ctx context.Context) []string {
 	var out []string
 	for i := range l.Items {
 		vm := &l.Items[i]
-		if on, _, _ := unstructured.NestedBool(vm.Object, "spec", "running"); !on {
+		if !runs(vm) {
 			continue
 		}
 		out = append(out, vm.GetNamespace()+"/"+vm.GetName())
 	}
 	slices.Sort(out)
 	return out
+}
+
+// runs reports whether vm has an instance: spec.running, or one of the
+// runStrategies that keep a VM up. vsno's own VMs use runStrategy Always.
+func runs(vm *unstructured.Unstructured) bool {
+	if on, _, _ := unstructured.NestedBool(vm.Object, "spec", "running"); on {
+		return true
+	}
+	if s, _, _ := unstructured.NestedString(vm.Object, "spec", "runStrategy"); s != "Always" && s != "RerunOnFailure" {
+		return false
+	}
+	s, _, _ := unstructured.NestedString(vm.Object, "status", "printableStatus")
+	return s != "Stopped"
 }
 
 // summarize lists the first five of names and counts the rest.
