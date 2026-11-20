@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/ui"
@@ -97,8 +98,9 @@ func collect(ctx context.Context, c *kube.Clients, env guest.Env, single bool) (
 			nodes[g.Node] = struct{}{}
 		}
 	}
+	d, _ := cluster.ReadDensity(ctx, c.Dyn) // unreadable: count without overcommit
 	for _, n := range slices.Sorted(maps.Keys(nodes)) {
-		if capa, cerr := guest.NodeCapacity(ctx, c.Kube, n); cerr == nil {
+		if capa, cerr := guest.NodeCapacity(ctx, c.Kube, n, d.Percent()); cerr == nil {
 			l.Capacity = append(l.Capacity, capa)
 		}
 	}

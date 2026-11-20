@@ -22,7 +22,7 @@ import (
 var (
 	GVRClusterVersion = schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "clusterversions"}
 	GVRNetwork        = schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "networks"}
-	GVRHyperConverged = schema.GroupVersionResource{Group: "hco.kubevirt.io", Version: "v1beta1", Resource: "hyperconvergeds"}
+	GVRHyperConverged = cluster.GVRHyperConverged
 	GVRLVMCluster     = schema.GroupVersionResource{Group: "lvm.topolvm.io", Version: "v1alpha1", Resource: "lvmclusters"}
 )
 

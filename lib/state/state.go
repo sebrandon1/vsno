@@ -47,6 +47,27 @@ type State struct {
 	// Versions maps a component (e.g. operator CSV) to its version.
 	Versions map[string]string `json:"versions,omitempty"`
 	Stages   []Stage           `json:"stages,omitempty"`
+	// PreviousDensity is HyperConverged's density settings before setup
+	// first changed them, which teardown puts back; nil when setup didn't.
+	PreviousDensity *Density `json:"previousDensity,omitempty"`
+}
+
+// Density is how tightly OpenShift Virtualization packs VMs: memory
+// overcommit (each VM's pod requests guest memory ÷ percent/100) and kernel
+// samepage merging on one node.
+type Density struct {
+	// OvercommitPercent is memoryOvercommitPercentage; 0 means unset (100).
+	OvercommitPercent int `json:"overcommitPercent,omitempty"`
+	// KSMNode is the node KSM is limited to; "" means KSM is off.
+	KSMNode string `json:"ksmNode,omitempty"`
+}
+
+// Percent is the overcommit percentage in effect: 100 when unset.
+func (d Density) Percent() int {
+	if d.OvercommitPercent <= 0 {
+		return 100
+	}
+	return d.OvercommitPercent
 }
 
 // maxStages bounds the history kept in the ConfigMap.

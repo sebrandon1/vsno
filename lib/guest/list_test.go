@@ -179,15 +179,18 @@ func TestNodeCapacity(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	c, err := NodeCapacity(ctx, w.kube, node)
-	if err != nil || c.FreeMemoryGiB != 57 || c.Cores != 104 || c.FitDefault != 3 { // 57 GiB / (16 + 1)
-		t.Errorf("capacity = %+v, %v", c, err)
+	// 57 GiB free; a default vSNO requests 16 GiB ÷ percent/100, plus 1 GiB.
+	for _, c := range []struct{ percent, fit int }{{100, 3}, {0, 3}, {150, 4}, {200, 6}} {
+		got, err := NodeCapacity(ctx, w.kube, node, c.percent)
+		if err != nil || got.FreeMemoryGiB != 57 || got.Cores != 104 || got.FitDefault != int64(c.fit) {
+			t.Errorf("at %d%%: capacity = %+v, %v; want %d to fit", c.percent, got, err, c.fit)
+		}
 	}
-	if _, err := NodeCapacity(ctx, w.kube, "nope"); err == nil {
+	if _, err := NodeCapacity(ctx, w.kube, "nope", 100); err == nil {
 		t.Error("want an error for a missing node")
 	}
 	w.kube.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, errBoom })
-	if _, err := NodeCapacity(ctx, w.kube, node); err == nil || !strings.Contains(err.Error(), "listing pods") {
+	if _, err := NodeCapacity(ctx, w.kube, node, 100); err == nil || !strings.Contains(err.Error(), "listing pods") {
 		t.Errorf("err = %v", err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/state"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -403,4 +404,76 @@ func (r *runner) wait(ctx context.Context, what string, cond func(context.Contex
 	default:
 		return fmt.Errorf("waiting for %s: %w", what, err)
 	}
+}
+
+// hyperConvergedAndDensity is the HyperConverged step: HyperConverged
+// Available, then the density settings asked for.
+func (r *runner) hyperConvergedAndDensity(ctx context.Context, ps precheck.ProgressStep) (Step, error) {
+	step, err := r.hyperConverged(ctx, ps)
+	if err != nil {
+		return step, err
+	}
+	detail, err := r.density(ctx)
+	if detail != "" {
+		step.Detail += "; " + detail
+	}
+	return step, err
+}
+
+// density applies --memory-overcommit and --ksm to HyperConverged, after
+// asking: they change every VM on the cluster. It records the settings it
+// replaces, which teardown restores.
+func (r *runner) density(ctx context.Context) (string, error) {
+	if r.o.MemoryOvercommit == 0 && !r.o.KSM {
+		return "", nil
+	}
+	cur, err := cluster.ReadDensity(ctx, r.Dyn)
+	if err != nil {
+		return "", err
+	}
+	want := cur
+	if r.o.MemoryOvercommit > 0 {
+		want.OvercommitPercent = r.o.MemoryOvercommit
+	}
+	if r.o.KSM {
+		want.KSMNode = r.cfg.Node
+	}
+	change := densityChange(cur, want)
+	switch {
+	case change == "":
+		return "density unchanged", nil
+	case r.o.DryRun:
+		return "would set " + change, nil
+	case !r.o.Yes && (r.Confirm == nil || !r.Confirm("This changes every VM on the cluster: "+change+". Type y to continue", "y")):
+		return "", errors.New("density not changed: not confirmed; pass --yes to change it without asking")
+	}
+	prev := cur
+	r.st.PreviousDensity = &prev
+	if err := cluster.ApplyDensity(ctx, r.Dyn, want); err != nil {
+		return "", err
+	}
+	return "set " + change, nil
+}
+
+// densityChange says what moving from cur to want changes, or "" for nothing.
+func densityChange(cur, want state.Density) string {
+	var parts []string
+	if cur.Percent() != want.Percent() {
+		parts = append(parts, fmt.Sprintf("memory overcommit %d%% → %d%%", cur.Percent(), want.Percent()))
+	}
+	if cur.KSMNode != want.KSMNode {
+		parts = append(parts, "KSM "+ksmText(cur.KSMNode)+" → "+ksmText(want.KSMNode))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// ksmText is KSM's setting as setup reports it.
+func ksmText(node string) string {
+	switch node {
+	case "":
+		return "off"
+	case "*":
+		return "on (every node)"
+	}
+	return "on " + node
 }
