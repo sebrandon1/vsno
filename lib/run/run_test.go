@@ -12,6 +12,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/guest"
+	"github.com/sebrandon1/vsno/lib/ibu"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/seed"
 	"github.com/sebrandon1/vsno/lib/state"
@@ -313,6 +314,22 @@ func TestAfter(t *testing.T) {
 	}{{Options{}, AfterKeep}, {Options{Finalize: true}, AfterFinalize}, {Options{Rollback: true}, AfterRollback}, {Options{Delete: true}, AfterDelete}} {
 		if got := c.o.after(); got != c.want || afterText[got] == "" {
 			t.Errorf("%+v: %s %q, want %s", c.o, got, afterText[got], c.want)
+		}
+	}
+}
+
+// The plan names the LCA source the run will use.
+func TestPlanLCAText(t *testing.T) {
+	for _, c := range []struct {
+		s    ibu.LCASource
+		want string
+	}{
+		{ibu.LCASource{}, "each vSNO's catalog"},
+		{ibu.LCASource{Ref: "release-4.21"}, "built from release-4.21"},
+		{ibu.LCASource{Ref: "main", Image: "quay.io/x/lca:1"}, "image quay.io/x/lca:1"},
+	} {
+		if got := lcaText(c.s); got != c.want {
+			t.Errorf("%+v = %q, want %q", c.s, got, c.want)
 		}
 	}
 }

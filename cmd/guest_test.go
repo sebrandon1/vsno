@@ -240,3 +240,13 @@ func TestAgeSince(t *testing.T) {
 		t.Errorf("5m ago = %q", got)
 	}
 }
+
+// The wide list's LCA column: where each vSNO's LCA came from.
+func TestLCAText(t *testing.T) {
+	if got := lcaText(""); got != "catalog" {
+		t.Errorf("unset = %q", got)
+	}
+	if src := "https://github.com/openshift-kni/lifecycle-agent@c1e86c201bf6 (reg/lca:c1e86c201bf6)"; lcaText(src) != src {
+		t.Errorf("source = %q", lcaText(src))
+	}
+}
