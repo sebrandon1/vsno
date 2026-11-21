@@ -200,21 +200,18 @@ func WaitState(ctx context.Context, e Env, ns, name string, want ...State) (Stat
 	e.defaults()
 	ps := e.Progress.Start("Waiting for " + name)
 	var st State
-	pollErrs := 0
+	var reads readErrors
 	err := wait.PollUntilContextTimeout(ctx, e.Poll, e.Timeout, true, func(ctx context.Context) (bool, error) {
 		var detail string
 		var err error
 		st, detail, _, err = observeOne(ctx, e, ns, name)
-		// A read that fails now and then (the host API, or the network to
-		// it) shouldn't end a wait of up to an hour; one failing every time does.
+		if ferr := reads.tolerate(err); ferr != nil {
+			return false, ferr
+		}
 		if err != nil {
-			if pollErrs++; pollErrs > maxPollErrors {
-				return false, err
-			}
 			ps.Update("cannot read the vSNO: " + err.Error())
 			return false, nil
 		}
-		pollErrs = 0
 		ps.Update(string(st) + " " + detail)
 		return slices.Contains(want, st), nil
 	})

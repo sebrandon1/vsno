@@ -262,3 +262,24 @@ func TestAccessErrors(t *testing.T) {
 		t.Errorf("headless: %v", err)
 	}
 }
+
+// tolerate lets maxPollErrors failed reads in a row through, fails the next,
+// and starts over after a good read.
+func TestReadErrorsTolerate(t *testing.T) {
+	boom := errors.New("no route to host")
+	var r readErrors
+	for i := range maxPollErrors {
+		if err := r.tolerate(boom); err != nil {
+			t.Fatalf("read %d: %v", i+1, err)
+		}
+	}
+	if err := r.tolerate(boom); !errors.Is(err, boom) {
+		t.Errorf("read %d: %v, want the error", maxPollErrors+1, err)
+	}
+	if err := r.tolerate(nil); err != nil || r != 0 {
+		t.Errorf("a good read: %v, count %d", err, r)
+	}
+	if err := r.tolerate(boom); err != nil {
+		t.Errorf("after a good read: %v", err)
+	}
+}
