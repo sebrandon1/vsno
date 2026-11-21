@@ -163,7 +163,7 @@ func list(ctx context.Context, e Env) ([]line, error) {
 	}
 	var out, stderr bytes.Buffer
 	if err := e.Builder.Run(ctx, script("isos.sh"), nil, builder.IO{Stdout: &out, Stderr: &stderr}); err != nil {
-		return nil, fmt.Errorf("listing the builder's files: %w%s", err, tail(stderr.String()))
+		return nil, fmt.Errorf("listing the builder's files: %w%s", err, builder.Tail(stderr.String()))
 	}
 	var lines []line
 	sc := bufio.NewScanner(&out)
@@ -246,13 +246,4 @@ func size(u unstructured.Unstructured) int64 {
 		return 0
 	}
 	return q.Value()
-}
-
-// tail is the last line of s, as ": line", for error messages.
-func tail(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	return ": " + s[strings.LastIndex(s, "\n")+1:]
 }

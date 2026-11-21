@@ -202,9 +202,6 @@ func TestGiB(t *testing.T) {
 			t.Errorf("gib(%q) = %d", in, got)
 		}
 	}
-	if tail("") != "" || tail("a\nb\n") != ": b" {
-		t.Error("tail")
-	}
 	if API("x") != "https://api.x.vsno.lab:6443" {
 		t.Error("API")
 	}

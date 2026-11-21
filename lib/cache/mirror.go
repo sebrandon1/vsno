@@ -237,7 +237,7 @@ func copySignatures(ctx context.Context, e Env, o EnsureOptions, reg registry.Re
 	err = e.Builder.Run(ctx, script("signature.sh"), []string{addr, repo},
 		builder.IO{Stdin: bytes.NewReader(tarred), Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
-		return "", fmt.Errorf("copying %s's signatures into the mirror: %w%s", o.Release.Requested, err, tail(stderr.String()))
+		return "", fmt.Errorf("copying %s's signatures into the mirror: %w%s", o.Release.Requested, err, builder.Tail(stderr.String()))
 	}
 	out := strings.TrimSpace(stdout.String())
 	if !sigsRe.MatchString(out) {
@@ -349,7 +349,7 @@ func runMirror(ctx context.Context, e Env, o EnsureOptions, files []byte, host, 
 	_ = pr.Close()
 	errRun := <-done
 	if errRun != nil {
-		return fmt.Errorf("mirroring %s: %w%s", o.Release.Requested, errRun, tail(stderr.String()))
+		return fmt.Errorf("mirroring %s: %w%s", o.Release.Requested, errRun, builder.Tail(stderr.String()))
 	}
 	if err := sc.Err(); err != nil {
 		return fmt.Errorf("reading the mirror's output: %w", err)

@@ -405,7 +405,7 @@ func buildISO(ctx context.Context, e Env, s Spec, dnsIP string, sec Secrets, ps 
 		ps.Update(line)
 	}
 	if err := <-done; err != nil {
-		return version, fmt.Errorf("building the ISO: %w%s", err, tail(stderr.String()))
+		return version, fmt.Errorf("building the ISO: %w%s", err, builder.Tail(stderr.String()))
 	}
 	return version, nil
 }

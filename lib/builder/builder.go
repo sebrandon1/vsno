@@ -136,3 +136,17 @@ func ExecPod(ctx context.Context, cfg *rest.Config, kube kubernetes.Interface, n
 	}
 	return ex.StreamWithContext(ctx, opts)
 }
+
+// LastLine is the last line of a script's output, trimmed.
+func LastLine(s string) string {
+	s = strings.TrimSpace(s)
+	return s[strings.LastIndex(s, "\n")+1:]
+}
+
+// Tail is LastLine as ": line", to end an error message; "" for no output.
+func Tail(s string) string {
+	if l := LastLine(s); l != "" {
+		return ": " + l
+	}
+	return ""
+}

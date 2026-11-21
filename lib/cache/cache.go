@@ -195,7 +195,7 @@ func describe(ctx context.Context, e Env, image string) (payload, error) {
 	err = e.Builder.Run(ctx, script("release-info.sh"), []string{image},
 		builder.IO{Stdin: strings.NewReader(ps), Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
-		return r, fmt.Errorf("reading release %s: %w%s", image, err, tail(stderr.String()))
+		return r, fmt.Errorf("reading release %s: %w%s", image, err, builder.Tail(stderr.String()))
 	}
 	var in info
 	if err := json.Unmarshal(stdout.Bytes(), &in); err != nil {
@@ -249,13 +249,4 @@ func script(name string) string {
 		panic(err) // embedded at build time
 	}
 	return string(b)
-}
-
-// tail is the last line of s, as ": line", for error messages.
-func tail(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	return ": " + s[strings.LastIndex(s, "\n")+1:]
 }

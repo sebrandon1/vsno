@@ -303,7 +303,7 @@ func Probes(ctx context.Context, b builder.Runner, targets map[string]string) (m
 	}
 	var stdout, stderr bytes.Buffer
 	if err := b.Run(ctx, script("probe.sh"), args, builder.IO{Stdout: &stdout, Stderr: &stderr}); err != nil {
-		return nil, fmt.Errorf("probing through the builder: %w%s", err, tail(stderr.String()))
+		return nil, fmt.Errorf("probing through the builder: %w%s", err, builder.Tail(stderr.String()))
 	}
 	out := map[string]*Probe{}
 	sc := bufio.NewScanner(&stdout)
@@ -315,15 +315,6 @@ func Probes(ctx context.Context, b builder.Runner, targets map[string]string) (m
 		}
 	}
 	return out, sc.Err()
-}
-
-// tail is the last line of s, as ": line", for error messages.
-func tail(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	return ": " + s[strings.LastIndex(s, "\n")+1:]
 }
 
 // Capacity is what's left on the vSNO node.

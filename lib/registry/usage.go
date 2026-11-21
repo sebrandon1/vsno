@@ -23,7 +23,7 @@ func Usage(ctx context.Context, cfg *rest.Config, kube kubernetes.Interface, ns 
 	var out, stderr bytes.Buffer
 	err = builder.ExecPod(ctx, cfg, kube, ns, pod, Service, []string{"df", "-Pk", mount}, builder.IO{Stdout: &out, Stderr: &stderr})
 	if err != nil {
-		return 0, 0, fmt.Errorf("reading the registry volume: %w%s", err, tail(stderr.String()))
+		return 0, 0, fmt.Errorf("reading the registry volume: %w%s", err, builder.Tail(stderr.String()))
 	}
 	return parseDF(out.String())
 }

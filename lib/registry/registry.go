@@ -138,16 +138,7 @@ func (r Registry) Run(ctx context.Context, b builder.Runner, args ...string) ([]
 	var stdout, stderr bytes.Buffer
 	err := b.Run(ctx, Script("registry.sh"), args, builder.IO{Stdin: bytes.NewReader(r.Stdin()), Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
-		return stdout.Bytes(), fmt.Errorf("%w%s", err, tail(stderr.String()))
+		return stdout.Bytes(), fmt.Errorf("%w%s", err, builder.Tail(stderr.String()))
 	}
 	return stdout.Bytes(), nil
-}
-
-// tail is the last line of s, as ": line", for error messages.
-func tail(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	return ": " + s[strings.LastIndex(s, "\n")+1:]
 }

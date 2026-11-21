@@ -211,7 +211,7 @@ func repoDigests(ctx context.Context, e Env, ns, repo string) ([]string, error) 
 	var out, stderr bytes.Buffer
 	cmd := []string{"find", dir, "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-exec", "basename", "{}", ";"}
 	if err := builder.ExecPod(ctx, e.Config, e.Kube, ns, pod, registry.Service, cmd, builder.IO{Stdout: &out, Stderr: &stderr}); err != nil {
-		return nil, fmt.Errorf("listing %s's images: %w%s", repo, err, tail(stderr.String()))
+		return nil, fmt.Errorf("listing %s's images: %w%s", repo, err, builder.Tail(stderr.String()))
 	}
 	var digests []string
 	for _, d := range strings.Fields(out.String()) {

@@ -55,3 +55,19 @@ func TestRunWithoutBuilder(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestLastLineAndTail(t *testing.T) {
+	for _, c := range []struct{ in, last, tail string }{
+		{"", "", ""},
+		{"  \n", "", ""},
+		{"one", "one", ": one"},
+		{"a\nb\n", "b", ": b"},
+	} {
+		if got := LastLine(c.in); got != c.last {
+			t.Errorf("LastLine(%q) = %q, want %q", c.in, got, c.last)
+		}
+		if got := Tail(c.in); got != c.tail {
+			t.Errorf("Tail(%q) = %q, want %q", c.in, got, c.tail)
+		}
+	}
+}

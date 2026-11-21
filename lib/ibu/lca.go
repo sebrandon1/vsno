@@ -138,15 +138,15 @@ func writeBuildAuth(ctx context.Context, e Env, ns string, reg seed.Registry) er
 // runBuildPod runs lca-build.sh in a privileged buildah pod beside the builder
 // (on its node, at its SELinux level), shows its last log line as progress, and returns its whole
 // log once it succeeded.
-func runBuildPod(ctx context.Context, e Env, ns string, builder *corev1.Pod, args []string, ps precheck.ProgressStep) (string, error) {
+func runBuildPod(ctx context.Context, e Env, ns string, bp *corev1.Pod, args []string, ps precheck.ProgressStep) (string, error) {
 	pods := e.Kube.CoreV1().Pods(ns)
 	_ = pods.Delete(ctx, lcaBuildPod, metav1.DeleteOptions{}) // a leftover from an interrupted build
 	privileged := true
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: lcaBuildPod, Namespace: ns, Labels: map[string]string{"app.kubernetes.io/managed-by": "vsno"}},
 		Spec: corev1.PodSpec{
-			NodeName:        builder.Spec.NodeName,
-			SecurityContext: sameSELinux(builder),
+			NodeName:        bp.Spec.NodeName,
+			SecurityContext: sameSELinux(bp),
 			RestartPolicy:   corev1.RestartPolicyNever,
 			Containers: []corev1.Container{{
 				Name: "build", Image: lcaBuildImage,
@@ -171,7 +171,7 @@ func runBuildPod(ctx context.Context, e Env, ns string, builder *corev1.Pod, arg
 			return false, err
 		}
 		phase = p.Status.Phase
-		if line := lastLine(podLog(ctx, e, ns, 1)); line != "" {
+		if line := builder.LastLine(podLog(ctx, e, ns, 1)); line != "" {
 			ps.Update(line)
 		}
 		return phase == corev1.PodSucceeded || phase == corev1.PodFailed, nil
@@ -179,11 +179,11 @@ func runBuildPod(ctx context.Context, e Env, ns string, builder *corev1.Pod, arg
 	logs := podLog(ctx, e, ns, 0)
 	switch {
 	case errors.Is(err, guestctl.ErrTimeout):
-		return "", fmt.Errorf("the LCA build didn't finish in %s; last: %s", lcaBuildWait, lastLine(logs))
+		return "", fmt.Errorf("the LCA build didn't finish in %s; last: %s", lcaBuildWait, builder.LastLine(logs))
 	case err != nil:
 		return "", err
 	case phase == corev1.PodFailed:
-		return "", fmt.Errorf("the LCA build failed: %s", lastLine(logs))
+		return "", fmt.Errorf("the LCA build failed: %s", builder.LastLine(logs))
 	}
 	return logs, nil
 }
@@ -210,11 +210,6 @@ func podLog(ctx context.Context, e Env, ns string, tail int64) string {
 	return string(b)
 }
 
-func lastLine(s string) string {
-	s = strings.TrimSpace(s)
-	return s[strings.LastIndex(s, "\n")+1:]
-}
-
 // parseBuild reads the sha=, version= and image= lines lca-build.sh prints.
 func parseBuild(logs string) (*BuiltLCA, error) {
 	b := &BuiltLCA{}
@@ -234,7 +229,7 @@ func parseBuild(logs string) (*BuiltLCA, error) {
 		}
 	}
 	if b.SHA == "" || b.Image == "" {
-		return nil, fmt.Errorf("the LCA build didn't report its commit and image: %s", lastLine(logs))
+		return nil, fmt.Errorf("the LCA build didn't report its commit and image: %s", builder.LastLine(logs))
 	}
 	return b, nil
 }
