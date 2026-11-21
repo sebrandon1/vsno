@@ -1,6 +1,7 @@
 package release
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -121,5 +122,24 @@ func TestGetErrors(t *testing.T) {
 	srv.Close()
 	if err := (Resolver{}).get(ctx, u, &struct{}{}); err == nil || !httpx.IsNetworkError(err) || !strings.Contains(err.Error(), u) {
 		t.Errorf("closed server: %v", err)
+	}
+}
+
+// A malformed URL fails before any request, and a body past maxResponse is
+// refused rather than read whole.
+func TestGetBadURLAndOversizeBody(t *testing.T) {
+	ctx := context.Background()
+	if err := (Resolver{}).get(ctx, "http://bad host/graph", &struct{}{}); err == nil {
+		t.Error("bad URL: want an error")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"nodes":[`))
+		_, _ = w.Write(bytes.Repeat([]byte(" "), maxResponse))
+		_, _ = w.Write([]byte(`]}`))
+	}))
+	defer srv.Close()
+	var out struct{}
+	if err := (Resolver{HTTP: srv.Client()}).get(ctx, srv.URL+"/graph", &out); err == nil || !strings.Contains(err.Error(), srv.URL+"/graph") {
+		t.Errorf("oversize body: %v", err)
 	}
 }
