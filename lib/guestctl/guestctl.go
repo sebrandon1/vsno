@@ -136,6 +136,57 @@ type Object struct {
 	} `json:"status"`
 }
 
+// Deployment is what vsno reads of a Deployment on a vSNO.
+type Deployment struct {
+	Metadata struct {
+		Labels map[string]string `json:"labels"`
+	} `json:"metadata"`
+	Spec struct {
+		Template struct {
+			Spec struct {
+				Containers []struct {
+					Name  string `json:"name"`
+					Image string `json:"image"`
+				} `json:"containers"`
+			} `json:"spec"`
+		} `json:"template"`
+	} `json:"spec"`
+	Status struct {
+		Replicas            int `json:"replicas"`
+		UpdatedReplicas     int `json:"updatedReplicas"`
+		AvailableReplicas   int `json:"availableReplicas"`
+		UnavailableReplicas int `json:"unavailableReplicas"`
+	} `json:"status"`
+}
+
+// Image is the image of the container named name, or "".
+func (d Deployment) Image(name string) string {
+	for _, c := range d.Spec.Template.Spec.Containers {
+		if c.Name == name {
+			return c.Image
+		}
+	}
+	return ""
+}
+
+// RunsImage reports whether any container runs image.
+func (d Deployment) RunsImage(image string) bool {
+	for _, c := range d.Spec.Template.Spec.Containers {
+		if c.Image == image {
+			return true
+		}
+	}
+	return false
+}
+
+// RolledOut reports whether every replica is updated and available. The old
+// replicas count as available until they go, so available alone doesn't say
+// the new ones started.
+func (d Deployment) RolledOut() bool {
+	st := d.Status
+	return st.UpdatedReplicas > 0 && st.UpdatedReplicas == st.Replicas && st.UnavailableReplicas == 0 && st.AvailableReplicas > 0
+}
+
 // ObjectList is what oc get prints for a kind.
 type ObjectList struct {
 	Items []Object `json:"items"`

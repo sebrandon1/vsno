@@ -2,6 +2,7 @@ package guestctl_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -131,3 +132,19 @@ func (s stderrAccess) Oc(_ context.Context, _ []string, io builder.IO) error {
 	return errors.New("exit status 1")
 }
 func (s stderrAccess) SSH(context.Context, []string, builder.IO) error { return nil }
+
+func TestDeployment(t *testing.T) {
+	var d guestctl.Deployment
+	if err := json.Unmarshal([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"manager","image":"reg/lca:1"},{"name":"proxy","image":"reg/p:2"}]}}},`+
+		`"status":{"replicas":1,"updatedReplicas":1,"availableReplicas":1}}`), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Image("manager") != "reg/lca:1" || d.Image("nope") != "" || !d.RunsImage("reg/p:2") || d.RunsImage("reg/x:3") || !d.RolledOut() {
+		t.Errorf("%+v", d)
+	}
+	// Mid-rollout: the old replica is still the available one.
+	d.Status.Replicas, d.Status.UnavailableReplicas = 2, 1
+	if d.RolledOut() {
+		t.Error("mid-rollout reads rolled out")
+	}
+}

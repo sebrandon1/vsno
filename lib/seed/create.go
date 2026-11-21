@@ -156,31 +156,13 @@ const LCADeployment = "lifecycle-agent-controller-manager"
 // SourceLCA reports whether the vSNO runs LCA deployed from a ref rather than
 // by OLM, and its controller image: OLM labels what it deploys with olm.owner.
 func SourceLCA(ctx context.Context, a Access) (image string, fromSource bool, err error) {
-	var d struct {
-		Metadata struct {
-			Labels map[string]string `json:"labels"`
-		} `json:"metadata"`
-		Spec struct {
-			Template struct {
-				Spec struct {
-					Containers []struct {
-						Name  string `json:"name"`
-						Image string `json:"image"`
-					} `json:"containers"`
-				} `json:"spec"`
-			} `json:"template"`
-		} `json:"spec"`
-	}
+	var d guestctl.Deployment
 	found, err := guestctl.Get(ctx, a, &d, "get", "deployments", LCADeployment, "-n", LCANamespace, "--ignore-not-found")
 	if err != nil || !found || d.Metadata.Labels["olm.owner"] != "" {
 		return "", false, err
 	}
-	for _, c := range d.Spec.Template.Spec.Containers {
-		if c.Name == "manager" {
-			return c.Image, true, nil
-		}
-	}
-	return "", false, nil
+	image = d.Image("manager")
+	return image, image != "", nil
 }
 
 // InstalledLCA names the LCA a vSNO runs: the controller's image when it was

@@ -259,38 +259,14 @@ func deployLCA(ctx context.Context, a guestctl.Access, c guestctl.Clock, b *Buil
 	}
 	var last string
 	err := guestctl.Poll(ctx, c, lcaDeployWait, func() (bool, error) {
-		var d struct {
-			Spec struct {
-				Template struct {
-					Spec struct {
-						Containers []struct {
-							Image string `json:"image"`
-						} `json:"containers"`
-					} `json:"spec"`
-				} `json:"template"`
-			} `json:"spec"`
-			Status struct {
-				Replicas            int `json:"replicas"`
-				UpdatedReplicas     int `json:"updatedReplicas"`
-				AvailableReplicas   int `json:"availableReplicas"`
-				UnavailableReplicas int `json:"unavailableReplicas"`
-			} `json:"status"`
-		}
+		var d guestctl.Deployment
 		if _, err := guestctl.Get(ctx, a, &d, "get", "deployments", seed.LCADeployment, "-n", seed.LCANamespace); err != nil {
 			last = err.Error()
 			return false, nil
 		}
-		ours := false
-		for _, ct := range d.Spec.Template.Spec.Containers {
-			ours = ours || ct.Image == b.Image
-		}
 		last = fmt.Sprintf("%d updated, %d available", d.Status.UpdatedReplicas, d.Status.AvailableReplicas)
 		ps.Update("LCA controller: " + last)
-		// Rolled out: every replica runs b's image and is available. The old
-		// controller counts as available until it goes, so available alone
-		// doesn't say the new one started.
-		st := d.Status
-		return ours && st.UpdatedReplicas > 0 && st.UpdatedReplicas == st.Replicas && st.UnavailableReplicas == 0 && st.AvailableReplicas > 0, nil
+		return d.RunsImage(b.Image) && d.RolledOut(), nil
 	})
 	if errors.Is(err, guestctl.ErrTimeout) {
 		return fmt.Errorf("LCA %s didn't start in %s (%s); `vsno oc <name> -- get pods -n %s`", b.SHA, lcaDeployWait, last, seed.LCANamespace)
