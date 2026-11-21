@@ -175,16 +175,28 @@ func TestRecordAndResume(t *testing.T) {
 	if err := state.Save(ctx, e.Kube, ns, &state.State{}); err != nil {
 		t.Fatal(err)
 	}
-	record(ctx, e, ns, StageSetup, nil)
-	record(ctx, e, ns, StageVSNOs, errors.New("boom"))
-	if got := finished(ctx, e, ns); !slices.Equal(got, []Stage{StageSetup}) {
-		t.Errorf("finished = %v", got)
-	}
 	o := Options{Namespace: ns}
 	o.defaults()
 	p, err := makePlan(ctx, e, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.key() != "target@4.22.1 from seed@4.22.2" {
+		t.Errorf("key = %q", p.key())
+	}
+	record(ctx, e, ns, p.key(), StageSetup, nil)
+	record(ctx, e, ns, p.key(), StageVSNOs, errors.New("boom"))
+	if got := finished(ctx, e, ns, p.key()); !slices.Equal(got, []Stage{StageSetup}) {
+		t.Errorf("finished = %v", got)
+	}
+	p, err = makePlan(ctx, e, o)
 	if err != nil || !strings.Contains(p.String(), "resuming: an earlier run finished [setup]") {
 		t.Errorf("plan = %s, err = %v", p, err)
+	}
+	// Another plan (another target) resumes nothing of this one's.
+	o.TargetName = "target2"
+	if p, err = makePlan(ctx, e, o); err != nil || len(p.Done) != 0 {
+		t.Errorf("another plan: done = %v, err = %v", p.Done, err)
 	}
 }
 

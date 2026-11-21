@@ -153,7 +153,7 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 		start := e.Now()
 		err := runStage(ctx, e, o, plan, s, res)
 		res.Timings[s] = e.Now().Sub(start).Round(time.Second).String()
-		record(ctx, e, o.Namespace, s, err)
+		record(ctx, e, o.Namespace, plan.key(), s, err)
 		if err != nil {
 			res.Failed = s
 			return res, fmt.Errorf("%s: %w", s, err)
@@ -226,7 +226,7 @@ func makePlan(ctx context.Context, e Env, o Options) (*Plan, error) {
 	if o.Delete {
 		p.Stages = append(p.Stages, StageDelete)
 	}
-	p.Done = finished(ctx, e, o.Namespace)
+	p.Done = finished(ctx, e, o.Namespace, p.key())
 	return p, nil
 }
 
@@ -358,12 +358,14 @@ func ensureSeed(ctx context.Context, e Env, o Options, plan *Plan) error {
 
 // record notes a stage's outcome in the environment's state, best effort:
 // the run's own output is what the user reads.
-func record(ctx context.Context, e Env, ns string, s Stage, err error) {
+// record notes a stage's outcome in the environment's state; a finished
+// stage's detail is the plan's key, so only a run of the same plan resumes it.
+func record(ctx context.Context, e Env, ns, key string, s Stage, err error) {
 	st, _, lerr := state.Load(ctx, e.Kube, ns)
 	if lerr != nil {
 		return
 	}
-	status, detail := state.Done, ""
+	status, detail := state.Done, key
 	if err != nil {
 		status, detail = state.Failed, err.Error()
 	}
@@ -371,20 +373,31 @@ func record(ctx context.Context, e Env, ns string, s Stage, err error) {
 	_ = state.Save(ctx, e.Kube, ns, st)
 }
 
-// finished lists the stages the environment's state says a run finished,
-// most recent outcome per stage.
-func finished(ctx context.Context, e Env, ns string) []Stage {
+// finished lists the stages the environment's state says a run of the plan
+// with this key finished, most recent outcome per stage.
+func finished(ctx context.Context, e Env, ns, key string) []Stage {
 	st, _, err := state.Load(ctx, e.Kube, ns)
 	if err != nil {
 		return nil
 	}
 	var out []Stage
 	for _, s := range []Stage{StageSetup, StageVSNOs, StageSeed, StageUpgrade, StageDelete} {
-		if last, ok := st.Last(StageName + ":" + string(s)); ok && last.Status == state.Done {
+		if last, ok := st.Last(StageName + ":" + string(s)); ok && last.Status == state.Done && last.Detail == key {
 			out = append(out, s)
 		}
 	}
 	return out
+}
+
+// key names what the plan upgrades and with what, e.g.
+// "target@4.22.21 from seed@4.22.22": stages a run of another plan finished
+// aren't this one's to resume.
+func (p Plan) key() string {
+	from := p.Seed
+	if from == "" {
+		from = p.SeedImage
+	}
+	return p.Target + "@" + p.TargetVersion + " from " + from + "@" + p.SeedVersion
 }
 
 // String is the plan as the confirmation shows it.
