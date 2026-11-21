@@ -443,10 +443,11 @@ The vSNO's install-config gets `imageDigestSources` pointing at the registry's *
 guest's own `cluster.local` hides the host's Service names) and the registry's CA as
 `additionalTrustBundle`, so the installer and the cluster pull from the cluster.
 
-Both the release image and its payload are mapped to the mirror, and the release image's sigstore
-signature (`sha256-<digest>.sig`) is copied next to it: the guest's image policy requires that
-signature and looks for it in the registry it pulls from. Each use checks the signature is there, so
-a release mirrored before signatures were copied gets it on its next create.
+Both the release image and its payload are mapped to the mirror, and the sigstore signature
+(`sha256-<digest>.sig`) of the release image and of each of its component images is copied next to
+them: the guest's image policy requires these signatures (from 4.22, for the component images too)
+and looks for them in the registry it pulls from. Each use checks they're there, listing the
+mirror's tags once, so a release mirrored before they were copied gets them on its next create.
 
 Nightlies work the same way; the mirror step needs `registry.ci.openshift.org` credentials in the
 cluster pull secret, which `create` already requires for nightlies. They have no signature to copy.

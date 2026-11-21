@@ -49,23 +49,28 @@ type mirrorRunner struct {
 	mirrorErr   error
 	// delay keeps the mirror running long enough for a progress line.
 	delay time.Duration
-	// sigArgs are signature.sh's arguments; sigOut is what it prints
-	// ("copied" when empty) and sigErr makes it fail.
-	sigArgs []string
-	sigOut  string
-	sigErr  error
+	// sigArgs are signature.sh's arguments and sigImages its images.txt;
+	// sigOut is what it prints (all copied when empty) and sigErr makes it fail.
+	sigArgs   []string
+	sigImages string
+	sigOut    string
+	sigErr    error
 }
 
 func (m *mirrorRunner) Run(ctx context.Context, s string, args []string, io_ builder.IO) error {
 	if s == script("signature.sh") {
 		m.sigArgs = args
+		if io_.Stdin != nil {
+			b, _ := io.ReadAll(io_.Stdin)
+			m.sigImages = tarFilesOf(b)["images.txt"]
+		}
 		if m.sigErr != nil {
 			_, _ = io.WriteString(io_.Stderr, "reading the signature: denied")
 			return m.sigErr
 		}
 		out := m.sigOut
 		if out == "" {
-			out = "copied"
+			out = "copied 3, present 0, none 0"
 		}
 		_, _ = io.WriteString(io_.Stdout, out+"\n")
 		return nil
@@ -115,7 +120,7 @@ func TestEnsureMirrors(t *testing.T) {
 	if p.TrustBundle != "CA" {
 		t.Errorf("trust bundle = %q", p.TrustBundle)
 	}
-	if len(progress) != 3 || progress[2] != "release signature: copied" { // the mirror's two lines, then the signature; no room warning at 50Gi free
+	if len(progress) != 3 || progress[2] != "signatures: copied 3, present 0, none 0" { // the mirror's two lines, then the signature; no room warning at 50Gi free
 		t.Errorf("progress = %q", progress)
 	}
 }
@@ -303,6 +308,11 @@ func TestEnsureErrors(t *testing.T) {
 // tarFiles reads a tar of files.
 func tarFiles(t *testing.T, b []byte) map[string]string {
 	t.Helper()
+	return tarFilesOf(b)
+}
+
+// tarFilesOf is tarFiles for a fake, which has no *testing.T.
+func tarFilesOf(b []byte) map[string]string {
 	out := map[string]string{}
 	tr := tar.NewReader(bytes.NewReader(b))
 	for {
@@ -419,7 +429,7 @@ func TestEnsureHitMeasuresAnOldEntry(t *testing.T) {
 // before signatures were copied get one on their next use.
 func TestEnsureHitChecksTheSignature(t *testing.T) {
 	ctx := context.Background()
-	r := &mirrorRunner{runner: runner{out: releaseInfo, exists: "yes"}, sigOut: "present"}
+	r := &mirrorRunner{runner: runner{out: releaseInfo, exists: "yes"}, sigOut: "copied 0, present 3, none 0"}
 	e := mirrorEnv(t, 50<<30, r)
 	_ = update(ctx, e.Kube, ns, func(m *metadata) {
 		m.Entries["sha256:1111111111111111aaaa"] = &Entry{Version: "4.20.46", Image: rel.Image,
@@ -433,7 +443,7 @@ func TestEnsureHitChecksTheSignature(t *testing.T) {
 	if !p.Hit || len(r.sigArgs) == 0 {
 		t.Errorf("hit = %v, signature args %q", p.Hit, r.sigArgs)
 	}
-	if !slices.Contains(progress, "release signature: present") {
+	if !slices.Contains(progress, "signatures: copied 0, present 3, none 0") {
 		t.Errorf("progress = %q", progress)
 	}
 }
@@ -480,8 +490,15 @@ func TestEnsureMapsTheReleaseAndCopiesItsSignature(t *testing.T) {
 			t.Errorf("sources = %q, missing %s", mapped, want)
 		}
 	}
-	if want := []string{"quay.io/openshift-release-dev/ocp-release", "sha256:1111111111111111aaaa", "172.30.0.5:5000", "ocp/release/1111111111111111"}; !equal(r.sigArgs, want) {
+	if want := []string{"172.30.0.5:5000", "ocp/release/1111111111111111"}; !equal(r.sigArgs, want) {
 		t.Errorf("signature args = %q, want %q", r.sigArgs, want)
+	}
+	// The release image's signature and each component image's: from 4.22 a
+	// guest's policy requires them for the components too.
+	if want := "quay.io/openshift-release-dev/ocp-release@sha256:1111111111111111aaaa\n" +
+		"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:aaa\n" +
+		"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:ccc\n"; r.sigImages != want {
+		t.Errorf("signature images = %q, want %q", r.sigImages, want)
 	}
 }
 

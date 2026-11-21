@@ -84,13 +84,18 @@ func env(r *runner) Env {
 
 func TestDescribe(t *testing.T) {
 	r := &runner{out: releaseInfo}
-	digest, sources, err := describe(context.Background(), env(r), "quay.io/x:4.20.46")
+	rel, err := describe(context.Background(), env(r), "quay.io/x:4.20.46")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if digest != "sha256:1111111111111111aaaa" {
-		t.Errorf("digest = %s", digest)
+	if rel.Digest != "sha256:1111111111111111aaaa" {
+		t.Errorf("digest = %s", rel.Digest)
 	}
+	// The component images, whose signatures the mirror needs too.
+	if want := []string{"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:aaa", "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:ccc"}; !slices.Equal(rel.Images, want) {
+		t.Errorf("images = %v, want %v", rel.Images, want)
+	}
+	sources := rel.Sources
 	// A release's references name only its payload's repository; Ensure adds
 	// the release image's own.
 	want := []string{"quay.io/openshift-release-dev/ocp-v4.0-art-dev"}
@@ -104,17 +109,17 @@ func TestDescribe(t *testing.T) {
 
 func TestDescribeErrors(t *testing.T) {
 	ctx := context.Background()
-	if _, _, err := describe(ctx, env(&runner{err: errors.New("exit 1")}), "x"); err == nil || !strings.Contains(err.Error(), "last line") {
+	if _, err := describe(ctx, env(&runner{err: errors.New("exit 1")}), "x"); err == nil || !strings.Contains(err.Error(), "last line") {
 		t.Errorf("got %v", err)
 	}
-	if _, _, err := describe(ctx, env(&runner{out: "not json"}), "x"); err == nil || !strings.Contains(err.Error(), "reading release") {
+	if _, err := describe(ctx, env(&runner{out: "not json"}), "x"); err == nil || !strings.Contains(err.Error(), "reading release") {
 		t.Errorf("got %v", err)
 	}
-	if _, _, err := describe(ctx, env(&runner{out: `{}`}), "x"); err == nil || !strings.Contains(err.Error(), "no digest") {
+	if _, err := describe(ctx, env(&runner{out: `{}`}), "x"); err == nil || !strings.Contains(err.Error(), "no digest") {
 		t.Errorf("got %v", err)
 	}
 	noPull := Env{Kube: kfake.NewClientset(), Builder: &runner{out: releaseInfo}}
-	if _, _, err := describe(ctx, noPull, "x"); err == nil || !strings.Contains(err.Error(), "pull secret") {
+	if _, err := describe(ctx, noPull, "x"); err == nil || !strings.Contains(err.Error(), "pull secret") {
 		t.Errorf("got %v", err)
 	}
 }

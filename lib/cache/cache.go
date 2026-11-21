@@ -174,32 +174,48 @@ type info struct {
 	} `json:"references"`
 }
 
-// describe returns the payload's digest and the repositories it pulls from.
-func describe(ctx context.Context, e Env, image string) (digest string, sources []string, err error) {
+// payload is what describe reads of a release.
+type payload struct {
+	Digest string
+	// Sources are the repositories its images come from.
+	Sources []string
+	// Images are its component images, by digest.
+	Images []string
+}
+
+// describe reads a release's digest, the repositories it pulls from and its
+// component images.
+func describe(ctx context.Context, e Env, image string) (payload, error) {
+	var r payload
 	ps, err := pullSecret(ctx, e.Kube)
 	if err != nil {
-		return "", nil, err
+		return r, err
 	}
 	var stdout, stderr bytes.Buffer
 	err = e.Builder.Run(ctx, script("release-info.sh"), []string{image},
 		builder.IO{Stdin: strings.NewReader(ps), Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
-		return "", nil, fmt.Errorf("reading release %s: %w%s", image, err, tail(stderr.String()))
+		return r, fmt.Errorf("reading release %s: %w%s", image, err, tail(stderr.String()))
 	}
 	var in info
 	if err := json.Unmarshal(stdout.Bytes(), &in); err != nil {
-		return "", nil, fmt.Errorf("reading release %s: %w", image, err)
+		return r, fmt.Errorf("reading release %s: %w", image, err)
 	}
 	if in.Digest == "" {
-		return "", nil, fmt.Errorf("release %s has no digest", image)
+		return r, fmt.Errorf("release %s has no digest", image)
 	}
+	r.Digest = in.Digest
 	for _, t := range in.References.Spec.Tags {
-		if name, ok := repoOf(t.From.Name); ok && !slices.Contains(sources, name) {
-			sources = append(sources, name)
+		if name, ok := repoOf(t.From.Name); ok && !slices.Contains(r.Sources, name) {
+			r.Sources = append(r.Sources, name)
+		}
+		if strings.Contains(t.From.Name, "@sha256:") && !slices.Contains(r.Images, t.From.Name) {
+			r.Images = append(r.Images, t.From.Name)
 		}
 	}
-	slices.Sort(sources)
-	return in.Digest, sources, nil
+	slices.Sort(r.Sources)
+	slices.Sort(r.Images)
+	return r, nil
 }
 
 // repoOf strips an image reference's tag or digest, leaving its repository.
