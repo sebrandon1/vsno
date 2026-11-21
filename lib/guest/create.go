@@ -38,6 +38,7 @@ type CreateOptions struct {
 	Name      string
 	Version   string
 	Node      string // "" = the node vsno setup chose
+	// Cores, MemoryGiB and DiskGiB are the vSNO's size; 0 is the default.
 	Cores     int
 	MemoryGiB int64
 	DiskGiB   int64
@@ -47,6 +48,21 @@ type CreateOptions struct {
 	NoCache bool
 	// StuckAfter fails an install whose validations keep failing this long; 0 = 15m.
 	StuckAfter time.Duration
+}
+
+// sized fills in the default size for each one o leaves at 0, as vsno
+// create's flags do.
+func (o CreateOptions) sized() CreateOptions {
+	if o.Cores == 0 {
+		o.Cores = DefaultCores
+	}
+	if o.MemoryGiB == 0 {
+		o.MemoryGiB = DefaultMemoryGiB
+	}
+	if o.DiskGiB == 0 {
+		o.DiskGiB = DefaultDiskGiB
+	}
+	return o
 }
 
 // Create builds and installs a vSNO, named randomly if o.Name is empty. It
@@ -184,6 +200,7 @@ func step(e Env, title string, fn func(precheck.ProgressStep) (string, error)) e
 
 // prepare checks everything Create needs before changing anything.
 func prepare(ctx context.Context, e Env, o CreateOptions) (Spec, Secrets, string, error) {
+	o = o.sized()
 	s := Spec{Namespace: o.Namespace, Name: o.Name, Node: o.Node, Cores: o.Cores, MemoryGiB: o.MemoryGiB, DiskGiB: o.DiskGiB}
 	var sec Secrets
 	if err := s.Validate(); err != nil {
