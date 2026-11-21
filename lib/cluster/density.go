@@ -59,7 +59,7 @@ func ApplyDensity(ctx context.Context, dyn dynamic.Interface, d state.Density) e
 		spec["ksmConfiguration"] = map[string]any{"nodeLabelSelector": map[string]any{"matchLabels": map[string]any{hostnameLabel: d.KSMNode}}}
 	}
 	hc := &unstructured.Unstructured{Object: map[string]any{"spec": spec}}
-	hc.SetAPIVersion("hco.kubevirt.io/v1beta1")
+	hc.SetAPIVersion(GVRHyperConverged.GroupVersion().String())
 	hc.SetKind("HyperConverged")
 	hc.SetNamespace(CNVNamespace)
 	hc.SetName(HyperConvergedName)
