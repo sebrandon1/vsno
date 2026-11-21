@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/sebrandon1/go-toolbox/httpx"
 )
 
 // server fakes the update graph (stable-4.20 only) and the release controller (4.22 only).
@@ -90,5 +92,34 @@ func TestMinor(t *testing.T) {
 		if got := Minor(v); got != want {
 			t.Errorf("Minor(%q) = %q, want %q", v, got, want)
 		}
+	}
+}
+
+// A failed request names the URL and keeps httpx's typed error.
+func TestGetErrors(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		status int
+		is     func(error) bool
+		want   string
+	}{
+		{http.StatusInternalServerError, httpx.IsHTTPError, "http error 500"},
+		{http.StatusNotFound, httpx.IsNotFound, "not found"},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(c.status) }))
+		r := Resolver{HTTP: srv.Client(), GraphURL: srv.URL + "/graph"}
+		var out struct{}
+		err := r.get(ctx, srv.URL+"/graph", &out)
+		srv.Close()
+		if err == nil || !c.is(err) || !strings.Contains(err.Error(), srv.URL+"/graph") || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("HTTP %d: %v", c.status, err)
+		}
+	}
+	// Nothing listening: a network error, still naming the URL.
+	srv := httptest.NewServer(http.NotFoundHandler())
+	u := srv.URL + "/graph"
+	srv.Close()
+	if err := (Resolver{}).get(ctx, u, &struct{}{}); err == nil || !httpx.IsNetworkError(err) || !strings.Contains(err.Error(), u) {
+		t.Errorf("closed server: %v", err)
 	}
 }

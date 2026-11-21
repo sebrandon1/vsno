@@ -5,7 +5,6 @@ package release
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -14,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sebrandon1/go-toolbox/httpx"
 )
 
 // Public endpoints; Resolver fields override them in tests.
@@ -146,8 +147,11 @@ func (r Resolver) latestNightly(ctx context.Context, minor string) (name, pullSp
 	return l.Name, l.PullSpec, nil
 }
 
+// maxResponse bounds what get reads: a channel's update graph is a few MiB.
+const maxResponse = 64 << 20
+
 func (r Resolver) get(ctx context.Context, u string, into any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := httpx.NewRequest(ctx, http.MethodGet, u)
 	if err != nil {
 		return err
 	}
@@ -156,15 +160,15 @@ func (r Resolver) get(ctx context.Context, u string, into any) error {
 	if c == nil {
 		c = &http.Client{Timeout: 30 * time.Second}
 	}
-	resp, err := c.Do(req)
+	resp, err := c.Do(req) //nolint:bodyclose // httpx.HandleResponse closes it
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", u, httpx.AsNetworkError(err))
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: HTTP %d", u, resp.StatusCode)
+	// Closes the body, turns a non-2xx status into a typed error, and decodes.
+	if err := httpx.HandleResponse(resp, into, maxResponse); err != nil {
+		return fmt.Errorf("%s: %w", u, err)
 	}
-	return json.NewDecoder(resp.Body).Decode(into)
+	return nil
 }
 
 func (r Resolver) graphURL() string {
