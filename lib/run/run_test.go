@@ -209,7 +209,7 @@ func TestRunStopsAtAFailedStage(t *testing.T) {
 	}
 	e.Setup = func(context.Context) error { return errors.New("no bare-metal worker") }
 	res, err := Run(ctx, e, Options{Namespace: ns, Yes: true})
-	if err == nil || !strings.HasPrefix(err.Error(), "setup: no bare-metal worker") || res.Timings[StageSetup] == "" || res.Timings[StageVSNOs] != "" {
+	if err == nil || !strings.HasPrefix(err.Error(), "setup: no bare-metal worker") || res.Timings[StageSetup] == "" || res.Timings[StageVSNOs] != "" || res.Failed != StageSetup {
 		t.Errorf("err = %v, timings = %v", err, res.Timings)
 	}
 	st, _, _ := state.Load(ctx, e.Kube, ns)

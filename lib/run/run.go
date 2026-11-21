@@ -99,8 +99,10 @@ type Plan struct {
 
 // Result is a finished, or failed, run.
 type Result struct {
-	Plan    Plan               `json:"plan"`
-	Timings map[Stage]string   `json:"timings"`
+	Plan    Plan             `json:"plan"`
+	Timings map[Stage]string `json:"timings"`
+	// Failed is the stage the run stopped at, if one failed.
+	Failed  Stage              `json:"failed,omitempty"`
 	Upgrade *ibu.UpgradeResult `json:"upgrade,omitempty"`
 }
 
@@ -153,6 +155,7 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 		res.Timings[s] = e.Now().Sub(start).Round(time.Second).String()
 		record(ctx, e, o.Namespace, s, err)
 		if err != nil {
+			res.Failed = s
 			return res, fmt.Errorf("%s: %w", s, err)
 		}
 	}

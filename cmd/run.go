@@ -177,6 +177,8 @@ func renderRun(w io.Writer, res *run.Result, pal ui.Palette) {
 		switch {
 		case !ok:
 			icon, took = pal.Dim("="), "not run"
+		case s == res.Failed:
+			icon, took = pal.Red("✗"), took+" failed"
 		case slices.Contains(res.Plan.Done, s):
 			took += pal.Dim(" (resumed)")
 		}
