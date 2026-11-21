@@ -195,16 +195,25 @@ func runStage(ctx context.Context, e Env, o Options, plan *Plan, s Stage, res *R
 	case StageSetup:
 		return e.Setup(ctx)
 	case StageVSNOs:
-		names, err := toCreate(ctx, e, o, plan)
+		// One listing for both: it probes every vSNO in the namespace.
+		existing, err := guest.List(ctx, e.Env.Env, o.Namespace)
 		if err != nil {
 			return err
 		}
-		return ensureVSNOs(ctx, e, o, plan, names)
+		names, err := toCreate(ctx, e, o, plan, existing)
+		if err != nil {
+			return err
+		}
+		return ensureVSNOs(ctx, e, o, plan, names, existing)
 	case StageSeed:
 		return ensureSeed(ctx, e, o, plan)
 	case StageUpgrade:
 		// The target, if the node had no room for it next to the seed.
-		if err := ensureVSNOs(ctx, e, o, plan, []string{plan.Target}); err != nil {
+		existing, err := guest.List(ctx, e.Env.Env, o.Namespace)
+		if err != nil {
+			return err
+		}
+		if err := ensureVSNOs(ctx, e, o, plan, []string{plan.Target}, existing); err != nil {
 			return err
 		}
 		u, err := ibu.Upgrade(ctx, e.Env, ibu.UpgradeOptions{Namespace: o.Namespace, Target: plan.Target,
@@ -289,14 +298,10 @@ func (p Plan) wanted() map[string]string {
 // toCreate is the vSNOs the vSNOs stage makes ready: both, unless neither
 // exists yet and the node has room for only one. Then it's the seed alone,
 // which seed generation stops, and the upgrade stage creates the target.
-func toCreate(ctx context.Context, e Env, o Options, plan *Plan) ([]string, error) {
+func toCreate(ctx context.Context, e Env, o Options, plan *Plan, existing []guest.Guest) ([]string, error) {
 	all := slices.Sorted(maps.Keys(plan.wanted()))
 	if plan.Seed == "" {
 		return all, nil
-	}
-	existing, err := guest.List(ctx, e.Env.Env, o.Namespace)
-	if err != nil {
-		return nil, err
 	}
 	for _, g := range existing {
 		if g.Name == plan.Seed || g.Name == plan.Target {
@@ -311,7 +316,7 @@ func toCreate(ctx context.Context, e Env, o Options, plan *Plan) ([]string, erro
 		}
 		node = st.Node
 	}
-	err = guest.Fit(ctx, e.Env.Env, node, o.Cores, o.MemoryGiB, 2)
+	err := guest.Fit(ctx, e.Env.Env, node, o.Cores, o.MemoryGiB, 2)
 	switch {
 	case errors.Is(err, guest.ErrNoCapacity):
 		e.Progress.Start("Room for both vSNOs").Done("no: " + err.Error() + "; creating " + plan.Seed + " first, and " + plan.Target + " once the seed is made and " + plan.Seed + " stopped")
@@ -324,11 +329,7 @@ func toCreate(ctx context.Context, e Env, o Options, plan *Plan) ([]string, erro
 
 // ensureVSNOs creates the named vSNOs unless they exist, starting all before
 // waiting for any, and waits until they are ready.
-func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan, names []string) error {
-	all, err := guest.List(ctx, e.Env.Env, o.Namespace)
-	if err != nil {
-		return err
-	}
+func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan, names []string, all []guest.Guest) error {
 	want := plan.wanted()
 	for _, name := range names {
 		if i := slices.IndexFunc(all, func(g guest.Guest) bool { return g.Name == name }); i >= 0 {

@@ -263,7 +263,8 @@ func TestToCreate(t *testing.T) {
 	} {
 		o := Options{Namespace: ns}
 		o.defaults()
-		got, err := toCreate(ctx, withNode(t, testEnv("4.22.0"), c.memory), o, p)
+		e := withNode(t, testEnv("4.22.0"), c.memory)
+		got, err := toCreate(ctx, e, o, p, nil) // nothing exists yet
 		if err != nil || !slices.Equal(got, c.want) {
 			t.Errorf("%s: %v %v, want %v", c.memory, got, err, c.want)
 		}
@@ -282,11 +283,15 @@ func TestToCreate(t *testing.T) {
 	}
 	o := Options{Namespace: ns}
 	o.defaults()
-	if got, err := toCreate(ctx, e, o, p); err != nil || !slices.Equal(got, []string{"seed", "target"}) {
+	existing, err := guest.List(ctx, e.Env.Env, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := toCreate(ctx, e, o, p, existing); err != nil || !slices.Equal(got, []string{"seed", "target"}) {
 		t.Errorf("seed exists: %v %v", got, err)
 	}
 	// With a seed image there is only the target.
-	if got, err := toCreate(ctx, withNode(t, testEnv("4.22.0"), "30Gi"), Options{Namespace: ns}, &Plan{Target: "target"}); err != nil || !slices.Equal(got, []string{"target"}) {
+	if got, err := toCreate(ctx, withNode(t, testEnv("4.22.0"), "30Gi"), Options{Namespace: ns}, &Plan{Target: "target"}, nil); err != nil || !slices.Equal(got, []string{"target"}) {
 		t.Errorf("seed image: %v %v", got, err)
 	}
 }
