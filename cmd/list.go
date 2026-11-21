@@ -197,6 +197,15 @@ func stateText(pal ui.Palette, s guest.State) string {
 }
 
 // age renders a duration like kubectl: 45s, 12m, 5h, 3d.
+// ageSince is how long ago t was, or "-" for a time never set (a cache
+// entry still mirroring has no last use yet).
+func ageSince(now, t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return age(now.Sub(t))
+}
+
 func age(d time.Duration) string {
 	switch {
 	case d < time.Minute:

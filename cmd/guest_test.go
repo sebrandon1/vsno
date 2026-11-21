@@ -229,3 +229,14 @@ func TestUseEnvironment(t *testing.T) {
 		t.Errorf("list error: %q %v", namespace, err)
 	}
 }
+
+// A time never set is "-", not now minus year 1 (Go clamps that to 106751d).
+func TestAgeSince(t *testing.T) {
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	if got := ageSince(now, time.Time{}); got != "-" {
+		t.Errorf("zero = %q", got)
+	}
+	if got := ageSince(now, now.Add(-5*time.Minute)); got != "5m" {
+		t.Errorf("5m ago = %q", got)
+	}
+}

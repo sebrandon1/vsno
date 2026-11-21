@@ -156,7 +156,7 @@ func renderReleaseCache(w io.Writer, rep *cache.Report, pal ui.Palette) {
 		if e.StateText() != "ready" {
 			ver += " (" + e.StateText() + ")"
 		}
-		t.Row("  "+ver, bytesText(e.SizeBytes), age(time.Since(e.LastUsed)), joinItems(e.Users))
+		t.Row("  "+ver, bytesText(e.SizeBytes), ageSince(time.Now(), e.LastUsed), joinItems(e.Users))
 	}
 	t.Write(w)
 	if rep.Total > 0 {
