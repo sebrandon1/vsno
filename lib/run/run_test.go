@@ -248,7 +248,9 @@ func TestToCreate(t *testing.T) {
 		{"90Gi", []string{"seed", "target"}}, // 2 × 17 GiB fit
 		{"30Gi", []string{"seed"}},
 	} {
-		got, err := toCreate(ctx, withNode(t, testEnv("4.22.0"), c.memory), Options{Namespace: ns}, p)
+		o := Options{Namespace: ns}
+		o.defaults()
+		got, err := toCreate(ctx, withNode(t, testEnv("4.22.0"), c.memory), o, p)
 		if err != nil || !slices.Equal(got, c.want) {
 			t.Errorf("%s: %v %v, want %v", c.memory, got, err, c.want)
 		}
@@ -265,11 +267,27 @@ func TestToCreate(t *testing.T) {
 	if _, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Create(ctx, vm, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := toCreate(ctx, e, Options{Namespace: ns}, p); err != nil || !slices.Equal(got, []string{"seed", "target"}) {
+	o := Options{Namespace: ns}
+	o.defaults()
+	if got, err := toCreate(ctx, e, o, p); err != nil || !slices.Equal(got, []string{"seed", "target"}) {
 		t.Errorf("seed exists: %v %v", got, err)
 	}
 	// With a seed image there is only the target.
 	if got, err := toCreate(ctx, withNode(t, testEnv("4.22.0"), "30Gi"), Options{Namespace: ns}, &Plan{Target: "target"}); err != nil || !slices.Equal(got, []string{"target"}) {
 		t.Errorf("seed image: %v %v", got, err)
+	}
+}
+
+// Sizes left out are vsno create's defaults: guest.Create takes them as given.
+func TestOptionsDefaults(t *testing.T) {
+	o := Options{}
+	o.defaults()
+	if o.Cores != guest.DefaultCores || o.MemoryGiB != guest.DefaultMemoryGiB || o.SeedName != "seed" || o.TargetName != "target" {
+		t.Errorf("%+v", o)
+	}
+	o = Options{Cores: 8, MemoryGiB: 24}
+	o.defaults()
+	if o.Cores != 8 || o.MemoryGiB != 24 {
+		t.Errorf("given sizes changed: %+v", o)
 	}
 }

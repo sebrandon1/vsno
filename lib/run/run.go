@@ -67,11 +67,13 @@ type Options struct {
 	SeedImage string `json:"seedImage,omitempty"`
 	// SeedRepo pushes the seed image to <repo>:<version> instead of the
 	// environment's registry.
-	SeedRepo  string        `json:"seedRepo,omitempty"`
-	LCA       ibu.LCASource `json:"lca,omitzero"`
-	Node      string        `json:"node,omitempty"`
-	Cores     int           `json:"cores,omitempty"`
-	MemoryGiB int64         `json:"memoryGiB,omitempty"`
+	SeedRepo string        `json:"seedRepo,omitempty"`
+	LCA      ibu.LCASource `json:"lca,omitzero"`
+	Node     string        `json:"node,omitempty"`
+	// Disk is the disk setup gives LVMS on Node, as vsno setup --disk.
+	Disk      string `json:"disk,omitempty"`
+	Cores     int    `json:"cores,omitempty"`
+	MemoryGiB int64  `json:"memoryGiB,omitempty"`
 	// Finalize, Rollback and Delete are what to do after the upgrade.
 	Finalize bool `json:"finalize,omitempty"`
 	Rollback bool `json:"rollback,omitempty"`
@@ -108,6 +110,13 @@ func (o *Options) defaults() {
 	}
 	if o.SeedName == "" {
 		o.SeedName = "seed"
+	}
+	// guest.Create takes sizes as given; vsno create's flags default them.
+	if o.Cores == 0 {
+		o.Cores = guest.DefaultCores
+	}
+	if o.MemoryGiB == 0 {
+		o.MemoryGiB = guest.DefaultMemoryGiB
 	}
 }
 
@@ -271,14 +280,7 @@ func toCreate(ctx context.Context, e Env, o Options, plan *Plan) ([]string, erro
 		}
 		node = st.Node
 	}
-	cores, mem := o.Cores, o.MemoryGiB
-	if cores == 0 {
-		cores = guest.DefaultCores
-	}
-	if mem == 0 {
-		mem = guest.DefaultMemoryGiB
-	}
-	err = guest.Fit(ctx, e.Env.Env, node, cores, mem, 2)
+	err = guest.Fit(ctx, e.Env.Env, node, o.Cores, o.MemoryGiB, 2)
 	switch {
 	case errors.Is(err, guest.ErrNoCapacity):
 		e.Progress.Start("Room for both vSNOs").Done("no: " + err.Error() + "; creating " + plan.Seed + " first, and " + plan.Target + " once the seed is made and " + plan.Seed + " stopped")

@@ -61,6 +61,7 @@ func init() {
 	f.StringVar(&rnOpts.SeedImage, "seed-image", "", "upgrade to this existing seed image instead of making one")
 	f.StringVar(&rnOpts.SeedRepo, "seed-repo", "", "push the seed image to <repo>:<version> instead of the environment's registry")
 	f.StringVar(&rnOpts.Node, "node", "", "worker for the vSNOs (default: setup's)")
+	f.StringVar(&rnOpts.Disk, "disk", "", "disk for LVM Storage on the node, as vsno setup --disk (default: precheck's pick)")
 	f.IntVar(&rnOpts.Cores, "cores", 0, "vCPUs per vSNO (default as vsno create)")
 	f.Int64Var(&rnOpts.MemoryGiB, "memory", 0, "GiB of memory per vSNO (default as vsno create)")
 	f.BoolVar(&rnOpts.Finalize, "finalize", false, "finalize the upgrade afterwards")
@@ -99,6 +100,7 @@ func runOptions(cmd *cobra.Command) (run.Options, error) {
 		"seed-image":     func() { o.SeedImage = f.SeedImage },
 		"seed-repo":      func() { o.SeedRepo = f.SeedRepo },
 		"node":           func() { o.Node = f.Node },
+		"disk":           func() { o.Disk = f.Disk },
 		"cores":          func() { o.Cores = f.Cores },
 		"memory":         func() { o.MemoryGiB = f.MemoryGiB },
 		"finalize":       func() { o.Finalize = f.Finalize },
@@ -142,7 +144,7 @@ func runRun(cmd *cobra.Command, _ []string) error {
 	env := run.Env{
 		Env: seed.Env{Env: ge},
 		Setup: func(ctx context.Context) error {
-			_, err := setup.Run(ctx, se, setup.Options{Namespace: o.Namespace, Settings: precheck.Suggested{Node: o.Node},
+			_, err := setup.Run(ctx, se, setup.Options{Namespace: o.Namespace, Settings: precheck.Suggested{Node: o.Node, Disk: o.Disk},
 				Yes: o.Yes, Images: manifests.DefaultImages()})
 			return err
 		},
