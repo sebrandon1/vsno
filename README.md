@@ -8,7 +8,7 @@ One workflow built on top of that is testing
 [lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent) **Image Based Upgrades
 (IBU)** between two vSNOs.
 
-> **Status:** milestones 1–5 are done: `precheck`, `setup`, `status`, `teardown`, the vSNO
+> **Status:** milestones 1–7 are done: `precheck`, `setup`, `status`, `teardown`, the vSNO
 > lifecycle (`create`, `list`, `delete`, `start`, `stop`, `oc`, `ssh`, `kubeconfig`, `screenshot`),
 > seed images, fast creates from an in-cluster release cache, Image Based Upgrades (`prepare`,
 > `upgrade`), testing lifecycle-agent branches in them, and `vsno run` for the whole flow.
