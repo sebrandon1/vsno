@@ -158,7 +158,7 @@ func (r Resolver) get(ctx context.Context, u string, into any) error {
 	req.Header.Set("Accept", "application/json")
 	c := r.HTTP
 	if c == nil {
-		c = &http.Client{Timeout: 30 * time.Second}
+		c = httpx.NewHTTPClient(httpx.Options{Timeout: 30 * time.Second}) // with dial and TLS timeouts too
 	}
 	resp, err := c.Do(req) //nolint:bodyclose // httpx.HandleResponse closes it
 	if err != nil {
