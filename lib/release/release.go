@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sebrandon1/go-toolbox/httpx"
+	"github.com/sebrandon1/go-toolbox/retry"
 )
 
 // Public endpoints; Resolver fields override them in tests.
@@ -43,6 +44,9 @@ type Resolver struct {
 	HTTP       *http.Client
 	GraphURL   string
 	NightlyURL string
+	// RetryDelay is the first backoff before retrying a request that failed
+	// in transit or with a 429 or 5xx; 0 is retry's default (1s).
+	RetryDelay time.Duration
 }
 
 var (
@@ -160,7 +164,9 @@ func (r Resolver) get(ctx context.Context, u string, into any) error {
 	if c == nil {
 		c = httpx.NewHTTPClient(httpx.Options{Timeout: 30 * time.Second}) // with dial and TLS timeouts too
 	}
-	resp, err := c.Do(req) //nolint:bodyclose // httpx.HandleResponse closes it
+	// A few attempts, with backoff: a blip on the way to the update graph
+	// shouldn't fail a create.
+	resp, err := retry.Do(ctx, c, req, retry.WithBaseDelay(r.RetryDelay)) //nolint:bodyclose // httpx.HandleResponse closes it
 	if err != nil {
 		return fmt.Errorf("%s: %w", u, httpx.AsNetworkError(err))
 	}

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sebrandon1/go-toolbox/httpx"
 )
@@ -108,7 +109,7 @@ func TestGetErrors(t *testing.T) {
 		{http.StatusNotFound, httpx.IsNotFound, "not found"},
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(c.status) }))
-		r := Resolver{HTTP: srv.Client(), GraphURL: srv.URL + "/graph"}
+		r := Resolver{HTTP: srv.Client(), GraphURL: srv.URL + "/graph", RetryDelay: time.Millisecond}
 		var out struct{}
 		err := r.get(ctx, srv.URL+"/graph", &out)
 		srv.Close()
@@ -120,7 +121,7 @@ func TestGetErrors(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	u := srv.URL + "/graph"
 	srv.Close()
-	if err := (Resolver{}).get(ctx, u, &struct{}{}); err == nil || !httpx.IsNetworkError(err) || !strings.Contains(err.Error(), u) {
+	if err := (Resolver{RetryDelay: time.Millisecond}).get(ctx, u, &struct{}{}); err == nil || !httpx.IsNetworkError(err) || !strings.Contains(err.Error(), u) {
 		t.Errorf("closed server: %v", err)
 	}
 }
@@ -141,5 +142,25 @@ func TestGetBadURLAndOversizeBody(t *testing.T) {
 	var out struct{}
 	if err := (Resolver{HTTP: srv.Client()}).get(ctx, srv.URL+"/graph", &out); err == nil || !strings.Contains(err.Error(), srv.URL+"/graph") {
 		t.Errorf("oversize body: %v", err)
+	}
+}
+
+// A request that fails in transit or with a 5xx is tried again, so a blip on
+// the way to the update graph doesn't fail a create.
+func TestGetRetries(t *testing.T) {
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if n++; n < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprint(w, `{"nodes":[]}`)
+	}))
+	defer srv.Close()
+	var out struct {
+		Nodes []any `json:"nodes"`
+	}
+	if err := (Resolver{HTTP: srv.Client(), RetryDelay: time.Millisecond}).get(context.Background(), srv.URL+"/graph", &out); err != nil || n != 3 {
+		t.Errorf("after two 503s: %v, %d request(s)", err, n)
 	}
 }
