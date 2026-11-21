@@ -452,16 +452,23 @@ func TestEnsureHitChecksTheSignature(t *testing.T) {
 // (the kubelet refuses the image), so a failed copy fails the create.
 func TestEnsureFailsWhenTheSignatureCantBeCopied(t *testing.T) {
 	for _, c := range []struct {
-		name string
-		r    *mirrorRunner
-		want string
+		name  string
+		r     *mirrorRunner
+		image string // the release image; rel's when empty
+		want  string
 	}{
-		{"copy fails", &mirrorRunner{runner: runner{out: releaseInfo}, sigErr: errors.New("exit 1")}, "reading the signature: denied"},
-		{"unexpected output", &mirrorRunner{runner: runner{out: releaseInfo}, sigOut: "maybe"}, "unexpected output"},
+		{"copy fails", &mirrorRunner{runner: runner{out: releaseInfo}, sigErr: errors.New("exit 1")}, "", "signatures into the mirror: exit 1: reading the signature: denied"},
+		{"unexpected output", &mirrorRunner{runner: runner{out: releaseInfo}, sigOut: "maybe"}, "", "signatures into the mirror: unexpected output"},
+		// Its signatures' source is the release image's repository.
+		{"release image names no repository", &mirrorRunner{runner: runner{out: releaseInfo}}, "release-only", `release image "release-only" names no repository`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := Ensure(context.Background(), mirrorEnv(t, 50<<30, c.r), EnsureOptions{Namespace: ns, Release: rel})
-			if err == nil || !strings.Contains(err.Error(), "signature") || !strings.Contains(err.Error(), c.want) {
+			r := rel
+			if c.image != "" {
+				r.Image = c.image
+			}
+			_, err := Ensure(context.Background(), mirrorEnv(t, 50<<30, c.r), EnsureOptions{Namespace: ns, Release: r})
+			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("err = %v, want %q", err, c.want)
 			}
 		})
