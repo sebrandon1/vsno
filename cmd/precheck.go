@@ -3,13 +3,13 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/sebrandon1/go-toolbox/cliout"
+	"github.com/sebrandon1/go-toolbox/confkit"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/ui"
@@ -96,7 +96,7 @@ func runPrecheck(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(pcWriteConfig, b, 0o600); err != nil {
+		if err := confkit.AtomicWriteFile(pcWriteConfig, b, 0o600); err != nil {
 			return fmt.Errorf("writing %s: %w", pcWriteConfig, err)
 		}
 		if outputFormat != formatJSON {

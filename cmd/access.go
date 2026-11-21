@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/sebrandon1/go-toolbox/confkit"
 	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
@@ -75,7 +76,7 @@ unreachable, for example stuck in emergency mode after a reboot.`,
 		if file == "" {
 			file = args[0] + ".png"
 		}
-		if err := os.WriteFile(file, png, 0o600); err != nil {
+		if err := confkit.AtomicWriteFile(file, png, 0o600); err != nil {
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", file)
