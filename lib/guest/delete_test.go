@@ -2,8 +2,10 @@ package guest
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/builder"
@@ -162,6 +164,42 @@ func TestSetRunningAndWait(t *testing.T) {
 	w.runner.outputs["probe.sh"] = ""
 	if _, err := WaitState(ctx, e, ns, "seed", Ready); err == nil {
 		t.Error("want a timeout")
+	}
+}
+
+// A wait rides out a few failed reads of the vSNO (the host API, or the
+// network to it, blinking), and gives up when they keep failing.
+func TestWaitStateRidesOutFailedReads(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		fails int
+		ok    bool
+	}{{maxPollErrors, true}, {maxPollErrors + 1, false}} {
+		w := existing(t)
+		e := w.env()
+		e.Timeout = time.Minute
+		// As in TestSetRunningAndWait, so it reads Ready.
+		if _, err := w.kube.CoreV1().Services(ns).Create(ctx, svc("seed", "172.30.9.9"), metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := SetRunning(ctx, e, ns, "seed", true); err != nil {
+			t.Fatal(err)
+		}
+		w.runner.outputs["probe.sh"] = probeLine("seed", `"cv":{"version":"4.20.46","available":true}`)
+		n := 0
+		w.dyn.PrependReactor("get", "virtualmachines", func(k8stesting.Action) (bool, runtime.Object, error) {
+			if n++; n <= c.fails {
+				return true, nil, errors.New("read: no route to host")
+			}
+			return false, nil, nil
+		})
+		st, err := WaitState(ctx, e, ns, "seed", Ready)
+		if c.ok && (err != nil || st != Ready) {
+			t.Errorf("%d failed reads: %s, %v", c.fails, st, err)
+		}
+		if !c.ok && (err == nil || !strings.Contains(err.Error(), "no route to host")) {
+			t.Errorf("%d failed reads: want the read error, got %v", c.fails, err)
+		}
 	}
 }
 
