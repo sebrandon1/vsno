@@ -80,7 +80,7 @@ func Prepare(ctx context.Context, e Env, o PrepareOptions) ([]Prepared, error) {
 	}
 	var built *BuiltLCA
 	if !o.LCA.FromCatalog() {
-		if err := guestctl.Step(e.Progress, "Building LCA", func(ps precheck.ProgressStep) (string, error) {
+		if err := guestctl.Step(e.Progress, o.LCA.stepName(), func(ps precheck.ProgressStep) (string, error) {
 			built, err = buildLCA(ctx, e, o.Namespace, o.LCA, reg, ps)
 			if err != nil {
 				return "", err

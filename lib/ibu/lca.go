@@ -39,6 +39,15 @@ type LCASource struct {
 // FromCatalog is true for the default: LCA from the vSNO's operator catalog.
 func (s LCASource) FromCatalog() bool { return s.Ref == "" && s.Image == "" }
 
+// stepName is what getting s is called: with an Image, only the manifests
+// are fetched.
+func (s LCASource) stepName() string {
+	if s.Image != "" {
+		return "Fetching LCA's manifests"
+	}
+	return "Building LCA"
+}
+
 func (s LCASource) withDefaults() LCASource {
 	if s.Repo == "" {
 		s.Repo = DefaultLCARepo

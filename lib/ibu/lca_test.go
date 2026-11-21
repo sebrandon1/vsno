@@ -262,3 +262,12 @@ func TestRecordLCA(t *testing.T) {
 		t.Errorf("a VM vsno didn't make: err = %v", err)
 	}
 }
+
+func TestLCAStepName(t *testing.T) {
+	if got := (LCASource{Ref: "main"}).stepName(); got != "Building LCA" {
+		t.Errorf("ref: %q", got)
+	}
+	if got := (LCASource{Image: "quay.io/x/lca:1"}).stepName(); got != "Fetching LCA's manifests" {
+		t.Errorf("image: %q", got)
+	}
+}
