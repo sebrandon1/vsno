@@ -333,3 +333,23 @@ func TestPlanLCAText(t *testing.T) {
 		}
 	}
 }
+
+// Without the host's version there are no defaults to pick: the error says
+// to pass the versions instead.
+func TestPlanDefaultsNeedTheHostVersion(t *testing.T) {
+	ctx := context.Background()
+	e := testEnv("4.22.0", "4.22.1", "4.22.2")
+	if err := e.Dyn.Resource(precheck.GVRClusterVersion).Delete(ctx, "version", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	o := Options{Namespace: ns}
+	o.defaults()
+	if _, err := makePlan(ctx, e, o); err == nil || !strings.Contains(err.Error(), "pass --target-version and --seed-version") {
+		t.Errorf("err = %v", err)
+	}
+	// Given both versions, nothing is read.
+	o.TargetVersion, o.SeedVersion = "4.22.1", "4.22.2"
+	if _, err := makePlan(ctx, e, o); err != nil {
+		t.Errorf("with versions: %v", err)
+	}
+}
