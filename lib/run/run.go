@@ -329,11 +329,11 @@ func toCreate(ctx context.Context, e Env, o Options, plan *Plan, existing []gues
 
 // ensureVSNOs creates the named vSNOs unless they exist, starting all before
 // waiting for any, and waits until they are ready.
-func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan, names []string, all []guest.Guest) error {
+func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan, names []string, existing []guest.Guest) error {
 	want := plan.wanted()
 	for _, name := range names {
-		if i := slices.IndexFunc(all, func(g guest.Guest) bool { return g.Name == name }); i >= 0 {
-			if err := matches(all[i], want[name]); err != nil {
+		if i := slices.IndexFunc(existing, func(g guest.Guest) bool { return g.Name == name }); i >= 0 {
+			if err := matches(existing[i], want[name]); err != nil {
 				return err
 			}
 			continue
