@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/builder"
+	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/seed"
 	"github.com/sebrandon1/vsno/lib/state"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -213,5 +215,61 @@ func TestRunStopsAtAFailedStage(t *testing.T) {
 	st, _, _ := state.Load(ctx, e.Kube, ns)
 	if last, ok := st.Last("run:setup"); !ok || last.Status != state.Failed {
 		t.Errorf("recorded = %+v %v", last, ok)
+	}
+}
+
+// withNode adds the environment's node with allocatable memory, and the
+// resources guest.List and the density check read.
+func withNode(t *testing.T, e Env, memory string) Env {
+	t.Helper()
+	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-0"}, Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{
+		corev1.ResourceMemory: resource.MustParse(memory), corev1.ResourceCPU: resource.MustParse("104")}}}
+	kube := kfake.NewClientset(n)
+	if err := state.Save(context.Background(), kube, ns, &state.State{Node: "worker-0"}); err != nil {
+		t.Fatal(err)
+	}
+	e.Kube = kube
+	e.Dyn = dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		cluster.GVRVirtualMachine: "VirtualMachineList", guest.GVRDataVolume: "DataVolumeList", cluster.GVRVMI: "VirtualMachineInstanceList",
+	})
+	e.Defaults(ns) // as Run does
+	return e
+}
+
+// Both vSNOs are created at once when the node has room for both; otherwise
+// the seed alone, and the upgrade stage creates the target later.
+func TestToCreate(t *testing.T) {
+	ctx := context.Background()
+	p := &Plan{Seed: "seed", SeedVersion: "4.22.2", Target: "target", TargetVersion: "4.22.1"}
+	for _, c := range []struct {
+		memory string
+		want   []string
+	}{
+		{"90Gi", []string{"seed", "target"}}, // 2 × 17 GiB fit
+		{"30Gi", []string{"seed"}},
+	} {
+		got, err := toCreate(ctx, withNode(t, testEnv("4.22.0"), c.memory), Options{Namespace: ns}, p)
+		if err != nil || !slices.Equal(got, c.want) {
+			t.Errorf("%s: %v %v, want %v", c.memory, got, err, c.want)
+		}
+	}
+	// The seed exists (an earlier run): the target is created beside it,
+	// and its own create checks the room.
+	e := withNode(t, testEnv("4.22.0"), "30Gi")
+	vm := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"runStrategy": "Always"}}}
+	vm.SetAPIVersion("kubevirt.io/v1")
+	vm.SetKind("VirtualMachine")
+	vm.SetNamespace(ns)
+	vm.SetName("seed")
+	vm.SetLabels(map[string]string{guest.LabelName: "seed"})
+	if _, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Create(ctx, vm, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := toCreate(ctx, e, Options{Namespace: ns}, p); err != nil || !slices.Equal(got, []string{"seed", "target"}) {
+		t.Errorf("seed exists: %v %v", got, err)
+	}
+	// With a seed image there is only the target.
+	if got, err := toCreate(ctx, withNode(t, testEnv("4.22.0"), "30Gi"), Options{Namespace: ns}, &Plan{Target: "target"}); err != nil || !slices.Equal(got, []string{"target"}) {
+		t.Errorf("seed image: %v %v", got, err)
 	}
 }

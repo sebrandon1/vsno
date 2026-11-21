@@ -244,23 +244,42 @@ func checkEnvironment(ctx context.Context, e Env, ns string) error {
 	return err
 }
 
+// ErrNoCapacity matches the error for vSNOs that don't fit their node's memory.
+var ErrNoCapacity = errors.New("not enough memory on the node")
+
+// noCapacity says how short the node is; errors.Is matches it to ErrNoCapacity.
+type noCapacity string
+
+func (e noCapacity) Error() string      { return string(e) }
+func (noCapacity) Is(target error) bool { return target == ErrNoCapacity }
+
 // checkCapacity refuses a vSNO that doesn't fit the node next to what runs there.
 func checkCapacity(ctx context.Context, e Env, s Spec) error {
+	return Fit(ctx, e, s.Node, s.Cores, s.MemoryGiB, 1)
+}
+
+// Fit refuses count vSNOs of cores and memoryGiB each that don't fit node
+// next to what runs there, counting memory at the cluster's overcommit. A
+// shortage of memory wraps ErrNoCapacity.
+func Fit(ctx context.Context, e Env, node string, cores int, memoryGiB int64, count int) error {
 	d, err := cluster.ReadDensity(ctx, e.Dyn)
 	if err != nil {
 		return err
 	}
-	c, err := NodeCapacity(ctx, e.Kube, s.Node, d.Percent())
+	c, err := NodeCapacity(ctx, e.Kube, node, d.Percent())
 	if err != nil {
 		return err
 	}
-	need := cluster.RequestGiB(s.MemoryGiB, d.Percent()) + vmOverheadGiB
+	need := int64(count) * (cluster.RequestGiB(memoryGiB, d.Percent()) + vmOverheadGiB)
 	switch {
-	case int64(s.Cores) > c.Cores:
-		return fmt.Errorf("--cores %d is more than node %s has (%d)", s.Cores, s.Node, c.Cores)
+	case int64(cores) > c.Cores:
+		return fmt.Errorf("--cores %d is more than node %s has (%d)", cores, node, c.Cores)
+	case need > c.FreeMemoryGiB && count == 1:
+		return noCapacity(fmt.Sprintf("node %s has %d GiB of memory free; a %d GiB vSNO needs %d GiB. Stop or delete a vSNO (`vsno list`), or use a smaller --memory (min %d)",
+			node, c.FreeMemoryGiB, memoryGiB, need, MinMemoryGiB))
 	case need > c.FreeMemoryGiB:
-		return fmt.Errorf("node %s has %d GiB of memory free; a %d GiB vSNO needs %d GiB. Stop or delete a vSNO (`vsno list`), or use a smaller --memory (min %d)",
-			s.Node, c.FreeMemoryGiB, s.MemoryGiB, need, MinMemoryGiB)
+		return noCapacity(fmt.Sprintf("node %s has %d GiB of memory free; %d vSNOs of %d GiB need %d GiB",
+			node, c.FreeMemoryGiB, count, memoryGiB, need))
 	}
 	return nil
 }

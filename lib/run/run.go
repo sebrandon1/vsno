@@ -155,10 +155,18 @@ func runStage(ctx context.Context, e Env, o Options, plan *Plan, s Stage, res *R
 	case StageSetup:
 		return e.Setup(ctx)
 	case StageVSNOs:
-		return ensureVSNOs(ctx, e, o, plan)
+		names, err := toCreate(ctx, e, o, plan)
+		if err != nil {
+			return err
+		}
+		return ensureVSNOs(ctx, e, o, plan, names)
 	case StageSeed:
 		return ensureSeed(ctx, e, o, plan)
 	case StageUpgrade:
+		// The target, if the node had no room for it next to the seed.
+		if err := ensureVSNOs(ctx, e, o, plan, []string{plan.Target}); err != nil {
+			return err
+		}
 		u, err := ibu.Upgrade(ctx, e.Env, ibu.UpgradeOptions{Namespace: o.Namespace, Target: plan.Target,
 			Seed: plan.SeedImage, SeedVersion: plan.SeedVersion, Finalize: o.Finalize, Rollback: o.Rollback, LCA: o.LCA})
 		res.Upgrade = u
@@ -229,33 +237,79 @@ func defaultVersions(ctx context.Context, e Env) (target, seedVersion string, er
 	return vs[len(vs)-2], vs[len(vs)-1], nil
 }
 
-// ensureVSNOs creates the seed and the target unless they exist, starting
-// both before waiting for either, and waits until both are ready.
-func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan) error {
+// wanted is each vSNO the plan names, with its version.
+func (p Plan) wanted() map[string]string {
+	w := map[string]string{p.Target: p.TargetVersion}
+	if p.Seed != "" {
+		w[p.Seed] = p.SeedVersion
+	}
+	return w
+}
+
+// toCreate is the vSNOs the vSNOs stage makes ready: both, unless neither
+// exists yet and the node has room for only one. Then it's the seed alone,
+// which seed generation stops, and the upgrade stage creates the target.
+func toCreate(ctx context.Context, e Env, o Options, plan *Plan) ([]string, error) {
+	all := slices.Sorted(maps.Keys(plan.wanted()))
+	if plan.Seed == "" {
+		return all, nil
+	}
+	existing, err := guest.List(ctx, e.Env.Env, o.Namespace)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range existing {
+		if g.Name == plan.Seed || g.Name == plan.Target {
+			return all, nil // one is there: creating the other checks its own room
+		}
+	}
+	node := o.Node
+	if node == "" {
+		st, _, err := state.Load(ctx, e.Kube, o.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		node = st.Node
+	}
+	cores, mem := o.Cores, o.MemoryGiB
+	if cores == 0 {
+		cores = guest.DefaultCores
+	}
+	if mem == 0 {
+		mem = guest.DefaultMemoryGiB
+	}
+	err = guest.Fit(ctx, e.Env.Env, node, cores, mem, 2)
+	switch {
+	case errors.Is(err, guest.ErrNoCapacity):
+		e.Progress.Start("Room for both vSNOs").Done("no: " + err.Error() + "; creating " + plan.Seed + " first, and " + plan.Target + " once the seed is made and " + plan.Seed + " stopped")
+		return []string{plan.Seed}, nil
+	case err != nil:
+		return nil, err
+	}
+	return all, nil
+}
+
+// ensureVSNOs creates the named vSNOs unless they exist, starting all before
+// waiting for any, and waits until they are ready.
+func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan, names []string) error {
 	all, err := guest.List(ctx, e.Env.Env, o.Namespace)
 	if err != nil {
 		return err
 	}
-	want := map[string]string{plan.Target: plan.TargetVersion}
-	if plan.Seed != "" {
-		want[plan.Seed] = plan.SeedVersion
-	}
-	var started []string
-	for _, name := range slices.Sorted(maps.Keys(want)) {
+	want := plan.wanted()
+	for _, name := range names {
 		if i := slices.IndexFunc(all, func(g guest.Guest) bool { return g.Name == name }); i >= 0 {
 			if err := matches(all[i], want[name]); err != nil {
 				return err
 			}
-			started = append(started, name)
 			continue
 		}
 		if _, err := guest.Create(ctx, e.Env.Env, guest.CreateOptions{Namespace: o.Namespace, Name: name, Version: want[name],
 			Node: o.Node, Cores: o.Cores, MemoryGiB: o.MemoryGiB}); err != nil {
 			return fmt.Errorf("creating %s: %w", name, err)
 		}
-		started = append(started, name)
 	}
-	for _, name := range started {
+	for _, name := range names {
 		if st, err := guest.WaitState(ctx, e.Env.Env, o.Namespace, name, guest.Ready); err != nil {
 			return fmt.Errorf("waiting for %s (%s): %w", name, st, err)
 		}
@@ -276,11 +330,6 @@ func matches(g guest.Guest, version string) error {
 // ensureSeed makes the seed image from the seed vSNO unless it exists, and
 // sets plan.SeedImage to it.
 func ensureSeed(ctx context.Context, e Env, o Options, plan *Plan) error {
-	if !o.LCA.FromCatalog() {
-		if _, err := ibu.Prepare(ctx, e.Env, ibu.PrepareOptions{Namespace: o.Namespace, Names: []string{plan.Seed}, Role: ibu.RoleSeed, LCA: o.LCA}); err != nil {
-			return err
-		}
-	}
 	image := ""
 	if o.SeedRepo != "" {
 		image = o.SeedRepo + ":" + plan.SeedVersion
@@ -289,6 +338,10 @@ func ensureSeed(ctx context.Context, e Env, o Options, plan *Plan) error {
 			plan.SeedImage = img.Ref // made by an earlier run
 			return nil
 		}
+	}
+	// seed create needs LCA and the registry's trust on the seed vSNO.
+	if _, err := ibu.Prepare(ctx, e.Env, ibu.PrepareOptions{Namespace: o.Namespace, Names: []string{plan.Seed}, Role: ibu.RoleSeed, LCA: o.LCA}); err != nil {
+		return err
 	}
 	r, err := seed.Create(ctx, e.Env, seed.CreateOptions{Namespace: o.Namespace, Name: plan.Seed, Image: image, Stop: true})
 	if err != nil {
