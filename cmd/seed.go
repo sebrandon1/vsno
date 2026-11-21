@@ -212,7 +212,7 @@ func renderSeeds(w io.Writer, imgs []seed.Image, now time.Time, pal ui.Palette) 
 		if v == "" {
 			v = "-"
 		}
-		t.Row(img.Ref, img.From, v, bytesText(img.SizeBytes), age(now.Sub(img.Created)))
+		t.Row(img.Ref, img.From, v, bytesText(img.SizeBytes), ageSince(now, img.Created))
 	}
 	t.Write(w)
 	return nil

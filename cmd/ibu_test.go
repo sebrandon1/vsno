@@ -8,6 +8,7 @@ import (
 
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/ibu"
+	"github.com/sebrandon1/vsno/lib/seed"
 )
 
 func upgradeResult() *ibu.UpgradeResult {
@@ -100,5 +101,17 @@ func TestDetailText(t *testing.T) {
 		if got := detailText(c.g); got != c.want {
 			t.Errorf("%+v = %q, want %q", c.g, got, c.want)
 		}
+	}
+}
+
+// A seed image without a creation time shows "-" for its age, not 106751d.
+func TestRenderSeedsWithoutCreated(t *testing.T) {
+	var b bytes.Buffer
+	imgs := []seed.Image{{Ref: "reg/seeds/a:4.22.22", From: "a", Version: "4.22.22", SizeBytes: 1 << 30}}
+	if err := renderSeeds(&b, imgs, time.Now(), plain); err != nil {
+		t.Fatal(err)
+	}
+	if out := b.String(); !strings.Contains(out, "1.0Gi  -") || strings.Contains(out, "106751d") {
+		t.Errorf("seed list:\n%s", out)
 	}
 }
