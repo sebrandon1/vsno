@@ -463,3 +463,20 @@ func TestCreateOptionsSized(t *testing.T) {
 		t.Errorf("given sizes changed: %+v", o)
 	}
 }
+
+// At 200% overcommit a vSNO requests half its memory, so twice as many fit.
+func TestFitAtOvercommit(t *testing.T) {
+	hc := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
+		"higherWorkloadDensity": map[string]any{"memoryOvercommitPercentage": int64(200)}}}}
+	hc.SetAPIVersion("hco.kubevirt.io/v1beta1")
+	hc.SetKind("HyperConverged")
+	hc.SetNamespace(cluster.CNVNamespace)
+	hc.SetName(cluster.HyperConvergedName)
+	w := newWorld(t, hc) // 90 GiB: 5 at 17 GiB without overcommit, 10 at 9 GiB with it
+	if err := Fit(context.Background(), w.env(), node, DefaultCores, DefaultMemoryGiB, 10); err != nil {
+		t.Errorf("ten at 200%%: %v", err)
+	}
+	if err := Fit(context.Background(), w.env(), node, DefaultCores, DefaultMemoryGiB, 11); !errors.Is(err, ErrNoCapacity) {
+		t.Errorf("eleven at 200%%: %v", err)
+	}
+}

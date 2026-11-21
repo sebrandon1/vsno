@@ -102,6 +102,9 @@ type Observed struct {
 	Probe *Probe
 }
 
+// vmStopped is true while KubeVirt reports the VM stopped or stopping.
+func (o Observed) vmStopped() bool { return o.VMStatus == "Stopped" || o.VMStatus == "Stopping" }
+
 // vmErrors are printable statuses that mean the VM can't run as is.
 var vmErrors = []string{"ErrorUnschedulable", "ErrImagePull", "ImagePullBackOff", "CrashLoopBackOff", "ErrorPvcNotFound", "DataVolumeError", "ErrorDataVolumeNotFound", "Unknown"}
 
@@ -113,7 +116,7 @@ func Classify(o Observed) (State, string) {
 	switch {
 	case o.VMStatus == "Terminating":
 		return Deleting, ""
-	case (o.VMStatus == "Stopped" || o.VMStatus == "Stopping") && !o.WantsRunning:
+	case o.vmStopped() && !o.WantsRunning:
 		return Stopped, ""
 	case slices.Contains(vmErrors, o.VMStatus):
 		return Failed, "VM " + o.VMStatus
@@ -124,7 +127,7 @@ func Classify(o Observed) (State, string) {
 			return Importing, p
 		}
 		return Importing, ""
-	case o.VMStatus == "Stopped" || o.VMStatus == "Stopping":
+	case o.vmStopped():
 		return Starting, "" // meant to run, and about to
 	case o.VMStatus != "Running":
 		return Starting, o.VMStatus

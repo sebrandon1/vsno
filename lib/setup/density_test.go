@@ -84,3 +84,33 @@ func TestKSMWith(t *testing.T) {
 		}
 	}
 }
+
+// The settings recorded are the ones before vsno first changed them: a later
+// change records vsno's own values, which teardown mustn't restore.
+func TestSaveStateKeepsTheFirstPreviousDensity(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name  string
+		saved *state.Density
+		want  state.Density
+	}{
+		{"first change", nil, state.Density{OvercommitPercent: 150}},
+		{"a later change", &state.Density{OvercommitPercent: 100, KSMNode: state.KSMEveryNode}, state.Density{OvercommitPercent: 100, KSMNode: state.KSMEveryNode}},
+	} {
+		s := newSim()
+		if err := state.Save(ctx, s.kube, ns, &state.State{PreviousDensity: c.saved}); err != nil {
+			t.Fatal(err)
+		}
+		e := Env{Kube: s.kube}
+		e.defaults() // as Run does
+		r := &runner{Env: e, o: Options{Namespace: ns}, nsSet: true,
+			st: &state.State{PreviousDensity: &state.Density{OvercommitPercent: 150}}}
+		if err := r.saveState(ctx, state.Done, ""); err != nil {
+			t.Fatal(err)
+		}
+		got, _, err := state.Load(ctx, s.kube, ns)
+		if err != nil || got.PreviousDensity == nil || *got.PreviousDensity != c.want {
+			t.Errorf("%s: previous = %+v, %v; want %+v", c.name, got.PreviousDensity, err, c.want)
+		}
+	}
+}

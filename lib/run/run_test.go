@@ -303,3 +303,16 @@ func TestOptionsDefaults(t *testing.T) {
 		t.Errorf("given sizes changed: %+v", o)
 	}
 }
+
+// One of Finalize, Rollback and Delete names what follows the upgrade, and
+// each has the text the plan shows.
+func TestAfter(t *testing.T) {
+	for _, c := range []struct {
+		o    Options
+		want After
+	}{{Options{}, AfterKeep}, {Options{Finalize: true}, AfterFinalize}, {Options{Rollback: true}, AfterRollback}, {Options{Delete: true}, AfterDelete}} {
+		if got := c.o.after(); got != c.want || afterText[got] == "" {
+			t.Errorf("%+v: %s %q, want %s", c.o, got, afterText[got], c.want)
+		}
+	}
+}

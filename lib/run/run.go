@@ -118,6 +118,38 @@ func (o *Options) defaults() {
 	o.Cores, o.MemoryGiB = sized.Cores, sized.MemoryGiB
 }
 
+// After is what a run does once the upgrade completed. The options name it
+// with one of Finalize, Rollback and Delete, which check keeps exclusive.
+type After string
+
+const (
+	AfterKeep     After = "keep" // leave the target in UpgradeCompleted
+	AfterFinalize After = "finalize"
+	AfterRollback After = "rollback"
+	AfterDelete   After = "delete"
+)
+
+// after is the one of Finalize, Rollback and Delete o sets, or AfterKeep.
+func (o Options) after() After {
+	switch {
+	case o.Finalize:
+		return AfterFinalize
+	case o.Rollback:
+		return AfterRollback
+	case o.Delete:
+		return AfterDelete
+	}
+	return AfterKeep
+}
+
+// afterText is each After as the plan shows it.
+var afterText = map[After]string{
+	AfterKeep:     "leave the target in UpgradeCompleted",
+	AfterFinalize: "finalize the upgrade",
+	AfterRollback: "roll the upgrade back",
+	AfterDelete:   "delete both vSNOs",
+}
+
 func (o Options) check() error {
 	switch {
 	case o.Finalize && o.Rollback:
@@ -176,7 +208,7 @@ func runStage(ctx context.Context, e Env, o Options, plan *Plan, s Stage, res *R
 			return err
 		}
 		u, err := ibu.Upgrade(ctx, e.Env, ibu.UpgradeOptions{Namespace: o.Namespace, Target: plan.Target,
-			Seed: plan.SeedImage, SeedVersion: plan.SeedVersion, Finalize: o.Finalize, Rollback: o.Rollback, LCA: o.LCA})
+			Seed: plan.SeedImage, SeedVersion: plan.SeedVersion, Finalize: o.after() == AfterFinalize, Rollback: o.after() == AfterRollback, LCA: o.LCA})
 		res.Upgrade = u
 		return err
 	case StageDelete:
@@ -195,7 +227,7 @@ func runStage(ctx context.Context, e Env, o Options, plan *Plan, s Stage, res *R
 // already finished.
 func makePlan(ctx context.Context, e Env, o Options) (*Plan, error) {
 	p := &Plan{Namespace: o.Namespace, Target: o.TargetName, TargetVersion: o.TargetVersion, SeedVersion: o.SeedVersion,
-		SeedImage: o.SeedImage, LCA: lcaText(o.LCA), Then: then(o), At: e.Now()}
+		SeedImage: o.SeedImage, LCA: lcaText(o.LCA), Then: afterText[o.after()], At: e.Now()}
 	if o.SeedImage == "" {
 		p.Seed = o.SeedName
 	}
@@ -219,7 +251,7 @@ func makePlan(ctx context.Context, e Env, o Options) (*Plan, error) {
 		p.Stages = append(p.Stages, StageSeed)
 	}
 	p.Stages = append(p.Stages, StageUpgrade)
-	if o.Delete {
+	if o.after() == AfterDelete {
 		p.Stages = append(p.Stages, StageDelete)
 	}
 	p.Done = finished(ctx, e, o.Namespace, p.key())
@@ -412,18 +444,6 @@ func (p Plan) String() string {
 		fmt.Fprintf(&b, "  resuming: an earlier run finished %v\n", p.Done)
 	}
 	return strings.TrimRight(b.String(), "\n")
-}
-
-func then(o Options) string {
-	switch {
-	case o.Finalize:
-		return "finalize the upgrade"
-	case o.Rollback:
-		return "roll the upgrade back"
-	case o.Delete:
-		return "delete both vSNOs"
-	}
-	return "leave the target in UpgradeCompleted"
 }
 
 func lcaText(s ibu.LCASource) string {

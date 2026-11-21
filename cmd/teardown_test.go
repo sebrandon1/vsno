@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/sebrandon1/vsno/lib/apply"
+	"github.com/sebrandon1/vsno/lib/state"
 	"github.com/sebrandon1/vsno/lib/teardown"
 )
 
@@ -129,5 +130,16 @@ func TestRenderTeardownPlanShown(t *testing.T) {
 	_ = renderTeardown(&b, res, errors.New("x"), true, plain)
 	if !strings.Contains(b.String(), "1 object(s) deleted") {
 		t.Errorf("failed partway: show what was deleted, got:\n%s", b.String())
+	}
+}
+
+// A plain teardown says it puts HyperConverged's density back.
+func TestRenderTeardownRestoresDensity(t *testing.T) {
+	res := tdResult()
+	res.RestoreDensity = &state.Density{OvercommitPercent: 120}
+	var b bytes.Buffer
+	_ = renderTeardown(&b, res, nil, false, plain)
+	if want := "HyperConverged goes back to memory overcommit 120%, KSM off, as before vsno setup changed it."; !strings.Contains(b.String(), want) {
+		t.Errorf("missing %q:\n%s", want, b.String())
 	}
 }

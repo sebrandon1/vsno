@@ -129,6 +129,9 @@ func TestCollectHealthy(t *testing.T) {
 			t.Errorf("%s = %s %q", c.Name, c.Status, c.Detail)
 		}
 	}
+	if d := byName(r.Host)["density"].Detail; d != "memory overcommit 100%, KSM off" {
+		t.Errorf("density detail = %q", d)
+	}
 	if d := byName(r.Host)["storage"].Detail; !strings.Contains(d, "on "+node) {
 		t.Errorf("storage detail = %q", d)
 	}
