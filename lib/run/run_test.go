@@ -358,3 +358,52 @@ func TestPlanDefaultsNeedTheHostVersion(t *testing.T) {
 		t.Errorf("with versions: %v", err)
 	}
 }
+
+// --delete's stage removes the target and the seed vSNO the plan names (the
+// plan, which names them, was already approved), and only the target when a
+// seed image stood in for the seed vSNO.
+func TestRunStageDelete(t *testing.T) {
+	ctx := context.Background()
+	vmNamed := func(name string) *unstructured.Unstructured {
+		vm := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"runStrategy": "Always"}}}
+		vm.SetAPIVersion("kubevirt.io/v1")
+		vm.SetKind("VirtualMachine")
+		vm.SetNamespace(ns)
+		vm.SetName(name)
+		vm.SetLabels(map[string]string{guest.LabelName: name})
+		return vm
+	}
+	for _, c := range []struct {
+		name string
+		plan Plan
+		gone []string
+		kept []string
+	}{
+		{"seed vSNO and target", Plan{Target: "target", Seed: "seed"}, []string{"target", "seed"}, []string{"other"}},
+		{"seed image", Plan{Target: "target", SeedImage: "reg/seeds/s:4.22.2"}, []string{"target"}, []string{"seed", "other"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := withNode(t, testEnv("4.22.0"), "90Gi")
+			vms := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns)
+			for _, n := range []string{"target", "seed", "other"} {
+				if _, err := vms.Create(ctx, vmNamed(n), metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p := c.plan
+			if err := runStage(ctx, e, Options{Namespace: ns}, &p, StageDelete, &Result{}); err != nil {
+				t.Fatal(err)
+			}
+			for _, n := range c.gone {
+				if _, err := vms.Get(ctx, n, metav1.GetOptions{}); err == nil {
+					t.Errorf("%s still exists", n)
+				}
+			}
+			for _, n := range c.kept {
+				if _, err := vms.Get(ctx, n, metav1.GetOptions{}); err != nil {
+					t.Errorf("%s was deleted: %v", n, err)
+				}
+			}
+		})
+	}
+}
