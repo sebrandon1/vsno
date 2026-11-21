@@ -271,3 +271,22 @@ func TestLCAStepName(t *testing.T) {
 		t.Errorf("image: %q", got)
 	}
 }
+
+// A vSNO installed from the release cache already has the registry's login:
+// its pull secret is left alone. One without it gets it merged in.
+func TestEnsurePullAuth(t *testing.T) {
+	ctx := context.Background()
+	get := "get secret pull-secret -n openshift-config"
+	have := &guestctltest.Fake{OcReplies: map[string][]guestctltest.Reply{
+		get: {pullSecretReply(`{"auths":{"` + testReg.Host + `":{"auth":"dTpw"}}}`)},
+	}}
+	if err := ensurePullAuth(ctx, have, testReg); err != nil || have.Ran("oc patch secret pull-secret") {
+		t.Errorf("already there: %v, calls %q", err, have.Calls)
+	}
+	lacking := &guestctltest.Fake{OcReplies: map[string][]guestctltest.Reply{
+		get: {pullSecretReply(`{"auths":{"quay.io":{"auth":"QQ=="}}}`)},
+	}}
+	if err := ensurePullAuth(ctx, lacking, testReg); err != nil || !lacking.Ran("oc patch secret pull-secret -n openshift-config --type merge") {
+		t.Errorf("missing: %v, calls %q", err, lacking.Calls)
+	}
+}

@@ -454,3 +454,21 @@ func TestSeedRegistryDefaultsToInCluster(t *testing.T) {
 		t.Fatalf("no --seed-repo must mean the in-cluster registry, got %+v", got)
 	}
 }
+
+// An overcommit or KSM already set on HyperConverged is reported, since
+// vsno create counts capacity with it; with nothing set there is no row.
+func TestRunReportsDensity(t *testing.T) {
+	env := labEnv(t, "probe-baremetal-empty-disk.txt")
+	if got := find(Run(context.Background(), env, DefaultRequirements(), Options{}), "Existing: VM density"); got != nil {
+		t.Errorf("nothing set: %+v", got)
+	}
+	hc := obj(GVRHyperConverged, "HyperConverged", cluster.CNVNamespace, cluster.HyperConvergedName, map[string]interface{}{
+		"spec": map[string]interface{}{"higherWorkloadDensity": map[string]interface{}{"memoryOvercommitPercentage": int64(150)}}})
+	if err := env.Dyn.(*dynfake.FakeDynamicClient).Tracker().Create(GVRHyperConverged, hc, cluster.CNVNamespace); err != nil {
+		t.Fatal(err)
+	}
+	got := find(Run(context.Background(), env, DefaultRequirements(), Options{}), "Existing: VM density")
+	if got == nil || got.Status != Info || !strings.Contains(got.Detail, "memory overcommit 150%, KSM off") {
+		t.Errorf("density = %+v", got)
+	}
+}

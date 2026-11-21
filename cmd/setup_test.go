@@ -247,3 +247,14 @@ func TestOperatorChannels(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckOvercommit(t *testing.T) {
+	for _, c := range []struct {
+		pct int
+		ok  bool
+	}{{0, true}, {100, true}, {150, true}, {1000, true}, {99, false}, {1001, false}, {-5, false}} {
+		if err := checkOvercommit(c.pct); (err == nil) != c.ok {
+			t.Errorf("%d: %v", c.pct, err)
+		}
+	}
+}

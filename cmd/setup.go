@@ -102,6 +102,14 @@ func init() {
 	rootCmd.AddCommand(setupCmd)
 }
 
+// checkOvercommit accepts --memory-overcommit: 0 (leave it) or 100 to 1000.
+func checkOvercommit(pct int) error {
+	if pct != 0 && (pct < 100 || pct > 1000) {
+		return fmt.Errorf("--memory-overcommit takes a percentage from 100 to 1000, not %d", pct)
+	}
+	return nil
+}
+
 func runSetup(cmd *cobra.Command, _ []string) error {
 	if suManifests {
 		suDryRun = true
@@ -110,8 +118,8 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if suOvercommit != 0 && (suOvercommit < 100 || suOvercommit > 1000) {
-		return fmt.Errorf("--memory-overcommit takes a percentage from 100 to 1000, not %d", suOvercommit)
+	if err := checkOvercommit(suOvercommit); err != nil {
+		return err
 	}
 	if _, err := resource.ParseQuantity(suRegSize); err != nil {
 		return fmt.Errorf("invalid --registry-size %q: %w", suRegSize, err)
