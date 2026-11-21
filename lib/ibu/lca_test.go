@@ -197,18 +197,6 @@ func testBuilder() *corev1.Pod {
 		Status: corev1.PodStatus{Phase: corev1.PodRunning}}
 }
 
-func TestBuilderPod(t *testing.T) {
-	ctx := context.Background()
-	e := testEnv(nil)
-	if _, err := builderPod(ctx, e, ns); err == nil || !strings.Contains(err.Error(), "isn't running") {
-		t.Errorf("no builder: err = %v", err)
-	}
-	_, _ = e.Kube.CoreV1().Pods(ns).Create(ctx, testBuilder(), metav1.CreateOptions{})
-	if p, err := builderPod(ctx, e, ns); err != nil || p.Spec.NodeName != "worker-1" {
-		t.Errorf("= %v %v", p, err)
-	}
-}
-
 // Without SELinux options on the builder, the build pod sets none either.
 func TestSameSELinux(t *testing.T) {
 	if sc := sameSELinux(&corev1.Pod{}); sc != nil {

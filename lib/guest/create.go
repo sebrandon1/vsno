@@ -50,9 +50,9 @@ type CreateOptions struct {
 	StuckAfter time.Duration
 }
 
-// sized fills in the default size for each one o leaves at 0, as vsno
+// Sized fills in the default size for each one o leaves at 0, as vsno
 // create's flags do.
-func (o CreateOptions) sized() CreateOptions {
+func (o CreateOptions) Sized() CreateOptions {
 	if o.Cores == 0 {
 		o.Cores = DefaultCores
 	}
@@ -200,7 +200,7 @@ func step(e Env, title string, fn func(precheck.ProgressStep) (string, error)) e
 
 // prepare checks everything Create needs before changing anything.
 func prepare(ctx context.Context, e Env, o CreateOptions) (Spec, Secrets, string, error) {
-	o = o.sized()
+	o = o.Sized()
 	s := Spec{Namespace: o.Namespace, Name: o.Name, Node: o.Node, Cores: o.Cores, MemoryGiB: o.MemoryGiB, DiskGiB: o.DiskGiB}
 	var sec Secrets
 	if err := s.Validate(); err != nil {

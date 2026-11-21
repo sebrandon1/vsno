@@ -54,21 +54,31 @@ var ErrNotReady = errors.New("no ready builder pod")
 
 // Pod returns the ready builder pod's name.
 func Pod(ctx context.Context, kube kubernetes.Interface, ns string) (string, error) {
+	p, err := ReadyPod(ctx, kube, ns)
+	if err != nil {
+		return "", err
+	}
+	return p.Name, nil
+}
+
+// ReadyPod returns the ready builder pod, for a pod that must run beside it
+// (its node, its SELinux level).
+func ReadyPod(ctx context.Context, kube kubernetes.Interface, ns string) (*corev1.Pod, error) {
 	pods, err := kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: LabelSelector})
 	if err != nil {
-		return "", fmt.Errorf("finding the builder pod: %w", err)
+		return nil, fmt.Errorf("finding the builder pod: %w", err)
 	}
-	for _, p := range pods.Items {
+	for i, p := range pods.Items {
 		if p.Status.Phase != corev1.PodRunning || p.DeletionTimestamp != nil {
 			continue
 		}
 		for _, c := range p.Status.Conditions {
 			if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
-				return p.Name, nil
+				return &pods.Items[i], nil
 			}
 		}
 	}
-	return "", fmt.Errorf("%w in namespace %s; run `vsno setup -n %s`", ErrNotReady, ns, ns)
+	return nil, fmt.Errorf("%w in namespace %s; run `vsno setup -n %s`", ErrNotReady, ns, ns)
 }
 
 // Run implements Runner. The script runs as `bash -c script vsno args...`.

@@ -113,13 +113,9 @@ func (o *Options) defaults() {
 	if o.SeedName == "" {
 		o.SeedName = "seed"
 	}
-	// guest.Create takes sizes as given; vsno create's flags default them.
-	if o.Cores == 0 {
-		o.Cores = guest.DefaultCores
-	}
-	if o.MemoryGiB == 0 {
-		o.MemoryGiB = guest.DefaultMemoryGiB
-	}
+	// The sizes are known before any create, for the capacity check.
+	sized := guest.CreateOptions{Cores: o.Cores, MemoryGiB: o.MemoryGiB}.Sized()
+	o.Cores, o.MemoryGiB = sized.Cores, sized.MemoryGiB
 }
 
 func (o Options) check() error {

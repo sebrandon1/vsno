@@ -39,6 +39,16 @@ func TestPod(t *testing.T) {
 	}
 }
 
+// ReadyPod returns the pod itself, for its node and SELinux level.
+func TestReadyPod(t *testing.T) {
+	good := pod("good", corev1.PodRunning, true)
+	good.Spec.NodeName = "worker-1"
+	p, err := ReadyPod(context.Background(), kfake.NewClientset(pod("old", corev1.PodRunning, false), good), "vsno")
+	if err != nil || p.Name != "good" || p.Spec.NodeName != "worker-1" {
+		t.Errorf("ReadyPod = %v, %v", p, err)
+	}
+}
+
 func TestRunWithoutBuilder(t *testing.T) {
 	e := Exec{Config: &rest.Config{Host: "https://127.0.0.1:1"}, Kube: kfake.NewClientset(), Namespace: "vsno"}
 	if err := e.Run(context.Background(), "true", nil, IO{}); !errors.Is(err, ErrNotReady) {

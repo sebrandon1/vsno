@@ -85,7 +85,10 @@ const (
 // its image unless s names one, and renders its manifests in the builder.
 func buildLCA(ctx context.Context, e Env, ns string, s LCASource, reg seed.Registry, ps precheck.ProgressStep) (*BuiltLCA, error) {
 	s = s.withDefaults()
-	bp, err := builderPod(ctx, e, ns)
+	// The build pod mounts the builder's ReadWriteOnce volume, so it runs on
+	// the builder's node, with its SELinux level: a pod at another level would
+	// get the volume relabeled to its own, locking the builder out.
+	bp, err := builder.ReadyPod(ctx, e.Kube, ns)
 	if err != nil {
 		return nil, err
 	}
@@ -112,23 +115,6 @@ func buildLCA(ctx context.Context, e Env, ns string, s LCASource, reg seed.Regis
 	return b, nil
 }
 
-// builderPod is the running builder pod. The build pod mounts its
-// ReadWriteOnce volume, so it runs on the builder's node, with the builder's
-// SELinux level: a pod at another level would get the volume relabeled to
-// its own, locking the builder out of its files.
-func builderPod(ctx context.Context, e Env, ns string) (*corev1.Pod, error) {
-	pods, err := e.Kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: "app=builder"})
-	if err != nil {
-		return nil, fmt.Errorf("finding the builder: %w", err)
-	}
-	for i, p := range pods.Items {
-		if p.Status.Phase == corev1.PodRunning && p.Spec.NodeName != "" {
-			return &pods.Items[i], nil
-		}
-	}
-	return nil, errors.New("the builder pod isn't running; see `vsno status`")
-}
-
 // writeBuildAuth stores what the build pod pulls base images and pushes with:
 // the host cluster's pull secret plus the registry's login, and its CA.
 func writeBuildAuth(ctx context.Context, e Env, ns string, reg seed.Registry) error {
@@ -150,7 +136,7 @@ func writeBuildAuth(ctx context.Context, e Env, ns string, reg seed.Registry) er
 }
 
 // runBuildPod runs lca-build.sh in a privileged buildah pod beside the builder
-// (see builderPod), shows its last log line as progress, and returns its whole
+// (on its node, at its SELinux level), shows its last log line as progress, and returns its whole
 // log once it succeeded.
 func runBuildPod(ctx context.Context, e Env, ns string, builder *corev1.Pod, args []string, ps precheck.ProgressStep) (string, error) {
 	pods := e.Kube.CoreV1().Pods(ns)

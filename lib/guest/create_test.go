@@ -455,11 +455,11 @@ func TestFit(t *testing.T) {
 // A size left at 0 is the default, so callers other than vsno create (vsno
 // run) needn't know the defaults.
 func TestCreateOptionsSized(t *testing.T) {
-	o := CreateOptions{}.sized()
+	o := CreateOptions{}.Sized()
 	if o.Cores != DefaultCores || o.MemoryGiB != DefaultMemoryGiB || o.DiskGiB != DefaultDiskGiB {
 		t.Errorf("%+v", o)
 	}
-	if o := (CreateOptions{Cores: 8, MemoryGiB: 24, DiskGiB: 150}).sized(); o.Cores != 8 || o.MemoryGiB != 24 || o.DiskGiB != 150 {
+	if o := (CreateOptions{Cores: 8, MemoryGiB: 24, DiskGiB: 150}).Sized(); o.Cores != 8 || o.MemoryGiB != 24 || o.DiskGiB != 150 {
 		t.Errorf("given sizes changed: %+v", o)
 	}
 }
