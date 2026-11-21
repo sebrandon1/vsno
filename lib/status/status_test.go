@@ -129,9 +129,6 @@ func TestCollectHealthy(t *testing.T) {
 			t.Errorf("%s = %s %q", c.Name, c.Status, c.Detail)
 		}
 	}
-	if d := byName(r.Host)["density"].Detail; d != "memory overcommit 100%, KSM off" {
-		t.Errorf("density detail = %q", d)
-	}
 	if d := byName(r.Host)["storage"].Detail; !strings.Contains(d, "on "+node) {
 		t.Errorf("storage detail = %q", d)
 	}
@@ -307,4 +304,16 @@ func vsno(name string) *unstructured.Unstructured {
 	u := obj("kubevirt.io/v1", "VirtualMachine", ns, name, status(map[string]any{"printableStatus": "Running"}))
 	u.SetLabels(map[string]string{guest.LabelName: name})
 	return u
+}
+
+// With nothing set on HyperConverged, the density row says so and passes.
+func TestCollectDensityDefault(t *testing.T) {
+	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, healthy()...)
+	r, err := Collect(context.Background(), kube(true, true), dyn, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := byName(r.Host)["density"]; c.Status != precheck.Pass || c.Detail != "memory overcommit 100%, KSM off" {
+		t.Errorf("density = %+v", c)
+	}
 }
