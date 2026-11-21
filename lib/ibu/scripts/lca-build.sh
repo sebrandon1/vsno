@@ -9,7 +9,10 @@
 set -euo pipefail
 repo=$1 ref=$2 host=$3 image=${4:-}
 
-command -v git >/dev/null || dnf -y -q install git >/dev/null
+# The buildah image has neither: git to clone, skopeo to see if the tag exists.
+for tool in git skopeo; do
+  command -v "$tool" >/dev/null || dnf -y -q install "$tool" >/dev/null
+done
 mkdir -p /work/lca
 tmp=$(mktemp -d /work/lca/clone.XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
