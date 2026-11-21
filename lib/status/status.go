@@ -151,7 +151,7 @@ func operator(ctx context.Context, dyn dynamic.Interface, op cluster.Operator, c
 
 func hyperConverged(ctx context.Context, dyn dynamic.Interface) Component {
 	const name = "hyperconverged"
-	hc, err := dyn.Resource(precheck.GVRHyperConverged).Namespace(cluster.CNVNamespace).Get(ctx, cluster.HyperConvergedName, metav1.GetOptions{})
+	hc, err := dyn.Resource(cluster.GVRHyperConverged).Namespace(cluster.CNVNamespace).Get(ctx, cluster.HyperConvergedName, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
 		return missing(name, "HyperConverged "+cluster.HyperConvergedName)

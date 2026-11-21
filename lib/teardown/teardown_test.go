@@ -145,7 +145,7 @@ func TestRunNamespace(t *testing.T) {
 	if c.answer != ns || c.shown != 1 || !strings.Contains(c.asked, "This deletes 21 object(s)") {
 		t.Errorf("confirm: answer %q shown %d q %q", c.answer, c.shown, c.asked)
 	}
-	if exists(t, d, cluster.GVRNamespace, "", ns) || !exists(t, d, precheck.GVRHyperConverged, cluster.CNVNamespace, cluster.HyperConvergedName) {
+	if exists(t, d, cluster.GVRNamespace, "", ns) || !exists(t, d, cluster.GVRHyperConverged, cluster.CNVNamespace, cluster.HyperConvergedName) {
 		t.Error("should delete the namespace only")
 	}
 

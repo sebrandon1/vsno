@@ -90,7 +90,7 @@ func newDyn(objs ...runtime.Object) *dynfake.FakeDynamicClient {
 		GVRClusterVersion: "ClusterVersionList", GVRNetwork: "NetworkList",
 		cluster.GVRPackageManifest: "PackageManifestList", cluster.GVRCSV: "ClusterServiceVersionList",
 		cluster.GVRSubscription: "SubscriptionList", cluster.GVRInstallPlan: "InstallPlanList",
-		GVRHyperConverged: "HyperConvergedList", GVRLVMCluster: "LVMClusterList",
+		cluster.GVRHyperConverged: "HyperConvergedList", GVRLVMCluster: "LVMClusterList",
 	}
 	return dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objs...)
 }
@@ -462,9 +462,9 @@ func TestRunReportsDensity(t *testing.T) {
 	if got := find(Run(context.Background(), env, DefaultRequirements(), Options{}), "Existing: VM density"); got != nil {
 		t.Errorf("nothing set: %+v", got)
 	}
-	hc := obj(GVRHyperConverged, "HyperConverged", cluster.CNVNamespace, cluster.HyperConvergedName, map[string]interface{}{
+	hc := obj(cluster.GVRHyperConverged, "HyperConverged", cluster.CNVNamespace, cluster.HyperConvergedName, map[string]interface{}{
 		"spec": map[string]interface{}{"higherWorkloadDensity": map[string]interface{}{"memoryOvercommitPercentage": int64(150)}}})
-	if err := env.Dyn.(*dynfake.FakeDynamicClient).Tracker().Create(GVRHyperConverged, hc, cluster.CNVNamespace); err != nil {
+	if err := env.Dyn.(*dynfake.FakeDynamicClient).Tracker().Create(cluster.GVRHyperConverged, hc, cluster.CNVNamespace); err != nil {
 		t.Fatal(err)
 	}
 	got := find(Run(context.Background(), env, DefaultRequirements(), Options{}), "Existing: VM density")

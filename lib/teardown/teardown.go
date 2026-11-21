@@ -218,7 +218,7 @@ func (p *planner) plan(ctx context.Context) error {
 		return err
 	}
 	for _, t := range []Target{
-		{Kind: "HyperConverged", Namespace: cluster.CNVNamespace, Name: cluster.HyperConvergedName, gvr: precheck.GVRHyperConverged, wait: true, step: manifests.StepHyperConverged},
+		{Kind: "HyperConverged", Namespace: cluster.CNVNamespace, Name: cluster.HyperConvergedName, gvr: cluster.GVRHyperConverged, wait: true, step: manifests.StepHyperConverged},
 		{Kind: "Namespace", Name: cluster.OSImagesNamespace, Detail: "boot-source images", gvr: cluster.GVRNamespace, wait: true, step: manifests.StepHyperConverged},
 	} {
 		if err := p.add(ctx, t); err != nil {

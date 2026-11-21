@@ -52,7 +52,7 @@ var gvrs = map[string]schema.GroupVersionResource{
 	"RoleBinding":           {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"},
 	"OperatorGroup":         {Group: "operators.coreos.com", Version: "v1", Resource: "operatorgroups"},
 	"Subscription":          {Group: "operators.coreos.com", Version: "v1alpha1", Resource: "subscriptions"},
-	"HyperConverged":        precheck.GVRHyperConverged,
+	"HyperConverged":        cluster.GVRHyperConverged,
 	"LVMCluster":            precheck.GVRLVMCluster,
 }
 
@@ -178,7 +178,7 @@ func (s *sim) existingHost(t *testing.T) {
 	hc.SetNamespace(cnvNS)
 	hc.SetName(hcoName)
 	s.simulate(hc)
-	if err := tr.Create(precheck.GVRHyperConverged, hc, cnvNS); err != nil {
+	if err := tr.Create(cluster.GVRHyperConverged, hc, cnvNS); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -433,13 +433,13 @@ func TestRunWaitsForExistingHyperConverged(t *testing.T) {
 	s := newSim()
 	s.existingHost(t)
 	tr := s.dyn.Tracker()
-	cur, err := tr.Get(precheck.GVRHyperConverged, cnvNS, hcoName)
+	cur, err := tr.Get(cluster.GVRHyperConverged, cnvNS, hcoName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	hc := cur.(*unstructured.Unstructured)
 	_ = unstructured.SetNestedSlice(hc.Object, []any{map[string]any{"type": "Available", "status": "False"}}, "status", "conditions")
-	if err := tr.Update(precheck.GVRHyperConverged, hc, cnvNS); err != nil {
+	if err := tr.Update(cluster.GVRHyperConverged, hc, cnvNS); err != nil {
 		t.Fatal(err)
 	}
 	_, err = Run(context.Background(), s.env(report()), opts())

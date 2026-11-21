@@ -257,7 +257,7 @@ func (r *runner) waitForUpgrade(ctx context.Context, op operatorSpec, old string
 // waitHyperConverged waits for HyperConverged to report Available after a CNV
 // upgrade. Without the object, or its CRD, there is nothing to wait for.
 func (r *runner) waitHyperConverged(ctx context.Context) error {
-	hc := r.Dyn.Resource(precheck.GVRHyperConverged).Namespace(cnvNS)
+	hc := r.Dyn.Resource(cluster.GVRHyperConverged).Namespace(cnvNS)
 	if _, err := hc.Get(ctx, hcoName, metav1.GetOptions{}); err != nil {
 		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 			return nil
@@ -279,7 +279,7 @@ func inNamespace(ns string) func(*unstructured.Unstructured) bool {
 
 func (r *runner) hyperConverged(ctx context.Context, ps precheck.ProgressStep) (Step, error) {
 	step := Step{Name: manifests.StepHyperConverged}
-	hc := r.Dyn.Resource(precheck.GVRHyperConverged).Namespace(cnvNS)
+	hc := r.Dyn.Resource(cluster.GVRHyperConverged).Namespace(cnvNS)
 	cur, err := hc.Get(ctx, hcoName, metav1.GetOptions{})
 	switch {
 	case err == nil:
