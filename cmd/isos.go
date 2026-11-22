@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/isos"
@@ -29,9 +31,24 @@ serves, the installer's build directories, the cached openshift-install
 binaries (one per release) and the ISO DataVolumes, with what still uses each.
 It ends with the builder volume's usage.
 
-iso prune removes everything no vSNO uses; iso delete removes the ones you
-name; iso eject takes an install ISO off a vSNO that has finished installing.`,
+iso info shows one of them by name; iso prune removes everything no vSNO uses;
+iso delete removes the ones you name; iso eject takes an install ISO off a vSNO
+that has finished installing.`,
+	Args: cobra.NoArgs,
 	RunE: runIsoList,
+}
+
+var isoInfoCmd = &cobra.Command{
+	Use:   "info <vsno|installer|DataVolume>",
+	Short: "Show what one vSNO, installer or DataVolume holds, and who uses it",
+	Long: `info shows one thing by name: its path in the builder, size and age, the
+release an installer came from, its ISO DataVolume, who still uses it, and the
+builder volume's usage. A vSNO brings its served ISO, its build directory and
+its DataVolume; an installer or a DataVolume brings itself.
+
+It only reads. ` + "`vsno iso list`" + ` shows everything at once.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runIsoInfo,
 }
 
 var isoListCmd = &cobra.Command{
@@ -82,7 +99,7 @@ func init() {
 	isoPruneCmd.Flags().BoolVar(&isoDryRun, "dry-run", false, "list what would be removed and change nothing")
 	isoDeleteCmd.Flags().BoolVar(&idlYes, "yes", false, "don't ask for confirmation")
 	isoDeleteCmd.Flags().BoolVar(&idlDryRun, "dry-run", false, "list what would be removed and change nothing")
-	isoCmd.AddCommand(isoListCmd, isoDeleteCmd, isoPruneCmd, isoEjectCmd)
+	isoCmd.AddCommand(isoListCmd, isoInfoCmd, isoDeleteCmd, isoPruneCmd, isoEjectCmd)
 	rootCmd.AddCommand(isoCmd)
 }
 
@@ -110,6 +127,54 @@ func runIsoList(cmd *cobra.Command, _ []string) error {
 	return renderIsos(cmd.OutOrStdout(), rep, palette(cmd.OutOrStdout()))
 }
 
+func runIsoInfo(cmd *cobra.Command, args []string) error {
+	env, err := isosEnv(cmd)
+	if err != nil {
+		return err
+	}
+	rep, err := isos.List(cmd.Context(), env, namespace)
+	if err != nil {
+		return err
+	}
+	in, err := isos.Find(rep, args[0])
+	if err != nil {
+		return err
+	}
+	return renderIsoInfo(cmd.OutOrStdout(), in, palette(cmd.OutOrStdout()))
+}
+
+// renderIsoInfo shows one name's builder files, its DataVolumes and the volume
+// they sit on.
+func renderIsoInfo(w io.Writer, in *isos.Info, pal ui.Palette) error {
+	if outputFormat == formatJSON {
+		return writeJSON(w, in)
+	}
+	line := fmt.Sprintf("%s: %s in the builder", pal.Bold(in.Name), bytesText(in.Bytes-in.DiskBytes()))
+	if d := in.DiskBytes(); d > 0 {
+		line += ", " + bytesText(d) + " on LVMS"
+	}
+	fmt.Fprintf(w, "%s\n\n", line)
+	var t ui.Table
+	t.Row(pal.Bold("WHAT"), pal.Bold("PATH"), pal.Bold("VERSION"), pal.Bold("SIZE"), pal.Bold("AGE"), pal.Bold("USE"))
+	now := time.Now()
+	var releases []string
+	for _, e := range in.Entries {
+		t.Row(string(e.Kind), orDash(e.Path), orDash(e.Version), bytesText(e.Size), ageSince(now, e.Modified), useText(e.Use, e.Users))
+		if e.Release != "" {
+			releases = append(releases, e.Release)
+		}
+	}
+	for _, d := range in.Disks {
+		t.Row("data volume", orDash(d.Name), "-", bytesText(d.Size), "-", useText(d.Use, d.Users))
+	}
+	t.Write(w)
+	if len(releases) > 0 {
+		fmt.Fprintf(w, "\n%s\n", pal.Dim("release: "+strings.Join(releases, ", ")))
+	}
+	writeVolume(w, in.Used, in.Total, pal)
+	return nil
+}
+
 func renderIsos(w io.Writer, rep *isos.Report, pal ui.Palette) error {
 	if outputFormat == formatJSON {
 		return writeJSON(w, rep)
@@ -119,26 +184,33 @@ func renderIsos(w io.Writer, rep *isos.Report, pal ui.Palette) error {
 		return nil
 	}
 	var t ui.Table
-	t.Row(pal.Bold("WHAT"), pal.Bold("NAME"), pal.Bold("VERSION"), pal.Bold("SIZE"), pal.Bold("USE"))
+	t.Row(pal.Bold("WHAT"), pal.Bold("NAME"), pal.Bold("VERSION"), pal.Bold("SIZE"), pal.Bold("AGE"), pal.Bold("USE"))
+	now := time.Now()
 	for _, e := range rep.Entries {
-		t.Row(string(e.Kind), e.Name, orDash(e.Version), bytesText(e.Size), useText(e.Use, e.Users))
+		t.Row(string(e.Kind), e.Name, orDash(e.Version), bytesText(e.Size), ageSince(now, e.Modified), useText(e.Use, e.Users))
 	}
 	for _, d := range rep.Disks {
-		t.Row("data volume", d.Name, "-", bytesText(d.Size), useText(d.Use, d.Users))
+		t.Row("data volume", d.Name, "-", bytesText(d.Size), "-", useText(d.Use, d.Users))
 	}
 	t.Write(w)
-	if rep.Total > 0 {
-		pct := float64(rep.Used) / float64(rep.Total) * 100
-		line := fmt.Sprintf("\nBuilder volume: %s of %s used (%.0f%%), %s free", bytesText(rep.Used), bytesText(rep.Total), pct, bytesText(rep.Total-rep.Used))
-		if pct >= 80 {
-			line = pal.Yellow(line)
-		}
-		fmt.Fprintln(w, line)
-	}
+	writeVolume(w, rep.Used, rep.Total, pal)
 	if rep.DiskBytes > 0 {
 		fmt.Fprintf(w, "ISO DataVolumes on LVMS: %s\n", bytesText(rep.DiskBytes))
 	}
 	return nil
+}
+
+// writeVolume prints the builder volume's usage, and warns above 80%.
+func writeVolume(w io.Writer, used, total int64, pal ui.Palette) {
+	if total == 0 {
+		return
+	}
+	pct := float64(used) / float64(total) * 100
+	line := fmt.Sprintf("\nBuilder volume: %s of %s used (%.0f%%), %s free", bytesText(used), bytesText(total), pct, bytesText(total-used))
+	if pct >= 80 {
+		line = pal.Yellow(line)
+	}
+	fmt.Fprintln(w, line)
 }
 
 // useText says what still uses an entry, or "-" when nothing tracks it.

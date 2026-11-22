@@ -20,7 +20,7 @@ done
 # Build directories: the installer's inputs and output for one vSNO.
 for d in "$work"/guests/*; do
   [ -d "$d" ] || continue
-  emit "{\"kind\":\"build\",\"name\":\"$(basename "$d")\",\"size\":$(( $(du -sk "$d" | cut -f1) * 1024 ))}"
+  emit "{\"kind\":\"build\",\"name\":\"$(basename "$d")\",\"size\":$(( $(du -sk "$d" | cut -f1) * 1024 )),\"modified\":\"$(when "$d")\"}"
 done
 
 # Cached openshift-install binaries, one per release image, with the matching
@@ -40,5 +40,5 @@ done
 
 # The installer's base ISO cache, about 1 GB for the latest release.
 if [ -d "$work/cache" ]; then
-  emit "{\"kind\":\"base\",\"name\":\"base-iso\",\"size\":$(( $(du -sk "$work/cache" | cut -f1) * 1024 ))}"
+  emit "{\"kind\":\"base\",\"name\":\"base-iso\",\"size\":$(( $(du -sk "$work/cache" | cut -f1) * 1024 )),\"modified\":\"$(when "$work/cache")\"}"
 fi

@@ -4,9 +4,50 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sebrandon1/vsno/lib/isos"
 )
+
+// The parent command lists only when it is given nothing: `vsno iso info seed2`
+// used to run list and silently ignore both arguments.
+func TestIsoCommandRefusesStrayArgs(t *testing.T) {
+	if err := isoCmd.Args(isoCmd, []string{"info", "seed2"}); err == nil {
+		t.Error("vsno iso with arguments must error, not list")
+	}
+	if err := isoCmd.Args(isoCmd, nil); err != nil {
+		t.Errorf("vsno iso with no arguments = %v, want nil", err)
+	}
+}
+
+func TestRenderIsoInfo(t *testing.T) {
+	in := &isos.Info{
+		Name: "a",
+		Entries: []isos.Entry{
+			{Kind: isos.Served, Name: "a", Path: "/work/www/a.iso", Size: 1 << 30,
+				Modified: time.Now().Add(-2 * time.Hour), Use: isos.InUse, Users: []string{"a"}},
+			{Kind: isos.Installer, Name: "openshift-install-x", Path: "/work/bin/openshift-install-x",
+				Release: "quay.io/x:4.20.46", Version: "4.20.46", Size: 700 << 20, Use: isos.Unused},
+		},
+		Disks: []isos.Disk{{Name: "a-iso", VSNO: "a", Size: 3 << 30, Use: isos.InUse, Users: []string{"a"}}},
+		Bytes: 1<<30 + 700<<20 + 3<<30,
+		Used:  4 << 30, Total: 5 << 30,
+	}
+	var b bytes.Buffer
+	if err := renderIsoInfo(&b, in, plain); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{
+		"a:", "1.7Gi in the builder", "3.0Gi on LVMS", "PATH", "AGE",
+		"/work/www/a.iso", "2h", "4.20.46", "quay.io/x:4.20.46",
+		"data volume", "a-iso", "Builder volume: 4.0Gi of 5.0Gi used (80%)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
 
 func TestRenderIsos(t *testing.T) {
 	rep := &isos.Report{
@@ -26,7 +67,7 @@ func TestRenderIsos(t *testing.T) {
 	}
 	out := b.String()
 	for _, want := range []string{
-		"served", "a", "in use (a)", "orphaned", "unused", "4.20.46",
+		"served", "a", "in use (a)", "orphaned", "unused", "4.20.46", "AGE",
 		"data volume", "a-iso", "Builder volume: 4.0Gi of 5.0Gi used (80%)",
 		"ISO DataVolumes on LVMS: 3.0Gi",
 	} {

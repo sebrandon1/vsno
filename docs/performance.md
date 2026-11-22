@@ -40,6 +40,7 @@ after a delete.
 
 ```bash
 vsno iso list                      # what the builder and LVMS hold, and what uses it
+vsno iso info seed2                # one thing: paths, size, age, release, and its users
 vsno iso delete old-vsno           # remove one vSNO's leftover ISO and build directory
 vsno iso delete openshift-install-1a2b3c4d
 vsno iso prune --dry-run           # ISOs, installers and DataVolumes nothing uses

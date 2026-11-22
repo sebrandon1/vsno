@@ -52,6 +52,7 @@ const (
 type Entry struct {
 	Kind     Kind      `json:"kind"`
 	Name     string    `json:"name"`
+	Path     string    `json:"path,omitempty"`    // where it is in the builder, e.g. /work/www/a.iso
 	Release  string    `json:"release,omitempty"` // an installer's release image
 	Version  string    `json:"version,omitempty"`
 	Size     int64     `json:"size"`
@@ -120,7 +121,7 @@ func List(ctx context.Context, e Env, ns string) (*Report, error) {
 		case volume:
 			rep.Used, rep.Total = l.Used, l.Total
 		case Base:
-			rep.Entries = append(rep.Entries, Entry{Kind: Base, Name: l.Name, Size: l.Size})
+			rep.Entries = append(rep.Entries, Entry{Kind: Base, Name: l.Name, Path: pathOf(Base, l.Name), Size: l.Size, Modified: l.Modified})
 		default:
 			rep.Entries = append(rep.Entries, entryFor(l, vms))
 		}
@@ -132,10 +133,25 @@ func List(ctx context.Context, e Env, ns string) (*Report, error) {
 // volume is the line kind that carries the builder volume's usage.
 const volume Kind = "volume"
 
+// pathOf is where an entry of this kind lives in the builder.
+func pathOf(k Kind, name string) string {
+	switch k {
+	case Served:
+		return "/work/www/" + name + ".iso"
+	case Build:
+		return "/work/guests/" + name
+	case Installer:
+		return "/work/bin/" + name
+	case Base:
+		return "/work/cache"
+	}
+	return ""
+}
+
 // entryFor classifies one served ISO, build directory or installer against
 // the vSNOs in the namespace.
 func entryFor(l line, vms map[string]string) Entry {
-	ent := Entry{Kind: l.Kind, Name: l.Name, Release: l.Release, Version: l.Version, Size: l.Size, Modified: l.Modified}
+	ent := Entry{Kind: l.Kind, Name: l.Name, Path: pathOf(l.Kind, l.Name), Release: l.Release, Version: l.Version, Size: l.Size, Modified: l.Modified}
 	if l.Kind == Installer {
 		ent.Users = users(vms, l.Release)
 		switch {
