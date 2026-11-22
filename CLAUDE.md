@@ -240,6 +240,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   - a VM worker with nested KVM
 - `run_test.go` builds a fake cluster with `k8s.io/client-go/kubernetes/fake` and
   `dynamic/fake`, plus a `fixtureProber`.
+- CI prints the total coverage in the run's job summary and fails below the floor in
+  `.github/workflows/pre-main.yaml` (`COVERAGE_FLOOR`). Check locally with `make coverage`.
 
 ## Plan
 

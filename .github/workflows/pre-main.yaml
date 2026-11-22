@@ -21,6 +21,10 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      # Just under the current total, so a refactor that sheds a line or two
+      # still passes; raise it with the tests that earn it.
+      COVERAGE_FLOOR: "75"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -28,6 +32,22 @@ jobs:
           go-version-file: go.mod
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...
+      - name: Coverage summary
+        run: |
+          total=$(go tool cover -func=coverage.out | tail -1)
+          echo "### Test coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "$total" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - name: Coverage floor
+        run: |
+          pct=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
+          echo "total coverage: ${pct}% (floor: ${COVERAGE_FLOOR}%)"
+          if awk -v p="$pct" -v f="$COVERAGE_FLOOR" 'BEGIN { exit !(p < f) }'; then
+            echo "::error::coverage ${pct}% is below the ${COVERAGE_FLOOR}% floor"
+            exit 1
+          fi
 
   build:
     runs-on: ubuntu-latest
