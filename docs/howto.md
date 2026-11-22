@@ -9,6 +9,8 @@ Everything here uses two placeholders: `<name>` for a vSNO you name (lowercase l
 `4.22.22` (a minor, a z-stream, `<minor>-nightly`, or a release image pullspec — all things `vsno create
 --version` accepts).
 
+For every command's flags, see the [command reference](commands.md).
+
 ## 0. Before you start
 
 You need:
