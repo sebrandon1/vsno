@@ -6,9 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/guestctl"
 	"github.com/sebrandon1/vsno/lib/guestctl/guestctltest"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func upgrade(t *testing.T, target *lca, o UpgradeOptions, extra map[string]guestctl.Access) (*UpgradeResult, error) {
@@ -52,6 +55,22 @@ func TestUpgradeFinalizes(t *testing.T) {
 	if len(target.Stdin) < 2 || !strings.Contains(strings.Join(target.Stdin, ""), "DataProtectionApplication") ||
 		!strings.Contains(strings.Join(target.Stdin, ""), "seed-pull-secret") {
 		t.Errorf("applied = %q", target.Stdin)
+	}
+}
+
+// The version an upgrade reaches is recorded on the vSNO's VM, which `vsno list`
+// and `vsno snapshot` read.
+func TestUpgradeRecordsTheNewVersion(t *testing.T) {
+	e := testEnv(map[string]guestctl.Access{"t": &lca{Fake: targetFake(), reboot: 2}})
+	if _, err := Upgrade(context.Background(), e, UpgradeOptions{Namespace: ns, Target: "t", Seed: "shiny-crane"}); err != nil {
+		t.Fatal(err)
+	}
+	vm, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Get(context.Background(), "t", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vm.GetAnnotations()[guest.AnnVersion]; got != "4.21.42" {
+		t.Errorf("version on the VM = %q, want 4.21.42", got)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/release"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 )
 
@@ -86,6 +87,47 @@ func TestObjectsGolden(t *testing.T) {
 		t.Errorf("kinds = %v (Create relies on this order)", kinds)
 	}
 	golden(t, "objects.golden.yaml", b.String())
+}
+
+// A vSNO restored from a snapshot has no installer ISO: its boot disk is a PVC
+// filled by the storage driver, and the VM mounts it directly.
+func TestObjectsFromSnapshot(t *testing.T) {
+	s := testSpec()
+	s.Snapshot = "seed"
+	objs, err := Objects(s, "172.30.0.53", testSecrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	var b strings.Builder
+	for _, o := range objs {
+		kinds = append(kinds, o.GetKind())
+		y, err := yaml.Marshal(o.Object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.WriteString("---\n")
+		b.Write(y)
+	}
+	if strings.Join(kinds, ",") != "Service,VirtualMachine" {
+		t.Errorf("kinds = %v, want no ISO DataVolume", kinds)
+	}
+	vm := objs[1]
+	if _, ok, _ := unstructured.NestedSlice(vm.Object, "spec", "dataVolumeTemplates"); ok {
+		t.Error("a restore creates its disk itself: no dataVolumeTemplates")
+	}
+	vols, _, _ := unstructured.NestedSlice(vm.Object, "spec", "template", "spec", "volumes")
+	if len(vols) != 1 {
+		t.Fatalf("volumes = %v, want only the root disk", vols)
+	}
+	if got, _, _ := unstructured.NestedString(vols[0].(map[string]any), "persistentVolumeClaim", "claimName"); got != "seed-root" {
+		t.Errorf("root volume = %v, want the seed-root PVC", vols[0])
+	}
+	disks, _, _ := unstructured.NestedSlice(vm.Object, "spec", "template", "spec", "domain", "devices", "disks")
+	if len(disks) != 1 {
+		t.Errorf("disks = %v, want only the root disk", disks)
+	}
+	golden(t, "objects-snapshot.golden.yaml", b.String())
 }
 
 func TestObjectsForPullspec(t *testing.T) {

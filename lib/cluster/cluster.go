@@ -66,6 +66,10 @@ var (
 	GVRHyperConverged  = schema.GroupVersionResource{Group: "hco.kubevirt.io", Version: "v1beta1", Resource: "hyperconvergeds"}
 	GVRVirtualMachine  = schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}
 	GVRVMI             = schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachineinstances"}
+	// VolumeSnapshots are how a vSNO's disk is kept for later restores; the
+	// class is the storage driver's, named after the StorageClass.
+	GVRVolumeSnapshot      = schema.GroupVersionResource{Group: "snapshot.storage.k8s.io", Version: "v1", Resource: "volumesnapshots"}
+	GVRVolumeSnapshotClass = schema.GroupVersionResource{Group: "snapshot.storage.k8s.io", Version: "v1", Resource: "volumesnapshotclasses"}
 )
 
 // Deployments are the support Deployments (and Services) in the vsno namespace.

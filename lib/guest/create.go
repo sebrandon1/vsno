@@ -22,7 +22,9 @@ import (
 	"github.com/sebrandon1/vsno/lib/state"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 )
@@ -46,6 +48,9 @@ type CreateOptions struct {
 	Wait bool
 	// NoCache installs from the internet instead of the registry mirror.
 	NoCache bool
+	// Snapshot restores the root disk from this VolumeSnapshot instead of
+	// installing from an ISO. The vSNO takes the snapshot's name and version.
+	Snapshot string
 	// StuckAfter fails an install whose validations keep failing this long; 0 = 15m.
 	StuckAfter time.Duration
 }
@@ -85,8 +90,9 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 	}
 	ps.Done(fmt.Sprintf("%s on %s, %d vCPU / %d GiB / %d GiB", describe(spec.Release), spec.Node, spec.Cores, spec.MemoryGiB, spec.DiskGiB))
 
-	cached, err := cacheRelease(ctx, e, o, spec, &sec)
+	cached, err := makeDisk(ctx, e, o, spec, &sec)
 	if err != nil {
+		ps.Fail(err.Error())
 		return nil, err
 	}
 	objs, err := Objects(spec, dnsIP, sec)
@@ -107,25 +113,16 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 		return g, err
 	}
 
-	isoStart := e.Now()
-	if err := step(e, "Building the agent ISO", func(ps precheck.ProgressStep) (string, error) {
-		v, err := buildISO(ctx, e, spec, dnsIP, sec, ps)
-		if spec.Release.Version == "" && v != "" {
-			g.Version = v
-			ann := objs[2].GetAnnotations() // a copy
-			ann[AnnVersion] = v             // a pullspec: the installer knows the version
-			objs[2].SetAnnotations(ann)
-		}
-		// The build alone: prepare and the release mirror are their own time.
-		g.Timings.ISO = dur(e.Now().Sub(isoStart))
-		return v, err
-	}); err != nil {
+	if err := boot(ctx, e, spec, sec, dnsIP, g, objs); err != nil {
 		return g, err
 	}
 
 	started := e.Now()
 	if err := step(e, "Creating VM "+spec.Name, func(precheck.ProgressStep) (string, error) {
 		_, err := e.Applier.Apply(ctx, objs[1:])
+		if spec.Snapshot != "" {
+			return fmt.Sprintf("root disk %d GiB from snapshot %s", spec.DiskGiB, spec.Snapshot), err
+		}
 		return fmt.Sprintf("ISO DataVolume %s-iso, root disk %d GiB", spec.Name, spec.DiskGiB), err
 	}); err != nil {
 		return g, err
@@ -139,9 +136,102 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 	// The whole create, caching and ISO build included: the number to compare
 	// a cached release's create against.
 	g.Timings.Available = dur(e.Now().Sub(start))
-	eject(ctx, e, spec.Namespace, spec.Name)
+	if spec.Snapshot == "" {
+		eject(ctx, e, spec.Namespace, spec.Name)
+	}
 	return g, record(ctx, e, spec.Namespace, g)
 }
+
+// makeDisk makes what the vSNO's VM boots from: the root disk restored from a
+// snapshot, or the release mirrored for an install. It reports whether the
+// install uses the environment's registry.
+func makeDisk(ctx context.Context, e Env, o CreateOptions, spec Spec, sec *Secrets) (bool, error) {
+	if spec.Snapshot != "" {
+		return false, restore(ctx, e, spec)
+	}
+	return cacheRelease(ctx, e, o, spec, sec)
+}
+
+// boot is what the VM starts from: a restore of the snapshot's root disk, which
+// restore has already made, or the installer ISO built and applied.
+func boot(ctx context.Context, e Env, spec Spec, sec Secrets, dnsIP string, g *Guest, objs []*unstructured.Unstructured) error {
+	if spec.Snapshot != "" {
+		return nil
+	}
+	isoStart := e.Now()
+	return step(e, "Building the agent ISO", func(ps precheck.ProgressStep) (string, error) {
+		v, err := buildISO(ctx, e, spec, dnsIP, sec, ps)
+		if spec.Release.Version == "" && v != "" {
+			g.Version = v
+			ann := objs[2].GetAnnotations() // a copy
+			ann[AnnVersion] = v             // a pullspec: the installer knows the version
+			objs[2].SetAnnotations(ann)
+		}
+		// The build alone: prepare and the release mirror are their own time.
+		g.Timings.ISO = dur(e.Now().Sub(isoStart))
+		return v, err
+	})
+}
+
+// restore makes the boot disk for a vSNO created from a snapshot: a PVC filled
+// by the storage driver from the VolumeSnapshot (a thin clone on LVMS, seconds),
+// and the installer files the snapshot kept, which the probe needs after a
+// `vsno delete` removed them.
+func restore(ctx context.Context, e Env, s Spec) error {
+	if err := step(e, "Restoring the disk", func(precheck.ProgressStep) (string, error) {
+		pvc := rootPVC(s)
+		if _, err := e.Kube.CoreV1().PersistentVolumeClaims(s.Namespace).Create(ctx, pvc, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return "", fmt.Errorf("creating the root disk: %w", err)
+		}
+		if e.Builder == nil {
+			return "snapshot " + s.Snapshot, nil
+		}
+		if err := e.Builder.Run(ctx, restoreFiles, []string{s.Name}, builder.IO{}); err != nil {
+			return "", fmt.Errorf("restoring the installer files: %w", err)
+		}
+		return "snapshot " + s.Snapshot, nil
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// rootPVC is the vSNO's root disk, restored from its snapshot by the driver.
+func rootPVC(s Spec) *corev1.PersistentVolumeClaim {
+	block := corev1.PersistentVolumeBlock
+	class := manifests.DefaultStorageClass
+	return &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Namespace: s.Namespace, Name: s.Name + "-root", Labels: map[string]string{LabelName: s.Name}},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			StorageClassName: &class,
+			VolumeMode:       &block,
+			Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{
+				corev1.ResourceStorage: resource.MustParse(strconv.Itoa(int(s.DiskGiB)) + "Gi")}},
+			DataSource: &corev1.TypedLocalObjectReference{
+				APIGroup: ptr("snapshot.storage.k8s.io"), Kind: "VolumeSnapshot", Name: s.Snapshot},
+		},
+	}
+}
+
+// ptr is a pointer to v, for the fields Kube's types take by pointer.
+func ptr[T any](v T) *T { return &v }
+
+// snapVersion is the OpenShift version a snapshot's disk was installed at.
+func snapVersion(ctx context.Context, e Env, ns, snap string) (string, error) {
+	u, err := e.Dyn.Resource(cluster.GVRVolumeSnapshot).Namespace(ns).Get(ctx, snap, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("reading snapshot %s: %w", snap, err)
+	}
+	v := u.GetAnnotations()[AnnVersion]
+	if v == "" {
+		return "", fmt.Errorf("snapshot %s has no version recorded; take it again with `vsno snapshot create`", snap)
+	}
+	return v, nil
+}
+
+// restoreFiles puts the snapshot's copy of the installer files back.
+const restoreFiles = `mkdir -p "/work/guests/$1" && cp -a "/work/snapshots/$1/." "/work/guests/$1/"`
 
 // cacheRelease mirrors the release into the environment's registry and points
 // the install at it. The ISO build pulls the release too, so this runs before
@@ -228,11 +318,20 @@ func prepare(ctx context.Context, e Env, o CreateOptions) (Spec, Secrets, string
 		return s, sec, "", err
 	}
 	var err error
-	if s.Release, err = e.Resolver.Resolve(ctx, o.Version); err != nil {
+	if s.Snapshot = o.Snapshot; s.Snapshot != "" {
+		// A restore brings the release with the disk: no ISO, no mirror, and
+		// the version is the one the snapshot was taken at.
+		if s.Release.Version, err = snapVersion(ctx, e, o.Namespace, o.Snapshot); err != nil {
+			return s, sec, "", err
+		}
+		s.Release.Requested = s.Release.Version
+	} else if s.Release, err = e.Resolver.Resolve(ctx, o.Version); err != nil {
 		return s, sec, "", err
 	}
-	if sec, err = secrets(ctx, e, o.Namespace, s.Release); err != nil {
-		return s, sec, "", err
+	if s.Snapshot == "" {
+		if sec, err = secrets(ctx, e, o.Namespace, s.Release); err != nil {
+			return s, sec, "", err
+		}
 	}
 	svc, err := e.Kube.CoreV1().Services(o.Namespace).Get(ctx, "dnsmasq", metav1.GetOptions{})
 	if err != nil {
@@ -441,7 +540,7 @@ func waitInstalled(ctx context.Context, e Env, g *Guest, o CreateOptions, starte
 	if stuckAfter == 0 {
 		stuckAfter = 15 * time.Minute
 	}
-	ps := e.Progress.Start("Installing " + g.Name)
+	ps := e.Progress.Start(waitingTitle(o, g.Name))
 	deadline := e.Now().Add(e.Timeout)
 	var insufficientSince, rebooted time.Time
 	var reads readErrors
@@ -529,6 +628,15 @@ func (g *Guest) timed(started, rebooted, ready time.Time) {
 	if rebooted.IsZero() {
 		g.Timings.Install, g.Timings.Reboot = dur(ready.Sub(started)), ""
 	}
+}
+
+// waitingTitle is what the wait is for: an install, or a start of a disk that
+// was restored from a snapshot.
+func waitingTitle(o CreateOptions, name string) string {
+	if o.Snapshot != "" {
+		return "Starting " + name
+	}
+	return "Installing " + name
 }
 
 // record stores what create measured on the VM: the version a pullspec turned

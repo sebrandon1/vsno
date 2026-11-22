@@ -27,6 +27,8 @@ var (
 	crWatch   bool
 	crNoCache bool
 	crTimeout time.Duration
+	// crFromSnapshot restores the root disk from the vSNO's snapshot.
+	crFromSnapshot bool
 )
 
 var createCmd = &cobra.Command{
@@ -60,9 +62,11 @@ func init() {
 	f.Int64Var(&crMemory, "memory", guest.DefaultMemoryGiB, "memory, GiB")
 	f.Int64Var(&crDisk, "disk", guest.DefaultDiskGiB, "root disk, GiB")
 	f.BoolVar(&crNoCache, "no-cache", false, "install from the internet instead of the environment registry's mirror")
+	f.BoolVar(&crFromSnapshot, "from-snapshot", false, "restore the disk from the vSNO's snapshot (see vsno snapshot) instead of installing")
 	f.BoolVarP(&crWatch, "watch", "w", false, "follow the install until the vSNO is ready")
 	f.DurationVar(&crTimeout, "timeout", 90*time.Minute, "how long to wait for the install")
-	_ = createCmd.MarkFlagRequired("version")
+	// --version is required unless the disk comes from a snapshot, which brings
+	// its own; runCreate checks.
 	rootCmd.AddCommand(createCmd)
 }
 
@@ -112,15 +116,25 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	name := ""
 	if len(args) == 1 {
 		name = args[0]
+	} else if crFromSnapshot {
+		return fmt.Errorf("--from-snapshot restores a vSNO under its own name; name it")
 	} else if name, err = guest.FreeName(cmd.Context(), env, namespace); err != nil {
 		return err
+	}
+	if !crFromSnapshot && crVersion == "" {
+		return fmt.Errorf("--version is required to install a vSNO (or --from-snapshot to restore one)")
 	}
 	if outputFormat != formatJSON {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Creating vSNO %s in %s on %s (context %q)...\n\n", name, namespace, c.Config.Host, c.Context)
 	}
+	snap, err := restoreFrom(cmd, name)
+	if err != nil {
+		return err
+	}
 	g, err := guest.Create(cmd.Context(), env, guest.CreateOptions{
 		Namespace: namespace, Name: name, Version: crVersion, Node: crNode,
 		Cores: crCores, MemoryGiB: crMemory, DiskGiB: crDisk, Wait: crWatch, NoCache: crNoCache,
+		Snapshot: snap,
 	})
 	if g == nil || err != nil {
 		return err
@@ -129,6 +143,23 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return rerr
 	}
 	return nil
+}
+
+// restoreFrom is the snapshot --from-snapshot restores name from, or "" when the
+// caller didn't ask for a restore.
+func restoreFrom(cmd *cobra.Command, name string) (string, error) {
+	if !crFromSnapshot {
+		return "", nil
+	}
+	s, err := snapshotOf(cmd, name)
+	if err != nil {
+		return "", err
+	}
+	if s == nil {
+		return "", fmt.Errorf("no snapshot named %s; keep one first with `vsno snapshot create %s`. "+
+			"A snapshot restores only under the name of the vSNO it was taken from", name, name)
+	}
+	return s.Name, nil
 }
 
 func renderCreated(w io.Writer, g *guest.Guest, ready bool, pal ui.Palette) error {

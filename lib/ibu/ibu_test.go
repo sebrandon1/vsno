@@ -19,7 +19,9 @@ import (
 	"github.com/sebrandon1/vsno/lib/seed"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	dynfake "k8s.io/client-go/dynamic/fake"
 	kfake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -305,6 +307,16 @@ const seedListing = `{"repo":"seeds/shiny-crane","tag":"4.21.42","digest":"sha25
 
 // testEnv is an environment whose registry and S3 exist, whose vSNOs answer
 // with access, and whose registry lists the shiny-crane seeds.
+// targetVM is the vSNO's VM, which an upgrade records its new version on.
+func targetVM() *unstructured.Unstructured {
+	u := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{}}}
+	u.SetAPIVersion("kubevirt.io/v1")
+	u.SetKind("VirtualMachine")
+	u.SetNamespace(ns)
+	u.SetName("t")
+	return u
+}
+
 func testEnv(access map[string]guestctl.Access) Env {
 	objs := []runtime.Object{
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "registry-auth"}, Data: map[string][]byte{"username": []byte("u"), "password": []byte("p")}},
@@ -314,7 +326,7 @@ func testEnv(access map[string]guestctl.Access) Env {
 	}
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	return Env{
-		Env: guest.Env{Kube: kfake.NewClientset(objs...), Builder: listing{out: seedListing}, Poll: time.Millisecond,
+		Env: guest.Env{Kube: kfake.NewClientset(objs...), Dyn: dynfake.NewSimpleDynamicClient(runtime.NewScheme(), targetVM()), Builder: listing{out: seedListing}, Poll: time.Millisecond,
 			Now: func() time.Time { now = now.Add(time.Second); return now }},
 		Access: func(name string) seed.Access {
 			if a, ok := access[name]; ok {

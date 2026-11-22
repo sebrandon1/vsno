@@ -71,6 +71,9 @@ type Spec struct {
 	Cores     int
 	MemoryGiB int64
 	DiskGiB   int64
+	// Snapshot is the VolumeSnapshot its root disk is restored from instead of
+	// installed from an ISO. Empty means install.
+	Snapshot string
 }
 
 // Names a vSNO can't take: the support services' Services and volumes use them.
@@ -196,7 +199,9 @@ func render(name string, d renderData) (string, error) {
 	return b.String(), nil
 }
 
-// Objects are the vSNO's Service, ISO DataVolume and VM.
+// Objects are the vSNO's Service, ISO DataVolume and VM, or just the Service
+// and VM when the root disk is restored from Spec.Snapshot: a restore needs no
+// installer ISO.
 func Objects(s Spec, dnsIP string, sec Secrets) ([]*unstructured.Unstructured, error) {
 	y, err := render("vm.yaml.tmpl", newRenderData(s, dnsIP, sec))
 	if err != nil {

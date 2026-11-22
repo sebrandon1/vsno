@@ -9,9 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/guestctl"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/seed"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // Limits for each stage. Upgrade includes the reboot into the new stateroot
@@ -138,6 +142,11 @@ func drive(ctx context.Context, e Env, o UpgradeOptions, a guestctl.Access, at, 
 		return err
 	}
 	res.After = after
+	// `vsno list` and `vsno snapshot` read a vSNO's version from its VM: record
+	// the one the target now runs, or an upgraded vSNO would look stale.
+	if after.Version != "" {
+		_ = setVersion(ctx, e, o.Namespace, o.Target, after.Version)
+	}
 	if res.Before.ClusterID != "" {
 		res.Changed = res.Before.Changed(after)
 	}
@@ -194,6 +203,13 @@ func orIdle(s Stage) Stage {
 }
 
 // finish records where the target ended, and its history, on any outcome.
+// setVersion records an OpenShift version on the vSNO's VM, as create does.
+func setVersion(ctx context.Context, e Env, ns, name, version string) error {
+	patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, guest.AnnVersion, version)
+	_, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	return err
+}
+
 func finish(ctx context.Context, a guestctl.Access, res *UpgradeResult, err error) (*UpgradeResult, error) {
 	if u, rerr := current(ctx, a); rerr == nil {
 		res.Stage, res.History = u.Spec.Stage, u.Status.History
