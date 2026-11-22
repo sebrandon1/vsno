@@ -26,10 +26,12 @@ var listCmd = &cobra.Command{
 	Aliases: []string{"ls"},
 	Short:   "List the vSNOs and what's left on their node",
 	Long: `list shows each vSNO in the environment: its state (importing-iso, starting,
-installing, finishing, ready, stopped, failed), OpenShift version, size, age
-and API, plus a footer with the memory left on the node and how many more
-default-size vSNOs fit. Running vSNOs are asked for their state through the
-builder pod.`,
+installing, finishing, making-seed, ready, stopped, failed), OpenShift version,
+size, age and API, plus a footer with the memory left on the node and how many
+more default-size vSNOs fit. Running vSNOs are asked for their state through
+the builder pod. A state that is really progress — a control plane still
+rolling out, a seed image being made — is named as such; the ClusterVersion's
+own message is in -o json and in vsno status.`,
 	Args: cobra.NoArgs,
 	RunE: runList,
 }

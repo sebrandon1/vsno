@@ -87,6 +87,10 @@ type Guest struct {
 	LCA string `json:"lca,omitempty"`
 	// Cached is true when the guest installed from the registry mirror.
 	Cached bool `json:"cached,omitempty"`
+	// CVMessage is the ClusterVersion's own Progressing message while it is not
+	// Available. list shows it in DETAIL only once the rollout is old; status
+	// always shows it.
+	CVMessage string `json:"cvMessage,omitempty"`
 	// Timings are how long create's phases took; empty when not measured.
 	Timings Timings `json:"timings,omitempty"`
 }
@@ -147,16 +151,9 @@ func List(ctx context.Context, e Env, ns string) ([]Guest, error) {
 		if p, ok := probes[out[i].Name]; ok {
 			obs[i].Probe = p
 		}
-		out[i].State, out[i].Detail = Classify(obs[i])
+		finish(&out[i], &obs[i])
 		if out[i].State == Unknown && perr != nil && targets[out[i].Name] != "" {
 			out[i].Detail = perr.Error()
-		}
-		if p := obs[i].Probe; p != nil {
-			if p.CV != nil && p.CV.Version != "" {
-				out[i].Version = p.CV.Version
-			}
-			out[i].Unhealthy = p.Unhealthy
-			out[i].IBU = p.IBU.Text()
 		}
 	}
 	building, err := buildingISO(ctx, e, ns, out)
@@ -219,6 +216,27 @@ func ListAll(ctx context.Context, kube kubernetes.Interface, envFor func(ns stri
 	return out, nil
 }
 
+// finish fills in what the observation says about g: its state and detail,
+// and from the probe its version, the CVO's own message while it isn't
+// Available, the unhealthy operator count and the IBU stage.
+func finish(g *Guest, o *Observed) {
+	g.State, g.Detail = Classify(*o)
+	p := o.Probe
+	if p == nil {
+		return
+	}
+	if p.CV != nil {
+		if p.CV.Version != "" {
+			g.Version = p.CV.Version
+		}
+		if !p.CV.Available {
+			g.CVMessage = p.CV.Message
+		}
+	}
+	g.Unhealthy = p.Unhealthy
+	g.IBU = p.IBU.Text()
+}
+
 // buildingISO returns the vSNOs that have a Service but no VM yet: create
 // adds the Service first, then builds the ISO, then makes the VM.
 func buildingISO(ctx context.Context, e Env, ns string, have []Guest) ([]Guest, error) {
@@ -266,6 +284,10 @@ func observe(ctx context.Context, e Env, vm *unstructured.Unstructured) (Guest, 
 	g.Timings = Timings{ISO: ann[AnnTimingISO], Install: ann[AnnTimingInstall], Reboot: ann[AnnTimingReboot], Available: ann[AnnTimingAvailable]}
 
 	o := Observed{VMStatus: nested(vm, "status", "printableStatus"), WantsRunning: wantsRunning(vm)}
+	if e.Now != nil {
+		o.Now = e.Now()
+		o.Seeding = seeding(ann[AnnSeeding], o.Now)
+	}
 	if dv, err := e.Dyn.Resource(GVRDataVolume).Namespace(ns).Get(ctx, name+"-iso", metav1.GetOptions{}); err == nil {
 		o.ISOPhase, o.ISOProgress = nested(dv, "status", "phase"), nested(dv, "status", "progress")
 	}
@@ -283,6 +305,18 @@ func observe(ctx context.Context, e Env, vm *unstructured.Unstructured) (Guest, 
 func nested(u *unstructured.Unstructured, path ...string) string {
 	s, _, _ := unstructured.NestedString(u.Object, path...)
 	return s
+}
+
+// seedGenGrace is how long a seeding mark explains a silent guest: seed
+// generation takes minutes, and a run killed part way must not hide a dead
+// cluster for good.
+const seedGenGrace = time.Hour
+
+// seeding reports whether AnnSeeding's timestamp is recent enough to mean seed
+// generation is running now.
+func seeding(v string, now time.Time) bool {
+	t, err := time.Parse(time.RFC3339, v)
+	return err == nil && !now.IsZero() && now.Sub(t) < seedGenGrace
 }
 
 // gib parses a quantity such as "32Gi" into GiB; 0 if it doesn't parse.

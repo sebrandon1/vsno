@@ -109,3 +109,22 @@ func TestRenderStatusReleaseCache(t *testing.T) {
 		t.Errorf("empty cache = %q", b.String())
 	}
 }
+
+// status shows the ClusterVersion's own message, which list keeps to -o json
+// while a rollout is fresh.
+func TestVSNODetail(t *testing.T) {
+	for _, c := range []struct {
+		g    guest.Guest
+		want string
+	}{
+		{guest.Guest{Detail: "12.50%"}, "12.50%"},
+		{guest.Guest{CVMessage: "Unable to apply 4.22.1: MultipleErrors"}, "Unable to apply 4.22.1: MultipleErrors"},
+		{guest.Guest{Detail: "control plane rolling out", CVMessage: "Unable to apply 4.22.1: MultipleErrors"},
+			"control plane rolling out: Unable to apply 4.22.1: MultipleErrors"},
+		{guest.Guest{Detail: "Working towards 4.22.1", CVMessage: "Working towards 4.22.1"}, "Working towards 4.22.1"},
+	} {
+		if got := vsnoDetail(c.g); got != c.want {
+			t.Errorf("%+v = %q, want %q", c.g, got, c.want)
+		}
+	}
+}

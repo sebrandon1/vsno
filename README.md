@@ -279,8 +279,15 @@ that. A vSNO created with `--watch` records how long each phase took; `list -o w
 labeled, plus any that hold the builder pod (an environment assembled by hand predates the label).
 `-n` narrows it to one. Each row has the vSNO's state, version, size, age and API, and the footer
 says how many more default-size vSNOs fit on each node. The states are `importing-iso`, `starting`,
-`installing` (with the installer's progress), `finishing`, `ready`, `stopped`, `failed` and
-`deleting`.
+`installing` (with the installer's progress), `finishing`, `making-seed`, `ready`, `stopped`,
+`failed` and `deleting`.
+
+Two states are progress that would otherwise read as a failure: `finishing` says "control plane
+rolling out" while the ClusterVersion is not Available yet, and `making-seed` covers seed
+generation, which stops the guest's services so nothing answers. The ClusterVersion's own message
+(the CVO's `Unable to apply …: MultipleErrors` while a pod cannot schedule, say) is in `-o json`
+(`cvMessage`) and in `vsno status`, and `list` shows it in DETAIL only once the rollout is more
+than 20 minutes old — a real stuck install still shows its error.
 
 Each vSNO's API is `https://api.<name>.vsno.lab:6443`. Only the environment resolves that name,
 so `oc`, `ssh` and `kubeconfig` work through the builder pod. Everything after the vSNO's name goes

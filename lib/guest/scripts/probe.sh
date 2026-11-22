@@ -20,7 +20,8 @@ for arg in "$@"; do
     cv=$("${oc[@]}" get clusterversion version -o json 2>/dev/null |
       jq -c '{version: .status.desired.version,
               available: ([.status.conditions[]? | select(.type == "Available") | .status][0] == "True"),
-              message: ([.status.conditions[]? | select(.type == "Progressing") | .message][0] // "")}' 2>/dev/null)
+              message: ([.status.conditions[]? | select(.type == "Progressing") | .message][0] // ""),
+              since: ([.status.conditions[]? | select(.type == "Available") | .lastTransitionTime][0] // null)}' 2>/dev/null)
     if [ -n "$cv" ]; then
       unhealthy=$("${oc[@]}" get clusteroperators -o json 2>/dev/null |
         jq '[.items[] | select(any(.status.conditions[]?; (.type == "Degraded" and .status == "True") or (.type == "Available" and .status == "False")))] | length' 2>/dev/null)

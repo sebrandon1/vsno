@@ -85,6 +85,10 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   environments for `ListAll`: namespaces labeled `app.kubernetes.io/managed-by=vsno`, plus any
   holding the `app=builder` pod, so hand-built environments are included. `Classify` turns
   observations (VM status, ISO DataVolume, probe) into a `State`; create's wait and list share it.
+  Progress that would read as failure has a state of its own: `finishing` says "control plane
+  rolling out" while the CVO's message is fresh (the raw message is `Guest.CVMessage`, in `-o json`
+  and `vsno status`), and `making-seed` comes from the `vsno.io/seeding` annotation `seed.Create`
+  sets while LCA has the guest's services stopped.
   Golden files in `testdata/` (`go test ./lib/guest -update`).
 - `lib/guestctl`: running things on a vSNO, shared by `lib/seed` and `lib/ibu`: `Access` (oc and
   ssh; `ThroughBuilder` reaches the guest through the builder pod), `Get` (oc ... -o json),

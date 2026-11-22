@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 // State is where a vSNO is in its life.
@@ -17,6 +18,7 @@ const (
 	Starting   State = "starting"      // the VM is scheduling or booting
 	Installing State = "installing"    // the agent installer runs, before the first reboot
 	Finishing  State = "finishing"     // the guest API is up, ClusterVersion not yet Available
+	MakingSeed State = "making-seed"   // LCA is generating a seed image, which stops the guest
 	Ready      State = "ready"
 	Stopped    State = "stopped"
 	Failed     State = "failed"
@@ -66,6 +68,9 @@ type CV struct {
 	Version   string `json:"version"`
 	Available bool   `json:"available"`
 	Message   string `json:"message"`
+	// Since is when the Available condition last changed: a rollout that
+	// started a moment ago reports errors that clear themselves.
+	Since time.Time `json:"since"`
 }
 
 // Failing returns the IDs of validations that failed, sorted.
@@ -100,6 +105,11 @@ type Observed struct {
 	ISOPhase, ISOProgress string
 	// Probe is nil when the guest wasn't probed (not running, or no builder).
 	Probe *Probe
+	// Seeding is true while seed generation has the guest's services stopped,
+	// which is why the probe gets no answer.
+	Seeding bool
+	// Now is when the observation was made; zero means not known.
+	Now time.Time
 }
 
 // vmStopped is true while KubeVirt reports the VM stopped or stopping.
@@ -110,6 +120,12 @@ var vmErrors = []string{"ErrorUnschedulable", "ErrImagePull", "ImagePullBackOff"
 
 // agentFailed are agent installer statuses the install doesn't recover from.
 var agentFailed = []string{"error", "cancelled"} //nolint:misspell // the installer's spelling
+
+// rolloutGrace is how long a fresh install's ClusterVersion may report
+// Progressing errors before the raw message is worth showing: the CVO says
+// "Unable to apply ... MultipleErrors" while a replacement pod cannot schedule
+// yet, and clears it a couple of minutes later.
+const rolloutGrace = 20 * time.Minute
 
 // Classify turns observations into a State and a short detail.
 func Classify(o Observed) (State, string) {
@@ -134,11 +150,12 @@ func Classify(o Observed) (State, string) {
 	case o.Probe == nil:
 		return Unknown, "not probed"
 	}
-	return classifyProbe(o.Probe)
+	return classifyProbe(o)
 }
 
 // classifyProbe classifies a running vSNO by what its installer and API report.
-func classifyProbe(p *Probe) (State, string) {
+func classifyProbe(o Observed) (State, string) {
+	p := o.Probe
 	switch {
 	case p.CV != nil && p.CV.Available:
 		if p.Unhealthy != nil && *p.Unhealthy > 0 {
@@ -146,7 +163,14 @@ func classifyProbe(p *Probe) (State, string) {
 		}
 		return Ready, ""
 	case p.CV != nil:
+		// Still rolling out: say so, rather than pass the CVO's transient
+		// error through as if the install had died.
+		if o.Now.IsZero() || p.CV.Since.IsZero() || o.Now.Sub(p.CV.Since) < rolloutGrace {
+			return Finishing, "control plane rolling out"
+		}
 		return Finishing, p.CV.Message
+	case p.Agent == nil && o.Seeding:
+		return MakingSeed, ""
 	case p.Agent == nil:
 		return Unknown, "no answer from the installer or API"
 	case slices.Contains(agentFailed, p.Agent.Status):

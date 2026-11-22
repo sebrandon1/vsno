@@ -2,6 +2,7 @@ package guest
 
 import (
 	"testing"
+	"time"
 )
 
 func intp(n int) *int { return &n }
@@ -32,7 +33,22 @@ func TestClassify(t *testing.T) {
 		{"agent installing", running(&Probe{Agent: &Agent{Status: "installing-in-progress", Progress: 42}}), Installing, "installing-in-progress 42%"},
 		{"validations", running(&Probe{Agent: &Agent{Status: "insufficient", Validations: validations}}), Installing, "waiting on validations: dns-wildcard-not-configured, has-memory-for-role"},
 		{"agent error", running(&Probe{Agent: &Agent{Status: "error", Info: "boom"}}), Failed, "install error: boom"},
-		{"api up", running(&Probe{CV: &CV{Message: "Working towards 4.20.46: 600 of 900 done"}}), Finishing, "Working towards 4.20.46: 600 of 900 done"},
+		{"api up", running(&Probe{CV: &CV{Message: "Working towards 4.20.46: 600 of 900 done"}}), Finishing, "control plane rolling out"},
+		// The CVO reports errors that clear themselves while the control plane
+		// rolls out; only one that has been going on is worth repeating.
+		{"a fresh rollout does not read as a failure", func() Observed {
+			o := running(&Probe{CV: &CV{Message: "Unable to apply 4.20.46: MultipleErrors", Since: time.Now().Add(-2 * time.Minute)}})
+			o.Now = time.Now()
+			return o
+		}(), Finishing, "control plane rolling out"},
+		{"a rollout that never finished shows its message", func() Observed {
+			o := running(&Probe{CV: &CV{Message: "Unable to apply 4.20.46: MultipleErrors", Since: time.Now().Add(-time.Hour)}})
+			o.Now = time.Now()
+			return o
+		}(), Finishing, "Unable to apply 4.20.46: MultipleErrors"},
+		// Seed generation stops the guest's services: no probe answer is progress.
+		{"making the seed image", Observed{VMStatus: "Running", ISOPhase: "Succeeded", Probe: &Probe{}, Seeding: true}, MakingSeed, ""},
+		{"a stale seeding mark does not hide a silent guest", Observed{VMStatus: "Running", ISOPhase: "Succeeded", Probe: &Probe{}, Seeding: false}, Unknown, "no answer from the installer or API"},
 		{"ready", running(&Probe{CV: &CV{Available: true}, Unhealthy: intp(0)}), Ready, ""},
 		{"ready, degraded", running(&Probe{CV: &CV{Available: true}, Unhealthy: intp(2)}), Ready, "2 operator(s) degraded or unavailable"},
 	} {

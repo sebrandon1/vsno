@@ -37,6 +37,10 @@ const (
 	// AnnLCASource is where the guest's LCA came from when vsno prepare built
 	// it from a ref: "<repo>@<sha> (<image>)". Without it, LCA is the catalog's.
 	AnnLCASource = "vsno.io/lca-source"
+	// AnnSeeding is when seed generation started on the vSNO: it stops the
+	// guest's services until it finishes, so list reads this while nothing
+	// answers.
+	AnnSeeding = "vsno.io/seeding"
 	// AnnTimingISO, AnnTimingInstall and AnnTimingReboot are how long each phase
 	// of a create took, and AnnTimingAvailable the whole create up to the guest's
 	// ClusterVersion being Available, as Go durations ("8m12s").

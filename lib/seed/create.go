@@ -79,7 +79,9 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
 	}
 	if err := guestctl.Step(e.Progress, "Generating the seed image", func(ps precheck.ProgressStep) (string, error) {
 		start := e.Now()
+		setSeeding(ctx, e, o.Namespace, o.Name, start)
 		err := generate(ctx, e, a, res.Image, auth, ps)
+		setSeeding(ctx, e, o.Namespace, o.Name, time.Time{})
 		res.Duration = e.Now().Sub(start).Round(time.Second)
 		return fmt.Sprintf("%s in %s", res.Image, res.Duration), err
 	}); err != nil {
@@ -308,6 +310,18 @@ func generate(ctx context.Context, e Env, a Access, image, auth string, ps prech
 		return fmt.Errorf("seed generation not finished after %s; it may still finish (`vsno oc <name> -- get seedgenerator seedimage`)", e.Timeout)
 	}
 	return err
+}
+
+// setSeeding marks the vSNO's VM while seed generation runs: LCA stops the
+// guest's services, so `vsno list` reads the mark to say what the silence is.
+// A zero time removes it. Best effort: the mark only changes what list says.
+func setSeeding(ctx context.Context, e Env, ns, name string, at time.Time) {
+	val := "null"
+	if !at.IsZero() {
+		val = `"` + at.UTC().Format(time.RFC3339) + `"`
+	}
+	patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%s}}}`, guest.AnnSeeding, val)
+	_, _ = e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
 }
 
 // finish removes the SeedGenerator and its Secret, records the image on the
