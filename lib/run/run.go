@@ -178,6 +178,9 @@ func Run(ctx context.Context, e Env, o Options) (*Result, error) {
 		return res, errors.New("not confirmed; pass --yes to run without asking")
 	}
 	for _, s := range plan.Stages {
+		if slices.Contains(plan.Done, s) {
+			continue // an earlier run of this plan finished it
+		}
 		start := e.Now()
 		err := runStage(ctx, e, o, plan, s, res)
 		res.Timings[s] = e.Now().Sub(start).Round(time.Second).String()

@@ -44,7 +44,8 @@ func testEnv(hostVersion string, stable ...string) Env {
 	cv.SetKind("ClusterVersion")
 	cv.SetName("version")
 	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{precheck.GVRClusterVersion: "ClusterVersionList"}, cv)
+		map[schema.GroupVersionResource]string{precheck.GVRClusterVersion: "ClusterVersionList",
+			cluster.GVRVirtualMachine: "VirtualMachineList"}, cv)
 	kube := kfake.NewClientset(
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "registry-auth"}, Data: map[string][]byte{"username": []byte("u"), "password": []byte("p")}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "registry-ca"}, Data: map[string][]byte{"ca.crt": []byte("CA")}},
@@ -232,6 +233,30 @@ func TestRecordAndResume(t *testing.T) {
 	o.TargetName = "target2"
 	if p, err = makePlan(ctx, e, o); err != nil || len(p.Done) != 0 {
 		t.Errorf("another plan: done = %v, err = %v", p.Done, err)
+	}
+}
+
+// A stage an earlier run of the same plan finished isn't run again: a
+// delete-only resume goes straight to the delete stage.
+func TestRunSkipsDoneStages(t *testing.T) {
+	ctx := context.Background()
+	e := testEnv("4.22.0", "4.22.1", "4.22.2")
+	e.Timeout = 20 * time.Millisecond
+	if err := state.Save(ctx, e.Kube, ns, &state.State{}); err != nil {
+		t.Fatal(err)
+	}
+	o := Options{Namespace: ns, Yes: true}
+	o.defaults()
+	p, err := makePlan(ctx, e, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record(ctx, e, ns, p.key(), StageSetup, nil)
+	ran := false
+	e.Setup = func(context.Context) error { ran = true; return nil }
+	res, _ := Run(ctx, e, o) // the stages after setup may fail in the fakes
+	if ran || res.Timings[StageSetup] != "" {
+		t.Errorf("setup ran again: %v", res.Timings)
 	}
 }
 
