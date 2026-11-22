@@ -47,11 +47,12 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `lib/kube`: builds client-go typed and dynamic clients from a kubeconfig (explicit path, then
   `$KUBECONFIG`, then `~/.kube/config`), and wraps the config's `WrapTransport` so `lib/trace` sees
   every request.
-- `lib/trace`: `--verbose`. `Enable(w)` installs a process-wide `Collapser` (consecutive identical
-  lines become `(xN)`); `Command` renders a request as kubectl would name it, skipping pod
-  subresources whose command `lib/builder` reports instead; `ScriptCommands` pulls the `oc`/`ssh`
-  lines out of an embedded script for display. It writes to stderr only and reads no body, header,
-  stdin or auth file.
+- `lib/trace`: `--verbose`. `Enable(w)` installs a process-wide `Collapser` (a line is written when
+  it happens; a run of identical ones is counted and re-written with `(xN)` when it ends); `Command`
+  renders a request as kubectl would name it, skipping pod subresources whose command `lib/builder`
+  reports instead; `ScriptCommands` pulls the `oc`/`ssh` lines out of an embedded script for display,
+  following its `case` dispatch so only the branch that runs is shown. It writes to stderr only and
+  reads no body, header, stdin or auth file.
 - `lib/precheck`: the cluster checks.
 - `lib/manifests`: embedded `templates/*.yaml.tmpl` rendered with `text/template` (`quote` for every
   value). Golden files are in `testdata/`; regenerate them with `go test ./lib/manifests -update` and

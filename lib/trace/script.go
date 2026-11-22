@@ -23,53 +23,146 @@ const maxLine = 200
 // ScriptCommands returns the commands a builder script runs, with continuations
 // joined and the positional arguments and simple variables filled in. It is a
 // reading aid, not a shell: anything it cannot resolve stays as written.
+//
+// A script that dispatches on an argument, such as registry.sh's "case $op in",
+// reports only the branch that argument selects: a `seed list` must not read as
+// though it were deleting. A case whose branches are written on one line is not
+// recognized, and reports nothing from that block.
 func ScriptCommands(script string, args []string) []string {
 	lines := logicalLines(script)
 	arrs, defs := arrays(lines)
-	var out []string
-	pos := 0
-	vars := map[string]string{}
+	cmds, files := extract(lines, defs, arrs, args)
+	if len(cmds) > 0 {
+		return dedup(cmds)
+	}
+	// A script that runs no tool still gets to say which files it touches.
+	return dedup(files)
+}
+
+// extract walks a script once, collecting the tool commands it runs and, in
+// case it runs none, the file commands it uses.
+func extract(lines []string, defs map[string]bool, arrs map[string]string, args []string) (cmds, files []string) {
+	w := &walk{args: args, arrs: arrs, vars: map[string]string{}}
 	for _, line := range lines {
-		if defs[line] {
+		if defs[line] || w.step(line) {
 			continue // the array's uses say more than its definition
 		}
+		live := w.live()
 		for _, stmt := range statements(line) {
 			if n, ok := shift(stmt); ok {
-				pos += n
+				w.pos += n
 				continue
 			}
-			if assign(stmt, args, pos, vars) {
+			if assign(stmt, args, w.pos, w.vars) {
 				continue
 			}
-			if cmd, ok := toolLine(fill(stmt, arrs, args, pos, vars), tools); ok {
-				out = append(out, cmd)
+			if !live {
+				continue
+			}
+			s := w.fill(stmt)
+			if cmd, ok := toolLine(s, tools); ok {
+				cmds = append(cmds, cmd)
+				continue
+			}
+			if len(files) < 5 {
+				if cmd, ok := toolLine(s, fileTools); ok {
+					files = append(files, cmd)
+				}
 			}
 		}
 	}
-	if len(out) > 0 {
-		return dedup(out)
-	}
-	return dedup(files(lines, arrs, args, pos, vars))
+	return cmds, files
 }
 
-// files is the fallback: the file commands of a script that runs no tool.
-func files(lines []string, arrs map[string]string, args []string, pos int, vars map[string]string) []string {
-	var out []string
-	for _, line := range lines {
-		cmd, ok := toolLine(fill(line, arrs, args, pos, vars), fileTools)
-		if !ok {
-			continue
-		}
-		if out = append(out, cmd); len(out) == 5 {
-			break
-		}
-	}
-	return out
+// walk is what a script walk has resolved so far: the arguments still in play,
+// the arrays and variables it has read, and the case branches it is inside.
+type walk struct {
+	args  []string
+	arrs  map[string]string
+	vars  map[string]string
+	cases []*caseBlock
+	pos   int
 }
 
-// fill expands a script line's arrays and variables.
-func fill(s string, arrs map[string]string, args []string, pos int, vars map[string]string) string {
-	return substitute(expandArrays(s, arrs), args, pos, vars)
+// caseBlock is one shell case statement. Only the branch whose pattern matches
+// the value runs, so only its commands are shown.
+type caseBlock struct {
+	value   string // the word after "case", resolved when it can be
+	emit    bool   // this branch is the one that runs
+	matched bool   // a branch matched already, so "*)" is not the default any more
+}
+
+// step handles a line that is case structure, reporting whether it was.
+func (w *walk) step(line string) bool {
+	if expr, ok := caseHead(line); ok {
+		w.cases = append(w.cases, &caseBlock{value: w.fill(expr)})
+		return true
+	}
+	if len(w.cases) == 0 {
+		return false
+	}
+	c := w.cases[len(w.cases)-1]
+	switch {
+	case line == "esac":
+		w.cases = w.cases[:len(w.cases)-1]
+	case line == ";;":
+		c.emit = false
+	case isBranch(line):
+		pat := strings.TrimSpace(strings.TrimSuffix(line, ")"))
+		c.emit = matchBranch(pat, c.value, c.matched)
+		c.matched = c.matched || c.emit
+	default:
+		return false
+	}
+	return true
+}
+
+// live reports whether every case around the current line runs.
+func (w *walk) live() bool {
+	for _, c := range w.cases {
+		if !c.emit {
+			return false
+		}
+	}
+	return true
+}
+
+// fill expands a line's arrays, positional arguments and variables.
+func (w *walk) fill(s string) string {
+	return substitute(expandArrays(s, w.arrs), w.args, w.pos, w.vars)
+}
+
+// caseHead returns the word a "case <word> in" line tests.
+func caseHead(line string) (string, bool) {
+	if !strings.HasPrefix(line, "case ") || !strings.HasSuffix(line, " in") {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "case "), " in")), true
+}
+
+// isBranch reports a branch header such as "list)", "delete-manifests)" or "*)".
+// A pattern never contains a space, which keeps a line that merely ends in a
+// command substitution from reading as one.
+func isBranch(line string) bool {
+	if !strings.HasSuffix(line, ")") {
+		return false
+	}
+	pat := strings.TrimSuffix(line, ")")
+	return pat != "" && !strings.ContainsAny(pat, " \t")
+}
+
+// matchBranch reports whether a branch pattern selects value. "*)" is the
+// default and runs only when nothing before it matched.
+func matchBranch(pat, value string, matched bool) bool {
+	if pat == "*" {
+		return !matched
+	}
+	for _, alt := range strings.Split(pat, "|") {
+		if strings.Trim(strings.TrimSpace(alt), `"'`) == value {
+			return true
+		}
+	}
+	return false
 }
 
 // logicalLines splits a script into statements-worth-reading: comments and

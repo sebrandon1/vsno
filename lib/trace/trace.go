@@ -56,9 +56,10 @@ func Flush() {
 	}
 }
 
-// Collapser writes lines to a writer, folding a run of identical ones into
-// "line (xN)". Waiting on a cluster asks the same question every few seconds,
-// and one line with a count reads far better than hundreds of copies.
+// Collapser writes lines to a writer as they happen, and counts a run of
+// identical ones. When the run ends it writes the line again with the count, so
+// a wait says when it started looking and how many times it looked, rather than
+// printing every request.
 type Collapser struct {
 	mu   sync.Mutex
 	w    io.Writer
@@ -69,7 +70,7 @@ type Collapser struct {
 // NewCollapser returns a Collapser writing to w.
 func NewCollapser(w io.Writer) *Collapser { return &Collapser{w: w} }
 
-// Line writes s, or counts it if it repeats the line before it.
+// Line writes s at once, or counts it if it repeats the line before it.
 func (c *Collapser) Line(s string) {
 	if s == "" {
 		return
@@ -80,25 +81,25 @@ func (c *Collapser) Line(s string) {
 		c.n++
 		return
 	}
-	c.flushLocked()
+	c.summaryLocked()
+	fmt.Fprintln(c.w, s)
 	c.line, c.n = s, 1
 }
 
-// Flush writes the pending line. It is safe to call concurrently with Line.
+// Flush writes the count of a run that has ended. It is safe to call
+// concurrently with Line.
 func (c *Collapser) Flush() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.flushLocked()
+	c.summaryLocked()
 }
 
-func (c *Collapser) flushLocked() {
-	if c.line == "" {
-		return
-	}
-	if c.n > 1 {
+// summaryLocked writes the count of a run worth counting. Two reads of the same
+// thing is not news, and the line itself has already been written; a wait that
+// looked a hundred times is.
+func (c *Collapser) summaryLocked() {
+	if c.n > 2 {
 		fmt.Fprintf(c.w, "%s (x%d)\n", c.line, c.n)
-	} else {
-		fmt.Fprintln(c.w, c.line)
 	}
 	c.line, c.n = "", 0
 }
