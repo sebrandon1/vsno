@@ -85,14 +85,14 @@ func List(ctx context.Context, e Env, ns string) ([]Entry, error) {
 		ps.Fail(err.Error())
 		return nil, fmt.Errorf("listing snapshots: %w", err)
 	}
+	names, err := vsnoNames(ctx, e, ns) // one listing, not one per snapshot
+	if err != nil {
+		ps.Fail(err.Error())
+		return nil, err
+	}
 	out := make([]Entry, 0, len(l.Items))
 	for i := range l.Items {
 		s := &l.Items[i]
-		names, err := vsnoNames(ctx, e, ns)
-		if err != nil {
-			ps.Fail(err.Error())
-			return nil, err
-		}
 		out = append(out, entry(s, slices.Contains(names, s.GetLabels()[LabelVSNO])))
 	}
 	slices.SortFunc(out, func(a, b Entry) int { return b.Created.Compare(a.Created) })
@@ -411,17 +411,6 @@ const (
 	saveFiles   = `rm -rf "/work/snapshots/$1" && mkdir -p "/work/snapshots" && cp -a "/work/guests/$1" "/work/snapshots/$1"`
 	removeFiles = `rm -rf "/work/snapshots/$1"`
 )
-
-// RestoreFiles puts the snapshot's copy of the installer files back, so the
-// probe can read the guest's kubeconfig after `vsno delete` removed them.
-func RestoreFiles(ctx context.Context, e Env, name string) error {
-	if e.Builder == nil {
-		return nil
-	}
-	return e.Builder.Run(ctx, restoreFiles, []string{name}, builder.IO{})
-}
-
-const restoreFiles = `mkdir -p "/work/guests/$1" && cp -a "/work/snapshots/$1/." "/work/guests/$1/"`
 
 // bytesText renders a size in GiB or MiB.
 func bytesText(n int64) string {
