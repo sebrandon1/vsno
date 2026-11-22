@@ -15,12 +15,17 @@ import (
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/builder"
+	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/guestctl"
 	"github.com/sebrandon1/vsno/lib/guestctl/guestctltest"
 	"github.com/sebrandon1/vsno/lib/registry"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynfake "k8s.io/client-go/dynamic/fake"
 	kfake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -508,4 +513,37 @@ func TestDelete(t *testing.T) {
 			t.Errorf("got %v", err)
 		}
 	})
+}
+
+// setSeeding marks the VM while seed generation runs, when the guest cannot
+// answer, and clears the mark afterwards.
+func TestSetSeeding(t *testing.T) {
+	ctx := context.Background()
+	vm := &unstructured.Unstructured{Object: map[string]any{}}
+	vm.SetAPIVersion("kubevirt.io/v1")
+	vm.SetKind("VirtualMachine")
+	vm.SetNamespace(ns)
+	vm.SetName("seed")
+	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{cluster.GVRVirtualMachine: "VirtualMachineList"}, vm)
+	e := testEnv(&fakeAccess{})
+	e.Dyn = dyn
+	vms := dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns)
+
+	at := time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)
+	setSeeding(ctx, e, ns, "seed", at)
+	got, err := vms.Get(ctx, "seed", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := got.GetAnnotations()[guest.AnnSeeding]; v != at.Format(time.RFC3339) {
+		t.Errorf("seeding = %q, want %q", v, at.Format(time.RFC3339))
+	}
+	setSeeding(ctx, e, ns, "seed", time.Time{})
+	if got, err = vms.Get(ctx, "seed", metav1.GetOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := got.GetAnnotations()[guest.AnnSeeding]; ok {
+		t.Errorf("the mark stayed: %q", v)
+	}
 }

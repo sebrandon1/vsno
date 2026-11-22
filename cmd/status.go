@@ -192,10 +192,22 @@ func renderVSNOs(w io.Writer, vsnos []guest.Guest, pal ui.Palette) {
 		var t ui.Table
 		t.Row("  NAME", "STATE", "VERSION", "DETAIL")
 		for _, g := range vsnos {
-			t.Row("  "+g.Name, stateText(pal, g.State), g.ShownVersion(), pal.Dim(g.Detail))
+			t.Row("  "+g.Name, stateText(pal, g.State), g.ShownVersion(), pal.Dim(vsnoDetail(g)))
 		}
 		t.Write(w)
 	}
+}
+
+// vsnoDetail is a vSNO's detail with the ClusterVersion's own message,
+// which `vsno list` keeps to -o json while the rollout is fresh.
+func vsnoDetail(g guest.Guest) string {
+	switch {
+	case g.CVMessage == "" || g.CVMessage == g.Detail:
+		return g.Detail
+	case g.Detail == "":
+		return g.CVMessage
+	}
+	return g.Detail + ": " + g.CVMessage
 }
 
 func renderVMs(w io.Writer, vms []status.VM, pal ui.Palette) {

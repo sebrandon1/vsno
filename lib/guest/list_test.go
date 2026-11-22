@@ -225,3 +225,76 @@ func TestWantsRunning(t *testing.T) {
 		}
 	}
 }
+
+// A control plane that is still rolling out, and a guest whose services seed
+// generation stopped, read as progress: their state says what is happening and
+// the CVO's transient message is kept out of the detail.
+func TestListNamesProgress(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	seedingVM := vm("seeding", "Running")
+	ann := seedingVM.GetAnnotations()
+	ann[AnnSeeding] = now
+	seedingVM.SetAnnotations(ann)
+	w := newWorld(t, vm("rolling", "Running"), dv("rolling-iso", "Succeeded", ""),
+		seedingVM, dv("seeding-iso", "Succeeded", ""))
+	for _, s := range []*corev1.Service{svc("rolling", "172.30.1.1"), svc("seeding", "172.30.1.2")} {
+		if _, err := w.kube.CoreV1().Services(ns).Create(context.Background(), s, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.runner.outputs["probe.sh"] = probeLine("rolling", `"agent":null,"cv":{"version":"4.22.1","available":false,`+
+		`"message":"Unable to apply 4.22.1: an unknown error has occurred: MultipleErrors","since":"`+now+`"}`) +
+		probeLine("seeding", `"agent":null,"cv":null`)
+	got, err := List(context.Background(), w.env(), ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Name != "rolling" || got[1].Name != "seeding" {
+		t.Fatalf("list = %+v", got)
+	}
+	if got[0].State != Finishing || got[0].Detail != "control plane rolling out" ||
+		!strings.Contains(got[0].CVMessage, "MultipleErrors") {
+		t.Errorf("rolling = %+v, want finishing while the rollout is fresh", got[0])
+	}
+	if got[1].State != MakingSeed || got[1].Detail != "" {
+		t.Errorf("seeding = %+v, want making-seed", got[1])
+	}
+}
+
+func TestSeeding(t *testing.T) {
+	now := time.Now()
+	for _, c := range []struct {
+		v    string
+		now  time.Time
+		want bool
+	}{
+		{"", now, false},
+		{"not a time", now, false},
+		{now.Add(-5 * time.Minute).Format(time.RFC3339), now, true},
+		{now.Add(-2 * time.Hour).Format(time.RFC3339), now, false},
+		{now.Format(time.RFC3339), time.Time{}, false},
+	} {
+		if got := seeding(c.v, c.now); got != c.want {
+			t.Errorf("seeding(%q) = %v, want %v", c.v, got, c.want)
+		}
+	}
+}
+
+// Without a clock the observation carries no time, so a seeding mark cannot
+// age and the guest is not called making-seed on the strength of it.
+func TestObserveWithoutAClock(t *testing.T) {
+	w := newWorld(t)
+	x := vm("x", "Running")
+	ann := x.GetAnnotations()
+	ann[AnnSeeding] = time.Now().UTC().Format(time.RFC3339)
+	x.SetAnnotations(ann)
+	if err := w.dyn.Tracker().Create(cluster.GVRVirtualMachine, x, ns); err != nil {
+		t.Fatal(err)
+	}
+	e := w.env()
+	e.Now = nil
+	_, o := observe(context.Background(), e, x)
+	if !o.Now.IsZero() || o.Seeding {
+		t.Errorf("without a clock: %+v", o)
+	}
+}
