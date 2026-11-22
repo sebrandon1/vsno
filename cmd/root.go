@@ -59,7 +59,7 @@ Start with:  vsno precheck`,
 			return err
 		}
 		outputFormat = strings.ToLower(outputFormat)
-		return nil
+		return checkWide(cmd)
 	},
 }
 
@@ -70,6 +70,22 @@ func init() {
 	pf.StringVarP(&namespace, "namespace", "n", "vsno", "namespace that holds the vSNO environment")
 	pf.StringVarP(&outputFormat, "output", "o", formatTable, "output format: table, wide or json")
 	pf.BoolVar(&noColor, "no-color", false, "don't color the output (also: NO_COLOR=1)")
+}
+
+// commandsWithWide have columns beyond the default view. Elsewhere wide would be
+// table under another name, so it is refused rather than silently ignored.
+var commandsWithWide = map[string]bool{
+	"vsno list":     true,
+	"vsno iso":      true, // iso alone lists
+	"vsno iso list": true,
+}
+
+// checkWide refuses -o wide on a command that has no wide view.
+func checkWide(cmd *cobra.Command) error {
+	if outputFormat != formatWide || commandsWithWide[cmd.CommandPath()] {
+		return nil
+	}
+	return fmt.Errorf("%s has no wide output; use -o table or -o json", cmd.CommandPath())
 }
 
 // palette colors table output written to a terminal.

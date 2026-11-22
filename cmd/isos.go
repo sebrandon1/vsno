@@ -184,13 +184,25 @@ func renderIsos(w io.Writer, rep *isos.Report, pal ui.Palette) error {
 		return nil
 	}
 	var t ui.Table
-	t.Row(pal.Bold("WHAT"), pal.Bold("NAME"), pal.Bold("VERSION"), pal.Bold("SIZE"), pal.Bold("AGE"), pal.Bold("USE"))
+	head := []string{pal.Bold("WHAT"), pal.Bold("NAME"), pal.Bold("VERSION"), pal.Bold("SIZE"), pal.Bold("AGE"), pal.Bold("USE")}
+	if outputFormat == formatWide {
+		head = append(head, pal.Bold("PATH"))
+	}
+	t.Row(head...)
 	now := time.Now()
 	for _, e := range rep.Entries {
-		t.Row(string(e.Kind), e.Name, orDash(e.Version), bytesText(e.Size), ageSince(now, e.Modified), useText(e.Use, e.Users))
+		row := []string{string(e.Kind), e.Name, orDash(e.Version), bytesText(e.Size), ageSince(now, e.Modified), useText(e.Use, e.Users)}
+		if outputFormat == formatWide {
+			row = append(row, orDash(e.Path))
+		}
+		t.Row(row...)
 	}
 	for _, d := range rep.Disks {
-		t.Row("data volume", d.Name, "-", bytesText(d.Size), "-", useText(d.Use, d.Users))
+		row := []string{"data volume", d.Name, "-", bytesText(d.Size), "-", useText(d.Use, d.Users)}
+		if outputFormat == formatWide {
+			row = append(row, "-")
+		}
+		t.Row(row...)
 	}
 	t.Write(w)
 	writeVolume(w, rep.Used, rep.Total, pal)

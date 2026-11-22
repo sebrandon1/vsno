@@ -59,7 +59,7 @@ unless `--yes`. It refuses anything a vSNO still uses: `iso eject` takes an inst
 safely, and `iso prune` clears the rest.
 
 The builder volume fills up with things a finished create no longer needs: `iso.sh` keeps one copy
-of each ISO rather than two, `create` ejects the ISO once the vSNO is ready, and `isos prune`
+of each ISO rather than two, `create` ejects the ISO once the vSNO is ready, and `iso prune`
 removes what a failed or deleted create left behind.
 
 ## Release cache
