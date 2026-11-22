@@ -11,7 +11,8 @@ Guidance for working in this repository.
 ```bash
 make build      # binary with version from git tags
 make install    # build, then copy to $GOPATH/bin (or ~/go/bin)
-make test       # all tests, verbose
+make test       # all tests, verbose (includes test/integration)
+make integration-test  # just the CLI-as-a-process tests, uncached
 make lint       # golangci-lint (config in .golangci.yml; gocyclo limit 15)
 make vet
 make fmt        # gofmt + goimports
@@ -248,6 +249,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   - a VM worker with nested KVM
 - `run_test.go` builds a fake cluster with `k8s.io/client-go/kubernetes/fake` and
   `dynamic/fake`, plus a `fixtureProber`.
+- `test/integration` builds the binary in `TestMain` and runs it as a child process, asserting on
+  exit code, stdout and stderr. That is the only place to test what a process has and a command
+  call does not: `-v` tracing to stderr while `-o json` stays parseable, and refusals that leave
+  stdout empty. It needs no cluster — an `httptest` server answers the reads a command makes, and
+  every path it does not answer 404s. Keep it untagged so CI's `go test ./...` runs it.
 - CI prints the total coverage in the run's job summary and fails below the floor in
   `.github/workflows/pre-main.yaml` (`COVERAGE_FLOOR`). Check locally with `make coverage`.
 
