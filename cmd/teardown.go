@@ -73,6 +73,7 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 		},
 	}
 	if outputFormat != formatJSON {
+		fmt.Fprint(cmd.ErrOrStderr(), envNote(cmd.Context(), c.Kube, namespace))
 		fmt.Fprintf(cmd.ErrOrStderr(), "Tearing down %s in %s (context %q)...\n\n", namespace, c.Config.Host, c.Context)
 	}
 	res, err := teardown.Run(cmd.Context(), env, o)

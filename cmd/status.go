@@ -51,6 +51,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	if err := useEnvironment(cmd.Context(), c.Kube); err != nil {
 		return err
 	}
+	fmt.Fprint(cmd.ErrOrStderr(), envNote(cmd.Context(), c.Kube, namespace))
 	r, err := status.Collect(cmd.Context(), c.Kube, c.Dyn, namespace)
 	if err != nil {
 		return err

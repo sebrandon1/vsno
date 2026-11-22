@@ -116,3 +116,25 @@ func useEnvironment(ctx context.Context, kube kubernetes.Interface) error {
 	}
 	return nil
 }
+
+// envNote is the line a command that acts on one environment prints so the
+// reader knows of the others: two environments can exist, and an output that
+// silently describes one of them reads as describing whichever the reader had
+// in mind. Empty when ns is the only one, or the list fails.
+func envNote(ctx context.Context, kube kubernetes.Interface, ns string) string {
+	l, err := kube.CoreV1().Namespaces().List(ctx, metav1.ListOptions{LabelSelector: cluster.ManagedByLabel + "=vsno"})
+	if err != nil {
+		return ""
+	}
+	var others []string
+	for _, n := range l.Items {
+		if n.Name != ns {
+			others = append(others, n.Name)
+		}
+	}
+	if len(others) == 0 {
+		return ""
+	}
+	slices.Sort(others)
+	return fmt.Sprintf("note: %s is one of several vsno environments (also: %s); pass -n to choose another\n", ns, strings.Join(others, ", "))
+}
