@@ -18,6 +18,13 @@ make fmt        # gofmt + goimports
 make coverage
 ```
 
+## Docs
+
+User documentation lives in `docs/`; `README.md` is the landing page. `docs/howto.md` is the
+copy-and-paste walkthrough, `docs/getting-started.md`, `docs/vsnos.md`, `docs/upgrades.md` and
+`docs/performance.md` are the guides, and `docs/commands.md` is the reference generated from
+`vsno <command> --help` — keep it in step when a flag changes.
+
 ## Architecture
 
 Cobra CLI, same layout as `sebrandon1/succulent-cli`.
@@ -25,7 +32,7 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `main.go`: passes the build version (`-ldflags "-X main.version=..."`) to `cmd.SetVersion`.
 - `cmd/`: one file per command, plus `_test.go`.
   - `root.go`: global flags `--kubeconfig`, `--context`, `-n/--namespace` (default `vsno`),
-    `-o/--output table|json`, `--no-color` (sets `NO_COLOR`). `palette(w)` colors table output
+    `-o/--output table|wide|json`, `--no-color` (sets `NO_COLOR`). `palette(w)` colors table output
     on a terminal; each renderer takes a `ui.Palette`, and tests pass `plain` or `colored`.
   - `precheck.go`: renders `precheck.Report` as a table or JSON, and supports
     `--write-config`.
@@ -41,7 +48,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `lib/precheck`: the cluster checks.
 - `lib/manifests`: embedded `templates/*.yaml.tmpl` rendered with `text/template` (`quote` for every
   value). Golden files are in `testdata/`; regenerate them with `go test ./lib/manifests -update` and
-  review the diff.
+  review the diff. `Steps` (with the `Step*` name constants) is setup's step list and the single
+  source teardown mirrors; `NamesConfig(ns)` renders object names without real settings.
 - `lib/pki`: registry CA, server cert (`Covers` decides whether to reissue), htpasswd.
 - `lib/apply`: server-side apply (field manager `vsno`); it reports created, updated or unchanged
   for each object. `Plan` (the `Planner` interface) only reads, and says create, reapply (vsno's
@@ -70,8 +78,6 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   `manifests.Steps` in reverse, each step's rendered objects (reversed; `Planner` says delete or
   absent) plus that step's extra targets. `markDeleted` marks a step deleted once all its targets
   are; `support` follows `namespace`.
-- `lib/manifests`: `Steps` (with `Step*` name constants) is setup's step list and is the single
-  source teardown mirrors. `NamesConfig(ns)` renders object names without real settings.
 - `lib/release`: `Resolver.Resolve` turns `--version` into a release image (update graph for releases
   and minors, the CI release controller for `X.Y-nightly`; nightly names and pullspecs as given).
   Tests use `httptest`.
