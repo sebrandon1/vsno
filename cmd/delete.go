@@ -120,10 +120,7 @@ func runPower(cmd *cobra.Command, name string, run bool) error {
 	if err := guest.SetRunning(cmd.Context(), env, namespace, name, run); err != nil {
 		return err
 	}
-	verb, want := "stopping", []guest.State{guest.Stopped}
-	if run {
-		verb, want = "starting", []guest.State{guest.Ready, guest.Failed}
-	}
+	verb, want := powerWait(run)
 	if !pwWait {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s %s; follow it with `vsno list --watch`\n", verb, name)
 		return nil
@@ -133,4 +130,13 @@ func runPower(cmd *cobra.Command, name string, run bool) error {
 		err = fmt.Errorf("vSNO %s failed to start; see `vsno list` and `vsno screenshot %s`", name, name)
 	}
 	return err
+}
+
+// powerWait is what start and stop say they are doing, and the states they wait
+// for: a stop wants the VM halted, a start wants the guest answering again.
+func powerWait(run bool) (verb string, want []guest.State) {
+	if run {
+		return "starting", []guest.State{guest.Ready, guest.Failed}
+	}
+	return "stopping", []guest.State{guest.Stopped}
 }

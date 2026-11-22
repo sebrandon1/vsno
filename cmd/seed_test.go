@@ -1,0 +1,78 @@
+package cmd
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/sebrandon1/vsno/lib/seed"
+)
+
+// seedImages is one finished seed image and one whose version label is unset.
+func seedImages() []seed.Image {
+	now := time.Now()
+	return []seed.Image{
+		{Ref: "example.test/vsno/seed-a:4.20.46", From: "seed-a", Version: "4.20.46", SizeBytes: 3 << 30, Created: now.Add(-2 * time.Hour)},
+		{Ref: "example.test/vsno/seed-b:latest", From: "seed-b", SizeBytes: 700 << 20, Created: now.Add(-30 * time.Minute)},
+	}
+}
+
+func TestRenderSeeds(t *testing.T) {
+	var b bytes.Buffer
+	if err := renderSeeds(&b, seedImages(), time.Now(), plain); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{
+		"IMAGE", "FROM", "VERSION", "SIZE", "AGE",
+		"seed-a", "4.20.46", "3.0Gi", "2h",
+		"seed-b", "700Mi", "30m", "-",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderSeedsEmpty(t *testing.T) {
+	var b bytes.Buffer
+	if err := renderSeeds(&b, nil, time.Now(), plain); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "No seed images") {
+		t.Errorf("empty seeds = %q, want the create hint", b.String())
+	}
+}
+
+// A nil listing is [] in JSON, not null: scripts read it as a list.
+func TestRenderSeedsJSONEmpty(t *testing.T) {
+	old := outputFormat
+	outputFormat = formatJSON
+	t.Cleanup(func() { outputFormat = old })
+
+	var b bytes.Buffer
+	if err := renderSeeds(&b, nil, time.Now(), plain); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(b.String()); got != "[]" {
+		t.Errorf("json = %q, want []", got)
+	}
+}
+
+func TestRenderSeedPlan(t *testing.T) {
+	var b bytes.Buffer
+	renderSeedPlan(&b, seedImages(), plain)
+	out := b.String()
+	for _, want := range []string{"delete", "seed-a", "3.0Gi", "seed-b"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+
+	b.Reset()
+	renderSeedPlan(&b, nil, plain)
+	if b.Len() != 0 {
+		t.Errorf("empty plan printed %q, want nothing", b.String())
+	}
+}

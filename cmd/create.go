@@ -13,6 +13,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/release"
+	"github.com/sebrandon1/vsno/lib/snapshot"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/discovery"
@@ -116,13 +117,13 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	name := ""
 	if len(args) == 1 {
 		name = args[0]
-	} else if crFromSnapshot {
-		return fmt.Errorf("--from-snapshot restores a vSNO under its own name; name it")
-	} else if name, err = guest.FreeName(cmd.Context(), env, namespace); err != nil {
-		return err
+	} else if !crFromSnapshot {
+		if name, err = guest.FreeName(cmd.Context(), env, namespace); err != nil {
+			return err
+		}
 	}
-	if !crFromSnapshot && crVersion == "" {
-		return fmt.Errorf("--version is required to install a vSNO (or --from-snapshot to restore one)")
+	if err := checkCreateArgs(name, crFromSnapshot, crVersion); err != nil {
+		return err
 	}
 	if outputFormat != formatJSON {
 		fmt.Fprint(cmd.ErrOrStderr(), envNote(cmd.Context(), c.Kube, namespace))
@@ -146,6 +147,18 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// checkCreateArgs is the rule for what create needs: an install takes a version,
+// a restore takes the snapshot's own name instead.
+func checkCreateArgs(name string, fromSnapshot bool, version string) error {
+	if fromSnapshot && name == "" {
+		return fmt.Errorf("--from-snapshot restores a vSNO under its own name; name it")
+	}
+	if !fromSnapshot && version == "" {
+		return fmt.Errorf("--version is required to install a vSNO (or --from-snapshot to restore one)")
+	}
+	return nil
+}
+
 // restoreFrom is the snapshot --from-snapshot restores name from, or "" when the
 // caller didn't ask for a restore.
 func restoreFrom(cmd *cobra.Command, name string) (string, error) {
@@ -156,6 +169,11 @@ func restoreFrom(cmd *cobra.Command, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return restoreTarget(s, name)
+}
+
+// restoreTarget is the name a restore uses, or why there is nothing to restore.
+func restoreTarget(s *snapshot.Entry, name string) (string, error) {
 	if s == nil {
 		return "", fmt.Errorf("no snapshot named %s; keep one first with `vsno snapshot create %s`. "+
 			"A snapshot restores only under the name of the vSNO it was taken from", name, name)
