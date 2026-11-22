@@ -15,8 +15,8 @@ between two vSNOs.
 > bring an installed vSNO back in about a minute instead of installing it.
 >
 > New here? Read the **[How-To guide](docs/howto.md)**: a copy-and-paste walkthrough from precheck
-> to teardown. Planned work is tracked in the
-> [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap).
+> to teardown. Bugs and ideas are tracked in the
+> [issue tracker](https://github.com/sebrandon1/vsno/issues).
 
 ## Quick start
 

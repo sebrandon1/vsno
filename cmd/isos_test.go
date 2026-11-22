@@ -85,6 +85,33 @@ func TestRenderIsos(t *testing.T) {
 	}
 }
 
+func TestRenderIsosWide(t *testing.T) {
+	old := outputFormat
+	t.Cleanup(func() { outputFormat = old })
+
+	rep := &isos.Report{Entries: []isos.Entry{
+		{Kind: isos.Served, Name: "a", Path: "/work/www/a.iso", Size: 1 << 30, Use: isos.InUse, Users: []string{"a"}},
+	}}
+	render := func(format string) string {
+		outputFormat = format
+		var b bytes.Buffer
+		if err := renderIsos(&b, rep, plain); err != nil {
+			t.Fatal(err)
+		}
+		return b.String()
+	}
+
+	if table := render(formatTable); strings.Contains(table, "PATH") || strings.Contains(table, "/work/www/a.iso") {
+		t.Errorf("table output shows the path:\n%s", table)
+	}
+	wide := render(formatWide)
+	for _, want := range []string{"PATH", "/work/www/a.iso"} {
+		if !strings.Contains(wide, want) {
+			t.Errorf("wide output is missing %q:\n%s", want, wide)
+		}
+	}
+}
+
 func TestRenderPrunePlan(t *testing.T) {
 	p := &isos.Plan{
 		VSNOs:      []isos.VSNOFiles{{Name: "gone", Size: 4 << 30}},

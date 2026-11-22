@@ -13,7 +13,7 @@ Accepted by every command, before or after the command name:
 | `--kubeconfig <path>` | Path to the host cluster kubeconfig (default: `$KUBECONFIG`, then `~/.kube/config`) |
 | `--context <name>` | Kubeconfig context to use |
 | `-n, --namespace <name>` | Namespace that holds the vSNO environment (default `vsno`) |
-| `-o, --output table\|wide\|json` | Output format (default `table`) |
+| `-o, --output table\|wide\|json` | Output format (default `table`). `wide` is only meaningful for `list` and `iso list`; the other commands refuse it |
 | `--no-color` | Don't color the output (also `NO_COLOR=1`); never used with `-o json` |
 | `-h, --help` | Help for the command |
 | `-v, --version` | Print the vsno version (root only; also `vsno version`) |
