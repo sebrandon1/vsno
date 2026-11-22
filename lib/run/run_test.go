@@ -225,6 +225,11 @@ func TestRecordAndResume(t *testing.T) {
 	if got := finished(ctx, e, ns, p.key()); !slices.Equal(got, []Stage{StageSetup}) {
 		t.Errorf("finished = %v", got)
 	}
+	// A later failure at it doesn't undo the stage this plan finished.
+	record(ctx, e, ns, p.key(), StageSetup, errors.New("boom"))
+	if got := finished(ctx, e, ns, p.key()); !slices.Equal(got, []Stage{StageSetup}) {
+		t.Errorf("after a failed retry, finished = %v", got)
+	}
 	p, err = makePlan(ctx, e, o)
 	if err != nil || !strings.Contains(p.String(), "resuming: an earlier run finished [setup]") {
 		t.Errorf("plan = %s, err = %v", p, err)

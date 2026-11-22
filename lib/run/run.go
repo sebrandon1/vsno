@@ -421,8 +421,17 @@ func finished(ctx context.Context, e Env, ns, key string) []Stage {
 	}
 	var out []Stage
 	for _, s := range []Stage{StageSetup, StageVSNOs, StageSeed, StageUpgrade, StageDelete} {
-		if last, ok := st.Last(StageName + ":" + string(s)); ok && last.Status == state.Done && last.Detail == key {
-			out = append(out, s)
+		name := StageName + ":" + string(s)
+		// A stage this plan finished once stays finished, even if a later
+		// attempt at it failed: a run that re-ran finished stages (before Run
+		// skipped them) could fail at an upgrade that had already succeeded,
+		// and that failure would otherwise block the plan's delete stage
+		// forever.
+		for _, rec := range st.Stages {
+			if rec.Name == name && rec.Status == state.Done && rec.Detail == key {
+				out = append(out, s)
+				break
+			}
 		}
 	}
 	return out
