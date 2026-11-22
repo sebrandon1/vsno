@@ -43,7 +43,9 @@ instead of making one. The plan is shown and confirmed first, unless --yes.
 
 Each stage reuses what's there: a vSNO at the right version, the seed image
 made earlier, an upgrade part way. So when a run stops, running it again
-carries on. Stages are recorded in the environment's state (vsno status).
+carries on. Stages are recorded in the environment's state (vsno status);
+--restart runs all of them again, which is what a repeat test wants when the
+same target is upgraded, rolled back, and upgraded again.
 
 -f vsno.yaml takes the same settings as the flags, by their JSON names
 (targetVersion, seedName, lca: {ref: ...}); flags override the file.`,
@@ -67,6 +69,7 @@ func init() {
 	f.BoolVar(&rnOpts.Finalize, "finalize", false, "finalize the upgrade afterwards")
 	f.BoolVar(&rnOpts.Rollback, "rollback", false, "roll the upgrade back afterwards")
 	f.BoolVar(&rnOpts.Delete, "delete", false, "delete both vSNOs afterwards")
+	f.BoolVar(&rnOpts.Restart, "restart", false, "run every stage again instead of skipping the ones an earlier run of this plan finished")
 	f.BoolVar(&rnOpts.Yes, "yes", false, "run the plan without asking (for CI)")
 	addRunLCAFlags(f)
 	rootCmd.AddCommand(runCmd)
@@ -106,6 +109,7 @@ func runOptions(cmd *cobra.Command) (run.Options, error) {
 		"finalize":       func() { o.Finalize = f.Finalize },
 		"rollback":       func() { o.Rollback = f.Rollback },
 		"delete":         func() { o.Delete = f.Delete },
+		"restart":        func() { o.Restart = f.Restart },
 		"yes":            func() { o.Yes = f.Yes },
 		"lca-ref":        func() { o.LCA.Ref = f.LCA.Ref },
 		"lca-repo":       func() { o.LCA.Repo = f.LCA.Repo },
@@ -163,6 +167,9 @@ func runRun(cmd *cobra.Command, _ []string) error {
 	}
 	if res != nil {
 		renderRun(w, res, pal)
+		if err == nil && len(res.Timings) == 0 {
+			fmt.Fprintf(w, "\n%s\n", pal.Dim("every stage is recorded done for this plan; pass --restart to run it again"))
+		}
 	}
 	return err
 }
