@@ -24,6 +24,8 @@ type PodProber struct {
 	Kube    kubernetes.Interface
 	Image   string
 	Timeout time.Duration
+	// readLog streams a probe pod's log; nil reads it from the cluster.
+	readLog func(ctx context.Context, ns, pod string) (io.ReadCloser, error)
 }
 
 // Probe implements Prober.
@@ -128,7 +130,7 @@ func (p *PodProber) probeNode(ctx context.Context, ns, node string) (string, err
 		return "", fmt.Errorf("probe pod did not finish within %s (phase %s); is %s pullable?", p.Timeout, phase, p.Image)
 	}
 
-	stream, err := p.Kube.CoreV1().Pods(ns).GetLogs(created.Name, &corev1.PodLogOptions{}).Stream(ctx)
+	stream, err := p.logs(ctx, ns, created.Name)
 	if err != nil {
 		return "", fmt.Errorf("reading probe logs: %w", err)
 	}
@@ -141,4 +143,12 @@ func (p *PodProber) probeNode(ctx context.Context, ns, node string) (string, err
 		return "", fmt.Errorf("probe failed: %s", strings.TrimSpace(string(b)))
 	}
 	return string(b), nil
+}
+
+// logs streams pod's output: the test seam when set, the cluster otherwise.
+func (p *PodProber) logs(ctx context.Context, ns, pod string) (io.ReadCloser, error) {
+	if p.readLog != nil {
+		return p.readLog(ctx, ns, pod)
+	}
+	return p.Kube.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{}).Stream(ctx)
 }
