@@ -157,6 +157,40 @@ func TestMatches(t *testing.T) {
 }
 
 // A seed image an earlier run made is used again instead of a new generation.
+func TestEnsureVSNOsStartsAStoppedVSNO(t *testing.T) {
+	e := testEnv("4.22.0")
+	e.Timeout = 20 * time.Millisecond // the fake never reaches ready
+	vm := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"runStrategy": "Halted"}}}
+	vm.SetAPIVersion("kubevirt.io/v1")
+	vm.SetKind("VirtualMachine")
+	vm.SetNamespace(ns)
+	vm.SetName("seed")
+	vm.SetLabels(map[string]string{guest.LabelName: "seed"})
+	vms := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns)
+	if _, err := vms.Create(context.Background(), vm, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "seed"},
+		Spec: corev1.ServiceSpec{ClusterIP: "172.30.0.1"}}
+	if _, err := e.Kube.CoreV1().Services(ns).Create(context.Background(), svc, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	p := &Plan{Seed: "seed", SeedVersion: "4.22.2"}
+	existing := []guest.Guest{{Name: "seed", State: guest.Stopped}}
+	// Seedgen stops the seed, so a resumed run must start it: waiting alone
+	// never ends.
+	if err := ensureVSNOs(context.Background(), e, Options{Namespace: ns}, p, []string{"seed"}, existing); err == nil {
+		t.Fatal("expected the wait to fail: the fake never reaches ready")
+	}
+	got, err := vms.Get(context.Background(), "seed", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _, _ := unstructured.NestedString(got.Object, "spec", "runStrategy"); s != "Always" {
+		t.Errorf("runStrategy = %q, want Always", s)
+	}
+}
+
 func TestEnsureSeedReusesTheImage(t *testing.T) {
 	e := testEnv("4.22.0")
 	e.Builder = listing{out: `{"repo":"seeds/seed","tag":"4.22.2","digest":"sha256:a","created":"2026-11-19T23:00:00Z","labels":{},"size":1}` + "\n"}

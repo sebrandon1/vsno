@@ -336,6 +336,13 @@ func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan, names []stri
 			if err := matches(existing[i], want[name]); err != nil {
 				return err
 			}
+			// An earlier stage may have stopped it: seedgen does, and a
+			// resumed run or a stopped vSNO would otherwise wait forever.
+			if existing[i].State == guest.Stopped {
+				if err := guest.SetRunning(ctx, e.Env.Env, o.Namespace, name, true); err != nil {
+					return fmt.Errorf("starting %s: %w", name, err)
+				}
+			}
 			continue
 		}
 		if _, err := guest.Create(ctx, e.Env.Env, guest.CreateOptions{Namespace: o.Namespace, Name: name, Version: want[name],
