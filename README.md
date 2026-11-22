@@ -431,6 +431,12 @@ earlier run made, an upgrade part way. So when a run is interrupted, running it 
 the plan says which stages an earlier run finished. Stages are recorded in the environment's state
 (`vsno status`). Ctrl+C stops a run cleanly.
 
+A vSNO the run has to create is **restored from its snapshot** when the environment keeps one at the
+plan's version (see [Snapshots](#snapshots)): a minute instead of an install, and the plan says so
+(`target   vSNO target at 4.22.21, restored from snapshot target`). A snapshot is only usable under
+its own name and version, so a run naming other vSNOs, or asking for another version, installs as
+before. `vsno run --delete` leaves the snapshots behind, so the next run starts from them again.
+
 `--restart` runs every stage again instead of skipping the ones this plan already finished, which is
 what repeating a test wants. With the seed image kept (`--seed-image`) and a rollback at the end, a
 target can be upgraded over and over without installing a vSNO:
