@@ -15,11 +15,24 @@ Accepted by every command, before or after the command name:
 | `-n, --namespace <name>` | Namespace that holds the vSNO environment (default `vsno`) |
 | `-o, --output table\|wide\|json` | Output format (default `table`). `wide` is only meaningful for `list` and `iso list`; the other commands refuse it |
 | `--no-color` | Don't color the output (also `NO_COLOR=1`); never used with `-o json` |
+| `-v, --verbose` | Trace what vsno does underneath on stderr: each cluster request as `oc`/`kubectl` would name it, and each command it runs in the builder pod. Repeated lines collapse as `(xN)`. stdout stays clean, so `-o json` still pipes |
 | `-h, --help` | Help for the command |
-| `-v, --version` | Print the vsno version (root only; also `vsno version`) |
+| `--version` | Print the vsno version (root only; also `vsno version`). Not `-v`, which is verbose |
 
 Anything after a vSNO's name goes to `oc` or `ssh`, not to vsno. Put vsno's own flags, such as
-`-n`, before the name: `vsno oc seed get nodes -o wide` sends `get nodes -o wide` to `oc`.
+`-n`, before the name: `vsno oc seed get nodes -o wide` sends `get nodes -o wide` to `oc`. The same
+goes for `-v`: `vsno -v oc seed get nodes` traces the session, `vsno oc seed get nodes -v` passes
+`-v` to `oc`.
+
+With `--verbose`, a `create` reads like this:
+
+```
+→ get pods -n vsno -l app=builder
+→ create virtualmachines.kubevirt.io target -n vsno
+→ get datavolumes.cdi.kubevirt.io target -n vsno
+→ exec builder: oc adm release mirror --registry-config "$dir/auth.json" --from "quay.io/…"
+→ get virtualmachineinstances.kubevirt.io target -n vsno (x54)
+```
 
 ## Contents
 

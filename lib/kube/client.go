@@ -3,11 +3,14 @@ package kube
 
 import (
 	"fmt"
+	"net/http"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/sebrandon1/vsno/lib/trace"
 )
 
 // Clients bundles the clients vsno uses against the host cluster.
@@ -41,6 +44,7 @@ func New(kubeconfig, context string) (*Clients, error) {
 	if context != "" {
 		ctxName = context
 	}
+	wrapTransport(cfg)
 
 	k, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
@@ -51,4 +55,18 @@ func New(kubeconfig, context string) (*Clients, error) {
 		return nil, fmt.Errorf("creating dynamic client: %w", err)
 	}
 	return &Clients{Config: cfg, Kube: k, Dyn: d, Context: ctxName}, nil
+}
+
+// wrapTransport installs the verbose trace on every client built from cfg: the
+// core, dynamic and discovery clients and the pod executors all share it. It is
+// installed unconditionally and checks whether tracing is on at request time, so
+// the flag may be parsed before or after the client is built.
+func wrapTransport(cfg *rest.Config) {
+	inner := cfg.WrapTransport
+	cfg.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+		if inner != nil {
+			rt = inner(rt)
+		}
+		return trace.RoundTripper(rt)
+	}
 }

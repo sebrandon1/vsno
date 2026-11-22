@@ -32,7 +32,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `main.go`: passes the build version (`-ldflags "-X main.version=..."`) to `cmd.SetVersion`.
 - `cmd/`: one file per command, plus `_test.go`.
   - `root.go`: global flags `--kubeconfig`, `--context`, `-n/--namespace` (default `vsno`),
-    `-o/--output table|wide|json`, `--no-color` (sets `NO_COLOR`). `palette(w)` colors table output
+    `-o/--output table|wide|json`, `-v/--verbose` (traces cluster requests and builder commands to
+    stderr through `lib/trace`), `--no-color` (sets `NO_COLOR`). `palette(w)` colors table output
     on a terminal; each renderer takes a `ui.Palette`, and tests pass `plain` or `colored`.
   - `precheck.go`: renders `precheck.Report` as a table or JSON, and supports
     `--write-config`.
@@ -44,7 +45,13 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
     plus the adapter to the `precheck.Progress` interface.
   - `version.go`: `vsno version`.
 - `lib/kube`: builds client-go typed and dynamic clients from a kubeconfig (explicit path, then
-  `$KUBECONFIG`, then `~/.kube/config`).
+  `$KUBECONFIG`, then `~/.kube/config`), and wraps the config's `WrapTransport` so `lib/trace` sees
+  every request.
+- `lib/trace`: `--verbose`. `Enable(w)` installs a process-wide `Collapser` (consecutive identical
+  lines become `(xN)`); `Command` renders a request as kubectl would name it, skipping pod
+  subresources whose command `lib/builder` reports instead; `ScriptCommands` pulls the `oc`/`ssh`
+  lines out of an embedded script for display. It writes to stderr only and reads no body, header,
+  stdin or auth file.
 - `lib/precheck`: the cluster checks.
 - `lib/manifests`: embedded `templates/*.yaml.tmpl` rendered with `text/template` (`quote` for every
   value). Golden files are in `testdata/`; regenerate them with `go test ./lib/manifests -update` and
