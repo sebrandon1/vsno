@@ -15,6 +15,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/ibu"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/seed"
+	"github.com/sebrandon1/vsno/lib/snapshot"
 	"github.com/sebrandon1/vsno/lib/state"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -24,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynfake "k8s.io/client-go/dynamic/fake"
 	kfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 const ns = "vsno-test"
@@ -385,6 +387,109 @@ func TestToCreate(t *testing.T) {
 	// With a seed image there is only the target.
 	if got, err := toCreate(ctx, withNode(t, testEnv("4.22.0"), "30Gi"), Options{Namespace: ns}, &Plan{Target: "target"}, nil); err != nil || !slices.Equal(got, []string{"target"}) {
 		t.Errorf("seed image: %v %v", got, err)
+	}
+}
+
+// volumeSnapshot is a ready VolumeSnapshot of a vSNO, as snapshot.Create
+// leaves one.
+func volumeSnapshot(name, version string, ready bool) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{Object: map[string]any{"status": map[string]any{"readyToUse": ready}}}
+	u.SetAPIVersion("snapshot.storage.k8s.io/v1")
+	u.SetKind("VolumeSnapshot")
+	u.SetNamespace(ns)
+	u.SetName(name)
+	u.SetLabels(map[string]string{cluster.ManagedByLabel: "vsno", snapshot.LabelVSNO: name})
+	u.SetAnnotations(map[string]string{guest.AnnVersion: version})
+	return u
+}
+
+// withDynamic swaps in a client holding objects, so the snapshot reads work.
+func withDynamic(t *testing.T, e Env, objects ...runtime.Object) Env {
+	t.Helper()
+	e.Dyn = dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		precheck.GVRClusterVersion: "ClusterVersionList",
+		cluster.GVRVirtualMachine:  "VirtualMachineList",
+		cluster.GVRVolumeSnapshot:  "VolumeSnapshotList",
+	}, objects...)
+	return e
+}
+
+// A vSNO the plan would create is restored from its snapshot when there is one
+// at the plan's version, and installed when there isn't.
+func TestPlanRestoresFromSnapshots(t *testing.T) {
+	ctx := context.Background()
+	vmNamed := func(name string) *unstructured.Unstructured {
+		vm := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"runStrategy": "Always"}}}
+		vm.SetAPIVersion("kubevirt.io/v1")
+		vm.SetKind("VirtualMachine")
+		vm.SetNamespace(ns)
+		vm.SetName(name)
+		vm.SetLabels(map[string]string{guest.LabelName: name})
+		return vm
+	}
+	for _, c := range []struct {
+		name  string
+		objs  []runtime.Object
+		o     Options
+		want  map[string]string
+		plan  string // in the plan text, when set
+		vmErr bool   // the VM read fails, as on an unreachable API
+		errIs string
+	}{
+		{name: "the target's snapshot at its version",
+			objs: []runtime.Object{volumeSnapshot("target", "4.22.1", true)},
+			o:    Options{TargetVersion: "4.22.1", SeedVersion: "4.22.2"},
+			want: map[string]string{"target": "target"},
+			plan: "restored from snapshot target, upgraded to the seed's version"},
+		{name: "a snapshot of another version is not the plan's vSNO",
+			objs: []runtime.Object{volumeSnapshot("target", "4.22.0", true)},
+			o:    Options{TargetVersion: "4.22.1", SeedVersion: "4.22.2"},
+			want: map[string]string{}},
+		{name: "a vSNO that exists is left as it is",
+			objs: []runtime.Object{vmNamed("target"), volumeSnapshot("target", "4.22.1", true),
+				volumeSnapshot("seed", "4.22.2", true)},
+			o:    Options{TargetVersion: "4.22.1", SeedVersion: "4.22.2"},
+			want: map[string]string{"seed": "seed"}},
+		{name: "a snapshot still being taken is an error, not a silent install",
+			objs:  []runtime.Object{volumeSnapshot("target", "4.22.1", false)},
+			o:     Options{TargetVersion: "4.22.1", SeedVersion: "4.22.2"},
+			errIs: "not ready yet"},
+		{name: "a failed read is reported, not taken for a missing vSNO",
+			vmErr: true,
+			o:     Options{TargetVersion: "4.22.1", SeedVersion: "4.22.2"},
+			errIs: "checking for vSNO seed: boom"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := withDynamic(t, testEnv("4.22.0"), c.objs...)
+			if c.vmErr {
+				e.Dyn.(*dynfake.FakeDynamicClient).PrependReactor("get", "virtualmachines",
+					func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, errors.New("boom") })
+			}
+			o := c.o
+			o.Namespace = ns
+			o.defaults()
+			p, err := makePlan(ctx, e, o)
+			if c.errIs != "" {
+				if err == nil || !strings.Contains(err.Error(), c.errIs) {
+					t.Fatalf("err = %v, want %q", err, c.errIs)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(p.Restore) != len(c.want) {
+				t.Fatalf("restore = %v, want %v", p.Restore, c.want)
+			}
+			for name, snap := range c.want {
+				if p.Restore[name] != snap {
+					t.Errorf("restore = %v, want %v", p.Restore, c.want)
+				}
+			}
+			if c.plan != "" && !strings.Contains(p.String(), c.plan) {
+				t.Errorf("plan text lacks %q:\n%s", c.plan, p)
+			}
+		})
 	}
 }
 

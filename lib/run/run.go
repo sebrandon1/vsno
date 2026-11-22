@@ -14,12 +14,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/ibu"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/release"
 	"github.com/sebrandon1/vsno/lib/seed"
+	"github.com/sebrandon1/vsno/lib/snapshot"
 	"github.com/sebrandon1/vsno/lib/state"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -98,6 +101,10 @@ type Plan struct {
 	Then          string  `json:"then"` // finalize, rollback, delete, or keep
 	Stages        []Stage `json:"stages"`
 	Done          []Stage `json:"done,omitempty"` // stages an earlier run finished
+	// Restore is the snapshot each vSNO the plan creates is restored from
+	// instead of installed, by vSNO name. A vSNO keeps its snapshot's name and
+	// version, so only a snapshot at the plan's version is used.
+	Restore map[string]string `json:"restore,omitempty"`
 	// Restart is set when this run ignores Done and runs every stage.
 	Restart bool      `json:"restart,omitempty"`
 	At      time.Time `json:"-"`
@@ -249,17 +256,8 @@ func makePlan(ctx context.Context, e Env, o Options) (*Plan, error) {
 	if o.SeedImage == "" {
 		p.Seed = o.SeedName
 	}
-	if p.TargetVersion == "" || (p.SeedVersion == "" && o.SeedImage == "") {
-		target, seedV, err := defaultVersions(ctx, e)
-		if err != nil {
-			return nil, err
-		}
-		if p.TargetVersion == "" {
-			p.TargetVersion = target
-		}
-		if p.SeedVersion == "" && o.SeedImage == "" {
-			p.SeedVersion = seedV
-		}
+	if err := p.versions(ctx, e, o); err != nil {
+		return nil, err
 	}
 	if p.SeedVersion != "" && release.Compare(p.TargetVersion, p.SeedVersion) >= 0 {
 		return nil, fmt.Errorf("the target (%s) must be older than the seed (%s)", p.TargetVersion, p.SeedVersion)
@@ -275,7 +273,61 @@ func makePlan(ctx context.Context, e Env, o Options) (*Plan, error) {
 	if !o.Restart {
 		p.Done = finished(ctx, e, o.Namespace, p.key())
 	}
+	restore, err := restores(ctx, e, o, p.wanted())
+	if err != nil {
+		return nil, err
+	}
+	if len(restore) > 0 {
+		p.Restore = restore
+	}
 	return p, nil
+}
+
+// versions fills in the releases the plan leaves unset with the host minor's
+// last two stable ones: the newest is the seed, the one before it the target.
+// A seed image brings its own version, so only a seed vSNO needs one.
+func (p *Plan) versions(ctx context.Context, e Env, o Options) error {
+	if p.TargetVersion != "" && (p.SeedVersion != "" || o.SeedImage != "") {
+		return nil
+	}
+	target, seedV, err := defaultVersions(ctx, e)
+	if err != nil {
+		return err
+	}
+	if p.TargetVersion == "" {
+		p.TargetVersion = target
+	}
+	if p.SeedVersion == "" && o.SeedImage == "" {
+		p.SeedVersion = seedV
+	}
+	return nil
+}
+
+// restores is the snapshot each wanted vSNO is restored from: the snapshot of
+// that name, at the version the plan asks for, when the vSNO isn't there yet.
+// A restore brings the disk, so it costs a minute instead of an install. A
+// snapshot is only usable under its own name and version, and a vSNO that
+// exists is left as it is (matches refuses one at another version).
+func restores(ctx context.Context, e Env, o Options, want map[string]string) (map[string]string, error) {
+	out := map[string]string{}
+	se := snapshot.Env{Env: e.Env.Env}
+	for _, name := range slices.Sorted(maps.Keys(want)) {
+		_, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(o.Namespace).Get(ctx, name, metav1.GetOptions{})
+		switch {
+		case err == nil:
+			continue
+		case !apierrors.IsNotFound(err):
+			return nil, fmt.Errorf("checking for vSNO %s: %w", name, err)
+		}
+		ent, err := snapshot.Use(ctx, se, o.Namespace, name)
+		if err != nil {
+			return nil, err
+		}
+		if ent != nil && ent.Version == want[name] {
+			out[name] = ent.Name
+		}
+	}
+	return out, nil
 }
 
 // defaultVersions are the newest stable release of the host's minor (the
@@ -357,7 +409,7 @@ func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan, names []stri
 			continue
 		}
 		if _, err := guest.Create(ctx, e.Env.Env, guest.CreateOptions{Namespace: o.Namespace, Name: name, Version: want[name],
-			Node: o.Node, Cores: o.Cores, MemoryGiB: o.MemoryGiB}); err != nil {
+			Node: o.Node, Cores: o.Cores, MemoryGiB: o.MemoryGiB, Snapshot: plan.Restore[name]}); err != nil {
 			return fmt.Errorf("creating %s: %w", name, err)
 		}
 	}
@@ -461,11 +513,12 @@ func (p Plan) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Plan for %s:\n", p.Namespace)
 	if p.Seed != "" {
-		fmt.Fprintf(&b, "  seed     vSNO %s at %s, made into a seed image\n", p.Seed, p.SeedVersion)
+		fmt.Fprintf(&b, "  seed     vSNO %s at %s, %s\n", p.Seed, p.SeedVersion, vSNOText(p.Restore, p.Seed, "made into a seed image"))
 	} else {
 		fmt.Fprintf(&b, "  seed     image %s\n", p.SeedImage)
 	}
-	fmt.Fprintf(&b, "  target   vSNO %s at %s, upgraded to the seed's version\n", p.Target, p.TargetVersion)
+	fmt.Fprintf(&b, "  target   vSNO %s at %s, %s\n", p.Target, p.TargetVersion,
+		vSNOText(p.Restore, p.Target, "upgraded to the seed's version"))
 	fmt.Fprintf(&b, "  LCA      %s\n", p.LCA)
 	fmt.Fprintf(&b, "  then     %s\n", p.Then)
 	if len(p.Done) > 0 {
@@ -475,6 +528,16 @@ func (p Plan) String() string {
 		fmt.Fprintf(&b, "  restarting: every stage runs again, reusing what's there\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// vSNOText says how a vSNO gets there and what the plan then does with it:
+// "restored from snapshot target, upgraded to the seed's version" when a
+// snapshot brings the disk, and just the second half when it is installed.
+func vSNOText(restore map[string]string, name, then string) string {
+	if s := restore[name]; s != "" {
+		return "restored from snapshot " + s + ", " + then
+	}
+	return then
 }
 
 func lcaText(s ibu.LCASource) string {
