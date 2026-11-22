@@ -11,9 +11,11 @@ One workflow built on top of that is testing
 > **Status:** milestones 1–7 are done: `precheck`, `setup`, `status`, `teardown`, the vSNO
 > lifecycle (`create`, `list`, `delete`, `start`, `stop`, `oc`, `ssh`, `kubeconfig`, `screenshot`),
 > seed images, fast creates from an in-cluster release cache, Image Based Upgrades (`prepare`,
-> `upgrade`), testing lifecycle-agent branches in them, and `vsno run` for the whole flow.
+> `upgrade`), testing lifecycle-agent branches in them, `vsno run` for the whole flow, and
+> `vsno snapshot` to bring an installed vSNO back in about a minute instead of installing it.
 >
-> See the [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap).
+> See the [roadmap issues](https://github.com/sebrandon1/vsno/issues?q=label%3Aroadmap). For a
+> copy-and-paste walkthrough from precheck to teardown, read the **[How-To guide](docs/howto.md)**.
 
 ## Install
 
@@ -38,7 +40,7 @@ Global flags, accepted by every command:
 | `--kubeconfig <path>` | Host cluster kubeconfig (default: `$KUBECONFIG`, then `~/.kube/config`) |
 | `--context <name>` | Kubeconfig context to use |
 | `-n, --namespace <name>` | Namespace that holds the vSNO environment (default `vsno`) |
-| `-o, --output table\|json` | Output format (default `table`) |
+| `-o, --output table\|wide\|json` | Output format (default `table`) |
 | `--no-color` | Plain output. Color is used only on a terminal, and never with `NO_COLOR` set or `-o json` |
 
 ## precheck
@@ -490,7 +492,9 @@ vsno snapshot delete target --yes       # free the space
 `snapshot` keeps a vSNO's installed root disk as a `VolumeSnapshot` and `create <name>
 --from-snapshot` restores it, so a repeat test does not install OpenShift again. On LVMS the
 volumes are thin, so the storage driver restores a snapshot as a thin clone in **seconds** —
-measured on cnfdt16: a 10 GiB volume snapshotted in 9s and restored in 3s, verified byte for byte.
+measured on cnfdt16: a 10 GiB volume snapshotted in 9s and restored in 3s, verified byte for byte —
+and a vSNO whose disk is restored is **ready in about a minute** (61s and 63s measured, node up and
+every cluster operator green) against ~17 minutes installing.
 (CDI's `DataVolume` snapshot source copies the volume host-assisted instead and took minutes for
 the same 10 GiB, which is why a restore here is a PVC with a `VolumeSnapshot` dataSource.)
 
