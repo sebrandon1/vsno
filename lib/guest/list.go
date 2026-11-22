@@ -253,6 +253,13 @@ func observe(ctx context.Context, e Env, vm *unstructured.Unstructured) (Guest, 
 			g.DiskGiB = gib(s)
 		}
 	}
+	if g.DiskGiB == 0 {
+		// A vSNO restored from a snapshot keeps its disk in a PVC, not in the
+		// VM's DataVolume templates.
+		if pvc, err := e.Kube.CoreV1().PersistentVolumeClaims(ns).Get(ctx, name+"-root", metav1.GetOptions{}); err == nil {
+			g.DiskGiB = pvc.Spec.Resources.Requests.Storage().Value() / (1 << 30)
+		}
+	}
 	g.Node, _, _ = unstructured.NestedString(vm.Object, "spec", "template", "spec", "nodeSelector", "kubernetes.io/hostname")
 	g.Cached = ann[AnnCached] == "true"
 	g.LCA = ann[AnnLCASource]
