@@ -16,6 +16,7 @@ spec:
   - {name: http, port: 80}
   - {name: ssh, port: 22}
   - {name: agent, port: 8090}
+{{- if not .Snapshot }}
 ---
 apiVersion: cdi.kubevirt.io/v1beta1
 kind: DataVolume
@@ -32,6 +33,7 @@ spec:
     resources:
       requests:
         storage: 3Gi
+{{- end }}
 ---
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
@@ -45,6 +47,7 @@ metadata:
 {{- end }}
 spec:
   runStrategy: Always
+{{- if not .Snapshot }}
   dataVolumeTemplates:
   - metadata:
       name: {{ .Name }}-root
@@ -59,6 +62,7 @@ spec:
         resources:
           requests:
             storage: {{ .DiskGiB }}Gi
+{{- end }}
   template:
     metadata:
       labels: {"{{ .LabelName }}": {{ quote .Name }}}
@@ -78,9 +82,11 @@ spec:
           - name: root
             bootOrder: 1
             disk: {bus: virtio}
+{{- if not .Snapshot }}
           - name: iso
             bootOrder: 2
             cdrom: {bus: sata}
+{{- end }}
           interfaces:
           - name: default
             masquerade: {}
@@ -91,6 +97,12 @@ spec:
         pod: {}
       volumes:
       - name: root
+{{- if .Snapshot }}
+        persistentVolumeClaim: {claimName: {{ .Name }}-root}
+{{- else }}
         dataVolume: {name: {{ .Name }}-root}
+{{- end }}
+{{- if not .Snapshot }}
       - name: iso
         dataVolume: {name: {{ .Name }}-iso}
+{{- end }}

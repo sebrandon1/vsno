@@ -460,6 +460,35 @@ finalize: true
 | `--yes` | Run the plan without asking |
 | `-f <file>` | Settings file |
 
+## Snapshots
+
+```bash
+vsno snapshot create target             # stop target, snapshot its disk, start it again
+vsno snapshot list                      # what is kept, and whether its vSNO still exists
+vsno create target --from-snapshot -w   # bring target back in minutes, not 17
+vsno snapshot delete target --yes       # free the space
+```
+
+`snapshot` keeps a vSNO's installed root disk as a `VolumeSnapshot` and `create <name>
+--from-snapshot` restores it, so a repeat test does not install OpenShift again. On LVMS the
+volumes are thin, so the storage driver restores a snapshot as a thin clone in **seconds** —
+measured on cnfdt16: a 10 GiB volume snapshotted in 9s and restored in 3s, verified byte for byte.
+(CDI's `DataVolume` snapshot source copies the volume host-assisted instead and took minutes for
+the same 10 GiB, which is why a restore here is a PVC with a `VolumeSnapshot` dataSource.)
+
+Two things to know:
+
+- **Same name only.** A disk carries the cluster's identity — node name, `api.<name>.<domain>` and
+  its certificates, clusterID — so it only runs as the vSNO it was taken from. Snapshots are named
+  after their vSNO, and `--from-snapshot` takes no other name.
+- **The vSNO stops.** A snapshot of a running guest needs the guest agent to freeze its filesystems,
+  which it cannot do inside a vSNO (`failed to open /var/lib/containers: Permission denied`), so
+  `snapshot create` stops the vSNO, snapshots it, and starts it again.
+
+`vsno delete` does not remove the snapshot: that is what makes the restore possible. The installer
+files are copied to `/work/snapshots/<name>` with it, so the probe can read the guest's kubeconfig
+after a delete.
+
 ## ISOs and caches
 
 ```bash

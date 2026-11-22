@@ -91,6 +91,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   `Oc`/`Apply`, `SSHOut`, `Conditions`/`Object`, `Poll` with an injectable `Clock`, `Step` for
   progress, and `Operator` (install an OLM operator from the guest's own catalog and wait for its
   CSV). `guestctltest.Fake` answers oc and ssh by their arguments in tests.
+- `lib/snapshot`: a vSNO's root disk kept as a `VolumeSnapshot` (`Create` stops the vSNO, snapshots,
+  starts it again), listed and deleted, and the copy of the builder's `/work/snapshots/<name>` that
+  a restore needs. `Use` is what `create --from-snapshot` restores from; `guest.create` makes the
+  root PVC with a `VolumeSnapshot` dataSource (a thin clone on LVMS, seconds — never CDI's
+  host-assisted `DataVolume` snapshot copy) and mounts it directly in the VM.
 - `lib/ibu`: Image Based Upgrades. `Prepare` installs LCA and OADP (via `guestctl.Operator`), registry
   trust, and for a target the backup location (`backup.yaml.tmpl`, S3 by ClusterIP) and
   `seed-pull-secret`. `Upgrade` resolves the seed, prepares the target, then `begin` (identity, LCA
