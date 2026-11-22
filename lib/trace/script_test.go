@@ -133,3 +133,67 @@ func TestTruncate(t *testing.T) {
 		t.Error("truncate changed a short line")
 	}
 }
+
+// registry.sh dispatches on its operation argument. Showing every branch would
+// make a list look like it deletes things.
+func TestScriptCommandsRegistryDispatch(t *testing.T) {
+	const host = "registry.vsno.svc.cluster.local:5000"
+	script := readScript(t, "../registry/scripts/registry.sh")
+
+	t.Run("list", func(t *testing.T) {
+		got := ScriptCommands(script, []string{host, "list", "seeds/"})
+		for _, l := range got {
+			t.Logf("→ %s", l)
+			if strings.Contains(l, "delete") || strings.Contains(l, "DELETE") {
+				t.Errorf("%q: a list must not show a delete", l)
+			}
+		}
+		if len(got) != 3 {
+			t.Fatalf("got %d commands, want 3: %q", len(got), got)
+		}
+		if !strings.HasPrefix(got[0], "curl -sSf -K") || !strings.Contains(got[0], "/v2/_catalog") {
+			t.Errorf("first = %q, want the catalog read", got[0])
+		}
+		if !strings.HasPrefix(got[1], "skopeo list-tags ") || !strings.HasPrefix(got[2], "skopeo inspect ") {
+			t.Errorf("got %q, want list-tags then inspect", got[1:])
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		got := ScriptCommands(script, []string{host, "delete", "seeds/seed:4.22.22"})
+		if len(got) != 1 || !strings.HasPrefix(got[0], "skopeo delete ") {
+			t.Fatalf("got %q, want one skopeo delete", got)
+		}
+		if strings.Contains(got[0], "_catalog") {
+			t.Errorf("%q: a delete must not show the catalog read", got[0])
+		}
+	})
+
+	t.Run("unknown operation runs the default branch", func(t *testing.T) {
+		for _, l := range ScriptCommands(script, []string{host, "bogus"}) {
+			if strings.Contains(l, "_catalog") || strings.Contains(l, "skopeo") {
+				t.Errorf("%q: no named branch runs for an unknown operation", l)
+			}
+		}
+	})
+}
+
+func TestMatchBranch(t *testing.T) {
+	for _, c := range []struct {
+		pat, value string
+		matched    bool
+		want       bool
+	}{
+		{"list", "list", false, true},
+		{"list", "delete", false, false},
+		{"202|404", "404", false, true},
+		{"202|404", "500", false, false},
+		{"*", "anything", false, true},
+		{"*", "list", true, false}, // "*)" is the default, not a catch-all
+		{`"quoted"`, "quoted", false, true},
+	} {
+		if got := matchBranch(c.pat, c.value, c.matched); got != c.want {
+			t.Errorf("matchBranch(%q, %q, matched=%v) = %v, want %v", c.pat, c.value, c.matched, got, c.want)
+		}
+	}
+}
