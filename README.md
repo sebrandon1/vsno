@@ -427,7 +427,9 @@ vsno run -f vsno.yaml                           # the same settings from a file
 
 `run` does an Image Based Upgrade with only a kubeconfig:
 1. **setup**, as `vsno setup`
-2. **vsnos**: a seed and a target vSNO, both started before waiting for either
+2. **vsnos**: a seed and a target vSNO, both started before waiting for either. On a cold cache
+   their releases are mirrored into the environment's registry **at the same time**, so the two
+   ~8 minute mirrors overlap rather than run back to back (`vsno cache list` shows what is there)
 3. **seed**: a seed image from the seed vSNO, which is stopped afterwards
 4. **upgrade**: the target upgraded with it, as `vsno upgrade`
 

@@ -12,6 +12,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/cluster"
@@ -220,6 +221,9 @@ func runStage(ctx context.Context, e Env, o Options, plan *Plan, s Stage, res *R
 		if err != nil {
 			return err
 		}
+		if err := mirror(ctx, e, o, plan, names, existing); err != nil {
+			return err
+		}
 		return ensureVSNOs(ctx, e, o, plan, names, existing)
 	case StageSeed:
 		return ensureSeed(ctx, e, o, plan)
@@ -227,6 +231,9 @@ func runStage(ctx context.Context, e Env, o Options, plan *Plan, s Stage, res *R
 		// The target, if the node had no room for it next to the seed.
 		existing, err := guest.List(ctx, e.Env.Env, o.Namespace)
 		if err != nil {
+			return err
+		}
+		if err := mirror(ctx, e, o, plan, []string{plan.Target}, existing); err != nil {
 			return err
 		}
 		if err := ensureVSNOs(ctx, e, o, plan, []string{plan.Target}, existing); err != nil {
@@ -418,6 +425,62 @@ func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan, names []stri
 			return fmt.Errorf("waiting for %s (%s): %w", name, st, err)
 		}
 	}
+	return nil
+}
+
+// mirror mirrors the releases the vSNOs about to be created install from, all
+// at once: on a cold cache each mirror is about 8 minutes, and Create's own
+// mirrors are one after the other. A vSNO that already exists or is restored
+// from a snapshot needs nothing, and Create then finds its release mirrored.
+func mirror(ctx context.Context, e Env, o Options, plan *Plan, names []string, existing []guest.Guest) error {
+	if e.Cache == nil {
+		return nil
+	}
+	want := plan.wanted()
+	var rels []release.Release
+	for _, name := range names {
+		if plan.Restore[name] != "" || slices.ContainsFunc(existing, func(g guest.Guest) bool { return g.Name == name }) {
+			continue
+		}
+		rel, err := e.Resolver.Resolve(ctx, want[name])
+		if err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(rels, func(r release.Release) bool { return r.Image == rel.Image }) {
+			rels = append(rels, rel)
+		}
+	}
+	if len(rels) == 0 {
+		return nil
+	}
+	versions := make([]string, len(rels))
+	for i, rel := range rels {
+		versions[i] = rel.Requested
+	}
+	ps := e.Progress.Start("Mirroring " + strings.Join(versions, ", "))
+	// One mirror failing cancels the others: a run without both is going to
+	// stop anyway, and a half-mirrored registry is worse than none.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var wg sync.WaitGroup
+	errs := make([]error, len(rels))
+	for i, rel := range rels {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			onLine := func(line string) { ps.Update(rel.Requested + ": " + line) }
+			if _, err := e.Cache.Ensure(ctx, o.Namespace, rel, onLine); err != nil {
+				errs[i] = err
+				cancel()
+			}
+		}()
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		ps.Fail(err.Error())
+		return err
+	}
+	ps.Done(fmt.Sprintf("%d release(s)", len(rels)))
 	return nil
 }
 
