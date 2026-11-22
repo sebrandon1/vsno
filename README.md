@@ -431,6 +431,14 @@ earlier run made, an upgrade part way. So when a run is interrupted, running it 
 the plan says which stages an earlier run finished. Stages are recorded in the environment's state
 (`vsno status`). Ctrl+C stops a run cleanly.
 
+`--restart` runs every stage again instead of skipping the ones this plan already finished, which is
+what repeating a test wants. With the seed image kept (`--seed-image`) and a rollback at the end, a
+target can be upgraded over and over without installing a vSNO:
+
+```bash
+vsno run --yes --rollback --restart --seed-image registry.vsno.svc.cluster.local:5000/seeds/seed:4.22.22
+```
+
 `-f vsno.yaml` takes the same settings as the flags, by their JSON names, and flags override it:
 
 ```yaml

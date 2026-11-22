@@ -80,21 +80,27 @@ type Options struct {
 	Delete   bool `json:"delete,omitempty"`
 	// Yes approves the plan without asking.
 	Yes bool `json:"yes,omitempty"`
+	// Restart runs every stage again instead of skipping the ones an earlier
+	// run of the same plan finished. Each stage still reuses what is on the
+	// cluster, so little is rebuilt.
+	Restart bool `json:"restart,omitempty"`
 }
 
 // Plan is what a run will do, shown before it starts.
 type Plan struct {
-	Namespace     string    `json:"namespace"`
-	Target        string    `json:"target"`
-	TargetVersion string    `json:"targetVersion"`
-	Seed          string    `json:"seed,omitempty"` // "" with a seed image
-	SeedVersion   string    `json:"seedVersion"`
-	SeedImage     string    `json:"seedImage,omitempty"`
-	LCA           string    `json:"lca"`
-	Then          string    `json:"then"` // finalize, rollback, delete, or keep
-	Stages        []Stage   `json:"stages"`
-	Done          []Stage   `json:"done,omitempty"` // stages an earlier run finished
-	At            time.Time `json:"-"`
+	Namespace     string  `json:"namespace"`
+	Target        string  `json:"target"`
+	TargetVersion string  `json:"targetVersion"`
+	Seed          string  `json:"seed,omitempty"` // "" with a seed image
+	SeedVersion   string  `json:"seedVersion"`
+	SeedImage     string  `json:"seedImage,omitempty"`
+	LCA           string  `json:"lca"`
+	Then          string  `json:"then"` // finalize, rollback, delete, or keep
+	Stages        []Stage `json:"stages"`
+	Done          []Stage `json:"done,omitempty"` // stages an earlier run finished
+	// Restart is set when this run ignores Done and runs every stage.
+	Restart bool      `json:"restart,omitempty"`
+	At      time.Time `json:"-"`
 }
 
 // Result is a finished, or failed, run.
@@ -239,7 +245,7 @@ func runStage(ctx context.Context, e Env, o Options, plan *Plan, s Stage, res *R
 // already finished.
 func makePlan(ctx context.Context, e Env, o Options) (*Plan, error) {
 	p := &Plan{Namespace: o.Namespace, Target: o.TargetName, TargetVersion: o.TargetVersion, SeedVersion: o.SeedVersion,
-		SeedImage: o.SeedImage, LCA: lcaText(o.LCA), Then: afterText[o.after()], At: e.Now()}
+		SeedImage: o.SeedImage, LCA: lcaText(o.LCA), Then: afterText[o.after()], Restart: o.Restart, At: e.Now()}
 	if o.SeedImage == "" {
 		p.Seed = o.SeedName
 	}
@@ -266,7 +272,9 @@ func makePlan(ctx context.Context, e Env, o Options) (*Plan, error) {
 	if o.after() == AfterDelete {
 		p.Stages = append(p.Stages, StageDelete)
 	}
-	p.Done = finished(ctx, e, o.Namespace, p.key())
+	if !o.Restart {
+		p.Done = finished(ctx, e, o.Namespace, p.key())
+	}
 	return p, nil
 }
 
@@ -462,6 +470,9 @@ func (p Plan) String() string {
 	fmt.Fprintf(&b, "  then     %s\n", p.Then)
 	if len(p.Done) > 0 {
 		fmt.Fprintf(&b, "  resuming: an earlier run finished %v\n", p.Done)
+	}
+	if p.Restart {
+		fmt.Fprintf(&b, "  restarting: every stage runs again, reusing what's there\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

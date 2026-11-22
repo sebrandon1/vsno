@@ -265,6 +265,34 @@ func TestRunSkipsDoneStages(t *testing.T) {
 	}
 }
 
+// --restart drops what earlier runs recorded, so a repeat test re-runs them.
+func TestRestartRunsFinishedStagesAgain(t *testing.T) {
+	ctx := context.Background()
+	e := testEnv("4.22.0", "4.22.1", "4.22.2")
+	e.Timeout = 20 * time.Millisecond
+	if err := state.Save(ctx, e.Kube, ns, &state.State{}); err != nil {
+		t.Fatal(err)
+	}
+	o := Options{Namespace: ns, Yes: true}
+	o.defaults()
+	p, err := makePlan(ctx, e, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record(ctx, e, ns, p.key(), StageSetup, nil)
+
+	o.Restart = true
+	if p, err = makePlan(ctx, e, o); err != nil || len(p.Done) != 0 {
+		t.Fatalf("restart plan: done = %v, err = %v", p.Done, err)
+	}
+	ran := false
+	e.Setup = func(context.Context) error { ran = true; return nil }
+	res, _ := Run(ctx, e, o) // the stages after setup may fail in the fakes
+	if !ran || res.Timings[StageSetup] == "" {
+		t.Errorf("setup did not run again: %v", res.Timings)
+	}
+}
+
 func TestRunNeedsConfirmation(t *testing.T) {
 	e := testEnv("4.22.0", "4.22.1", "4.22.2")
 	ran := false
