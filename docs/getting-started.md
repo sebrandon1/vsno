@@ -19,8 +19,9 @@ make build && ./vsno --help
 ```
 
 `vsno version` (or `vsno --version`) prints the build version. Global flags, accepted by every
-command (`--kubeconfig`, `--context`, `-n`, `-o`, `--no-color`), are in the
-[command reference](commands.md#global-flags).
+command (`--kubeconfig`, `--context`, `-n`, `-o`, `-v/--verbose`, `--no-color`), are in the
+[command reference](commands.md#global-flags). `-v` traces what vsno is doing underneath; it is not
+the version, which is `--version`.
 
 ## precheck: can this cluster host vSNOs?
 

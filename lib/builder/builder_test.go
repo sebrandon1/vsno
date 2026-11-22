@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	kfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/sebrandon1/vsno/lib/trace"
 )
 
 func pod(name string, phase corev1.PodPhase, ready bool) *corev1.Pod {
@@ -68,6 +71,50 @@ func TestLastLineAndTail(t *testing.T) {
 		}
 		if got := Tail(c.in); got != c.tail {
 			t.Errorf("Tail(%q) = %q, want %q", c.in, got, c.tail)
+		}
+	}
+}
+
+// The commands are reported before the pod is even found, so a create that
+// fails to reach the builder still says what it was about to run.
+func TestRunTracesCommands(t *testing.T) {
+	var buf bytes.Buffer
+	trace.Enable(&buf)
+	t.Cleanup(trace.Disable)
+
+	e := Exec{Config: &rest.Config{Host: "https://127.0.0.1:1"}, Kube: kfake.NewClientset(), Namespace: "vsno"}
+	if err := e.Run(context.Background(), "oc adm release info quay.io/x:1\n", nil, IO{}); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("err = %v, want ErrNotReady", err)
+	}
+	if got, want := buf.String(), "→ exec builder: oc adm release info quay.io/x:1\n"; got != want {
+		t.Errorf("trace = %q, want %q", got, want)
+	}
+}
+
+func TestTracePodCommand(t *testing.T) {
+	var buf bytes.Buffer
+	trace.Enable(&buf)
+	t.Cleanup(trace.Disable)
+
+	tracePodCommand("registry", []string{"df", "-Pk", "/var/lib/registry"})
+	tracePodCommand("builder", []string{"bash", "-c", "oc get nodes", "vsno"})
+	if got, want := buf.String(), "→ exec registry: df -Pk /var/lib/registry\n"; got != want {
+		t.Errorf("trace = %q, want %q", got, want)
+	}
+}
+
+func TestIsShellScript(t *testing.T) {
+	for _, c := range []struct {
+		command []string
+		want    bool
+	}{
+		{[]string{"bash", "-c", "script", "vsno"}, true},
+		{[]string{"df", "-Pk", "/x"}, false},
+		{[]string{"bash"}, false},
+		{nil, false},
+	} {
+		if got := isShellScript(c.command); got != c.want {
+			t.Errorf("isShellScript(%q) = %v, want %v", c.command, got, c.want)
 		}
 	}
 }

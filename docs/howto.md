@@ -23,7 +23,8 @@ You need:
 
 - one worker node with `/dev/kvm` and enough memory for the vSNOs (ideally bare metal), and a
   disk free for LVM Storage
-- `oc` on your `PATH` (vsno shells it out for precheck)
+- nothing else on your `PATH`: vsno talks to the cluster itself, and runs `oc` inside the builder
+  pod it creates. `--verbose` shows both
 
 All commands accept these:
 
@@ -33,6 +34,7 @@ All commands accept these:
 | `--context <name>` | kubeconfig context |
 | `-n, --namespace <ns>` | the vSNO environment's namespace (default `vsno`) |
 | `-o table\|wide\|json` | output format |
+| `-v, --verbose` | trace the cluster requests and builder commands on stderr |
 | `--no-color` | plain output (also `NO_COLOR=1`) |
 
 ## 1. Check the cluster can host vSNOs

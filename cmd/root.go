@@ -14,6 +14,7 @@ import (
 	"os"
 
 	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -36,6 +37,7 @@ var (
 	namespace    string
 	outputFormat string
 	noColor      bool
+	verbose      bool
 )
 
 var rootCmd = &cobra.Command{
@@ -59,7 +61,15 @@ Start with:  vsno precheck`,
 			return err
 		}
 		outputFormat = strings.ToLower(outputFormat)
-		return checkWide(cmd)
+		if err := checkWide(cmd); err != nil {
+			return err
+		}
+		if verbose {
+			trace.Enable(cmd.ErrOrStderr())
+		} else {
+			trace.Disable()
+		}
+		return nil
 	},
 }
 
@@ -70,6 +80,8 @@ func init() {
 	pf.StringVarP(&namespace, "namespace", "n", "vsno", "namespace that holds the vSNO environment")
 	pf.StringVarP(&outputFormat, "output", "o", formatTable, "output format: table, wide or json")
 	pf.BoolVar(&noColor, "no-color", false, "don't color the output (also: NO_COLOR=1)")
+	// -v is verbose, so cobra registers --version without a shorthand.
+	pf.BoolVarP(&verbose, "verbose", "v", false, "trace the cluster requests and builder commands on stderr")
 }
 
 // commandsWithWide have columns beyond the default view. Elsewhere wide would be
@@ -103,6 +115,8 @@ func SetVersion(v string) {
 // context, so a command stopped mid-wait still cleans up after itself (the LCA
 // build pod, say) rather than dying where it stands.
 func Execute() error {
+	// The last collapsed count would otherwise be lost on the way out.
+	defer trace.Flush()
 	return cobrautil.Execute(rootCmd)
 }
 

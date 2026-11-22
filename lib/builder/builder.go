@@ -18,6 +18,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/streaming/pkg/httpstream"
+
+	"github.com/sebrandon1/vsno/lib/trace"
 )
 
 // Container is the builder Deployment's container.
@@ -85,6 +87,9 @@ func ReadyPod(ctx context.Context, kube kubernetes.Interface, ns string) (*corev
 // Without a stderr writer, stderr is captured and its last line added to an
 // error (exec also needs at least one output stream).
 func (e Exec) Run(ctx context.Context, script string, args []string, s IO) error {
+	if trace.Enabled() {
+		traceCommands(Container, trace.ScriptCommands(script, args))
+	}
 	var captured bytes.Buffer
 	if s.Stderr == nil && !s.TTY {
 		s.Stderr = &captured
@@ -109,6 +114,7 @@ func (e Exec) run(ctx context.Context, script string, args []string, s IO) error
 // ExecPod runs command in pod's container. It is how vsno reads a container's
 // filesystem, such as the registry's volume, without a shell of its own.
 func ExecPod(ctx context.Context, cfg *rest.Config, kube kubernetes.Interface, ns, pod, container string, command []string, s IO) error {
+	tracePodCommand(container, command)
 	req := kube.CoreV1().RESTClient().Post().Resource("pods").Namespace(ns).Name(pod).SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: container,
@@ -135,6 +141,34 @@ func ExecPod(ctx context.Context, cfg *rest.Config, kube kubernetes.Interface, n
 		opts.Stderr = s.Stderr
 	}
 	return ex.StreamWithContext(ctx, opts)
+}
+
+// traceCommands reports what is about to run in a pod, then flushes: the line
+// has to be readable before a long or interactive command, not after it.
+func traceCommands(container string, commands []string) {
+	if !trace.Enabled() {
+		return
+	}
+	for _, c := range commands {
+		trace.Line("→ exec " + container + ": " + c)
+	}
+	trace.Flush()
+}
+
+// tracePodCommand reports a one-shot command run in a pod. Exec.Run traces the
+// commands inside a script, so the bash -c wrapper around them is not reported
+// a second time here.
+func tracePodCommand(container string, command []string) {
+	if isShellScript(command) {
+		return
+	}
+	traceCommands(container, []string{strings.Join(command, " ")})
+}
+
+// isShellScript reports the command shape Exec.run uses, which ExecPod should
+// not report as well.
+func isShellScript(command []string) bool {
+	return len(command) >= 2 && command[0] == "bash" && command[1] == "-c"
 }
 
 // LastLine is the last line of a script's output, trimmed.
