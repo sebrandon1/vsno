@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/sebrandon1/go-toolbox/cliout"
@@ -48,15 +49,17 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if err := useEnvironment(cmd.Context(), c.Kube); err != nil {
+	envs, err := useEnvironment(cmd.Context(), c.Kube)
+	if err != nil {
 		return err
 	}
 	r, err := status.Collect(cmd.Context(), c.Kube, c.Dyn, namespace)
 	if err != nil {
 		return err
 	}
+	r.Others = otherEnvironments(envs, r.Namespace)
 	if r.Exists {
-		env, err := guestEnv(cmd.Context(), c, 0)
+		env, err := guestEnvFor(c, namespace, 0)
 		if err != nil {
 			return err
 		}
@@ -108,15 +111,21 @@ func renderStatus(w io.Writer, r *status.Report, pal ui.Palette) error {
 	if outputFormat == formatJSON {
 		return cliout.PrintJSON(w, r)
 	}
+	// With several environments, name the ones this report isn't about, so it
+	// can't be mistaken for them.
+	also := ""
+	if len(r.Others) > 0 {
+		also = fmt.Sprintf(" (also found: %s — pass -n to choose)", strings.Join(r.Others, ", "))
+	}
 	switch {
 	case !r.Exists:
-		fmt.Fprintln(w, pal.Red(fmt.Sprintf("Namespace %s does not exist; run `vsno setup -n %s`.", r.Namespace, r.Namespace)))
+		fmt.Fprintln(w, pal.Red(fmt.Sprintf("Namespace %s does not exist; run `vsno setup -n %s`.", r.Namespace, r.Namespace))+also)
 	case !r.Managed:
-		fmt.Fprintln(w, pal.Yellow(fmt.Sprintf("Namespace %s was not created by vsno.", r.Namespace)))
+		fmt.Fprintln(w, pal.Yellow(fmt.Sprintf("Namespace %s was not created by vsno.", r.Namespace))+also)
 	case r.Node != "":
-		fmt.Fprintf(w, "Environment %s on node %s\n", pal.Bold(r.Namespace), pal.Bold(r.Node))
+		fmt.Fprintf(w, "Environment %s on node %s%s\n", pal.Bold(r.Namespace), pal.Bold(r.Node), also)
 	default:
-		fmt.Fprintf(w, "Environment %s\n", pal.Bold(r.Namespace))
+		fmt.Fprintf(w, "Environment %s%s\n", pal.Bold(r.Namespace), also)
 	}
 	section(w, "Host", r.Host, pal)
 	if r.Exists {

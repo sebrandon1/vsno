@@ -57,6 +57,8 @@ func TestRenderStatusHeadings(t *testing.T) {
 		"does not exist; run `vsno setup -n x`": {Namespace: "x"},
 		"was not created by vsno":               {Namespace: "x", Exists: true},
 		"Environment x\n":                       {Namespace: "x", Exists: true, Managed: true},
+		"Environment x (also found: b, c — pass -n to choose)": {Namespace: "x", Exists: true, Managed: true,
+			Others: []string{"b", "c"}},
 	}
 	for want, r := range cases {
 		var b bytes.Buffer

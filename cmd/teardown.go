@@ -38,7 +38,10 @@ volumes outside the namespace exist, or while LVMS has an LVMCluster vsno
 didn't create, unless --force.
 
 It lists what it will delete and asks you to type the namespace (or "host"
-with --host), unless --yes. --dry-run only lists.`,
+with --host), unless --yes. --dry-run only lists.
+
+Without -n it uses the environment vsno status reports, and refuses while
+several exist: pass -n to pick one.`,
 	RunE: runTeardown,
 }
 
@@ -55,6 +58,13 @@ func init() {
 func runTeardown(cmd *cobra.Command, _ []string) error {
 	c, err := kube.New(kubeconfig, kubeContext)
 	if err != nil {
+		return err
+	}
+	envs, err := useEnvironment(cmd.Context(), c.Kube)
+	if err != nil {
+		return err
+	}
+	if err := severalEnvironments(envs); err != nil {
 		return err
 	}
 	w := cmd.OutOrStdout()

@@ -133,6 +133,26 @@ func TestRenderTeardownPlanShown(t *testing.T) {
 	}
 }
 
+// Without -n, teardown names the environments it won't pick between instead
+// of silently deleting one (#54).
+func TestTeardownRefusesSeveralEnvironments(t *testing.T) {
+	for _, envs := range [][]string{nil, {"vsno"}} {
+		if err := severalEnvironments(envs); err != nil {
+			t.Errorf("%v: %v", envs, err)
+		}
+	}
+	err := severalEnvironments([]string{"vsno", "vsno-dev"})
+	if err == nil || !strings.Contains(err.Error(), "several vsno environments (vsno, vsno-dev); pick one with -n") {
+		t.Errorf("several: %v", err)
+	}
+	if got := otherEnvironments([]string{"vsno", "vsno-dev"}, "vsno-dev"); len(got) != 1 || got[0] != "vsno" {
+		t.Errorf("others = %v", got)
+	}
+	if got := otherEnvironments([]string{"vsno"}, "vsno"); len(got) != 0 {
+		t.Errorf("others of the only one = %v", got)
+	}
+}
+
 // A plain teardown says it puts HyperConverged's density back.
 func TestRenderTeardownRestoresDensity(t *testing.T) {
 	res := tdResult()

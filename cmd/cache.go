@@ -100,7 +100,7 @@ func cacheEnv(cmd *cobra.Command) (cache.Env, guest.Env, error) {
 	if err != nil {
 		return cache.Env{}, guest.Env{}, err
 	}
-	if err := useEnvironment(cmd.Context(), c.Kube); err != nil {
+	if _, err := useEnvironment(cmd.Context(), c.Kube); err != nil {
 		return cache.Env{}, guest.Env{}, err
 	}
 	genv, err := guestEnv(cmd.Context(), c, 0)

@@ -91,7 +91,7 @@ func isosEnv(cmd *cobra.Command) (isos.Env, error) {
 	if err != nil {
 		return isos.Env{}, err
 	}
-	if err := useEnvironment(cmd.Context(), c.Kube); err != nil {
+	if _, err := useEnvironment(cmd.Context(), c.Kube); err != nil {
 		return isos.Env{}, err
 	}
 	e, err := guestEnv(cmd.Context(), c, 0)

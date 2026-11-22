@@ -93,26 +93,43 @@ func Execute() error {
 // useEnvironment picks the environment for commands that work in one, when -n
 // isn't given: the namespace vsno setup labeled, if there is exactly one (the
 // default name may hold something else, such as an environment built by
-// hand). With none, the default stays; with several, the user must choose.
-func useEnvironment(ctx context.Context, kube kubernetes.Interface) error {
+// hand). With none, the default stays; with several that don't include it,
+// the user must choose. It returns the labeled namespaces it found, so a
+// command can name — or, for teardown, refuse — the ones it didn't pick.
+func useEnvironment(ctx context.Context, kube kubernetes.Interface) ([]string, error) {
 	if rootCmd.PersistentFlags().Changed("namespace") {
-		return nil
+		return nil, nil
 	}
 	l, err := kube.CoreV1().Namespaces().List(ctx, metav1.ListOptions{LabelSelector: cluster.ManagedByLabel + "=vsno"})
 	if err != nil {
-		return nil //nolint:nilerr // keep the default; the command reports access problems itself
+		return nil, nil //nolint:nilerr // keep the default; the command reports access problems itself
 	}
 	names := make([]string, 0, len(l.Items))
 	for _, n := range l.Items {
 		names = append(names, n.Name)
 	}
+	slices.Sort(names)
 	switch {
 	case slices.Contains(names, namespace):
 	case len(names) == 1:
 		namespace = names[0]
 	case len(names) > 1:
-		slices.Sort(names)
-		return fmt.Errorf("there are several vsno environments (%s); pick one with -n", strings.Join(names, ", "))
+		return names, severalEnvironments(names)
 	}
-	return nil
+	return names, nil
+}
+
+// severalEnvironments refuses to pick between several labeled namespaces when
+// -n wasn't given: a command that deletes the environment lists them instead
+// of silently acting on one.
+func severalEnvironments(envs []string) error {
+	if len(envs) < 2 {
+		return nil
+	}
+	return fmt.Errorf("there are several vsno environments (%s); pick one with -n", strings.Join(envs, ", "))
+}
+
+// otherEnvironments drops the picked namespace from the found ones.
+func otherEnvironments(envs []string, picked string) []string {
+	return slices.DeleteFunc(slices.Clone(envs), func(n string) bool { return n == picked })
 }

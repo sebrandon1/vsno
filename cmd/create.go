@@ -69,7 +69,7 @@ func init() {
 // guestEnv wires the guest package to the cluster, in the environment
 // useEnvironment picks.
 func guestEnv(ctx context.Context, c *kube.Clients, timeout time.Duration) (guest.Env, error) {
-	if err := useEnvironment(ctx, c.Kube); err != nil {
+	if _, err := useEnvironment(ctx, c.Kube); err != nil {
 		return guest.Env{}, err
 	}
 	return guestEnvFor(c, namespace, timeout)

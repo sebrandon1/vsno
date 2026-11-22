@@ -40,6 +40,9 @@ type VM struct {
 // Report is the status of one environment.
 type Report struct {
 	Namespace string `json:"namespace"`
+	// Others are the other environments vsno found (filled in by the caller,
+	// which knows which namespace -n didn't pick).
+	Others []string `json:"others,omitempty"`
 	// Exists is false when the namespace doesn't exist.
 	Exists bool `json:"exists"`
 	// Managed is true when vsno created the namespace or recorded state in it.

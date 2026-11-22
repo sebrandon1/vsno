@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -200,24 +201,28 @@ func TestUseEnvironment(t *testing.T) {
 		name    string
 		objs    []runtime.Object
 		want    string
+		envs    []string
 		wantErr string
 	}{
-		{"none: keep the default", []runtime.Object{ns("vsno", false)}, "vsno", ""},
-		{"one elsewhere", []runtime.Object{ns("vsno", false), ns("vsno-dev", true)}, "vsno-dev", ""},
-		{"the default is ours", []runtime.Object{ns("vsno", true), ns("vsno-dev", true)}, "vsno", ""},
-		{"several", []runtime.Object{ns("b", true), ns("a", true)}, "vsno", "several vsno environments (a, b)"},
+		{"none: keep the default", []runtime.Object{ns("vsno", false)}, "vsno", nil, ""},
+		{"one elsewhere", []runtime.Object{ns("vsno", false), ns("vsno-dev", true)}, "vsno-dev", []string{"vsno-dev"}, ""},
+		{"the default is ours", []runtime.Object{ns("vsno", true), ns("vsno-dev", true)}, "vsno", []string{"vsno", "vsno-dev"}, ""},
+		{"several", []runtime.Object{ns("b", true), ns("a", true)}, "vsno", []string{"a", "b"}, "several vsno environments (a, b)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			namespace = "vsno"
-			err := useEnvironment(context.Background(), kfake.NewClientset(c.objs...))
+			envs, err := useEnvironment(context.Background(), kfake.NewClientset(c.objs...))
 			if namespace != c.want || (c.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), c.wantErr)) {
 				t.Errorf("namespace %q, err %v", namespace, err)
+			}
+			if !slices.Equal(envs, c.envs) {
+				t.Errorf("envs = %v, want %v", envs, c.envs)
 			}
 		})
 	}
 	// An explicit -n wins.
 	_ = rootCmd.PersistentFlags().Set("namespace", "mine")
-	if err := useEnvironment(context.Background(), kfake.NewClientset(ns("vsno-dev", true))); err != nil || namespace != "mine" {
+	if _, err := useEnvironment(context.Background(), kfake.NewClientset(ns("vsno-dev", true))); err != nil || namespace != "mine" {
 		t.Errorf("explicit: %q %v", namespace, err)
 	}
 	// A failed list keeps the default.
@@ -225,7 +230,7 @@ func TestUseEnvironment(t *testing.T) {
 	rootCmd.PersistentFlags().Lookup("namespace").Changed = false
 	k := kfake.NewClientset()
 	k.PrependReactor("list", "namespaces", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, errors.New("forbidden") })
-	if err := useEnvironment(context.Background(), k); err != nil || namespace != "vsno" {
+	if _, err := useEnvironment(context.Background(), k); err != nil || namespace != "vsno" {
 		t.Errorf("list error: %q %v", namespace, err)
 	}
 }
