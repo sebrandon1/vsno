@@ -6,14 +6,17 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/builder"
+	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/ibu"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/release"
 	"github.com/sebrandon1/vsno/lib/seed"
 	"github.com/sebrandon1/vsno/lib/snapshot"
 	"github.com/sebrandon1/vsno/lib/state"
@@ -54,7 +57,7 @@ func testEnv(hostVersion string, stable ...string) Env {
 	)
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	return Env{
-		Env: seed.Env{Env: guest.Env{Kube: kube, Dyn: dyn, Builder: listing{}, Poll: time.Millisecond,
+		Env: seed.Env{Env: guest.Env{Kube: kube, Dyn: dyn, Builder: listing{}, Progress: precheck.NoProgress(), Poll: time.Millisecond,
 			Now: func() time.Time { now = now.Add(time.Second); return now }}},
 		Stable: func(_ context.Context, minor string) ([]string, error) {
 			if minor != "4.22" {
@@ -602,5 +605,127 @@ func TestRunStageDelete(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// fakeResolver names an image after the version, so the tests can tell the
+// releases apart.
+type fakeResolver struct{}
+
+func (fakeResolver) Resolve(_ context.Context, v string) (release.Release, error) {
+	return release.Release{Requested: v, Version: v, Image: "quay.io/release:" + v}, nil
+}
+
+// meetingCache records what it is asked to mirror; want of them must be in
+// flight at once for any to return, so a sequential mirror fails instead of
+// passing quietly.
+type meetingCache struct {
+	mu   sync.Mutex
+	got  []string
+	want int
+	met  chan struct{}
+}
+
+func (c *meetingCache) Ensure(_ context.Context, _ string, rel release.Release, _ func(string)) (*cache.Prepared, error) {
+	c.mu.Lock()
+	c.got = append(c.got, rel.Requested)
+	n := len(c.got)
+	c.mu.Unlock()
+	if n < c.want {
+		select {
+		case <-c.met:
+		case <-time.After(2 * time.Second):
+			return nil, errors.New("the mirrors did not run at once")
+		}
+		return &cache.Prepared{}, nil
+	}
+	close(c.met)
+	return &cache.Prepared{}, nil
+}
+
+func (c *meetingCache) mirrored() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.got)
+}
+
+// A cold cache's two mirrors run at once, not one after the other.
+func TestMirrorRunsTheReleasesAtOnce(t *testing.T) {
+	e := testEnv("4.22.0")
+	e.Resolver, e.Cache = fakeResolver{}, &meetingCache{want: 2, met: make(chan struct{})}
+	p := &Plan{Seed: "seed", SeedVersion: "4.22.2", Target: "target", TargetVersion: "4.22.1"}
+	if err := mirror(context.Background(), e, Options{Namespace: ns}, p, []string{"seed", "target"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.Cache.(*meetingCache).mirrored(); !slices.Equal(got, []string{"4.22.2", "4.22.1"}) &&
+		!slices.Equal(got, []string{"4.22.1", "4.22.2"}) {
+		t.Errorf("mirrored = %v", got)
+	}
+}
+
+// A vSNO restored from a snapshot, or one that already exists, has no release
+// to mirror, and two vSNOs of one release mirror it once.
+func TestMirrorSkipsWhatNeedsNone(t *testing.T) {
+	guests := func(names ...string) []guest.Guest {
+		var out []guest.Guest
+		for _, n := range names {
+			out = append(out, guest.Guest{Name: n})
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name     string
+		plan     Plan
+		names    []string
+		existing []guest.Guest
+		want     []string
+	}{
+		{"a restored vSNO", Plan{Seed: "seed", SeedVersion: "4.22.2", Target: "target", TargetVersion: "4.22.1",
+			Restore: map[string]string{"target": "target"}}, []string{"seed", "target"}, nil, []string{"4.22.2"}},
+		{"one that exists", Plan{Seed: "seed", SeedVersion: "4.22.2", Target: "target", TargetVersion: "4.22.1"},
+			[]string{"seed", "target"}, guests("seed"), []string{"4.22.1"}},
+		{"the same release twice", Plan{Seed: "seed", SeedVersion: "4.22.2", Target: "target", TargetVersion: "4.22.2"},
+			[]string{"seed", "target"}, nil, []string{"4.22.2"}},
+		{"nothing to create", Plan{Seed: "seed", SeedVersion: "4.22.2", Target: "target", TargetVersion: "4.22.1"},
+			[]string{"seed", "target"}, guests("seed", "target"), nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := testEnv("4.22.0")
+			fc := &meetingCache{want: len(c.want), met: make(chan struct{})}
+			if len(c.want) == 0 {
+				fc.want = 1
+			}
+			e.Resolver, e.Cache = fakeResolver{}, fc
+			if err := mirror(context.Background(), e, Options{Namespace: ns}, &c.plan, c.names, c.existing); err != nil {
+				t.Fatal(err)
+			}
+			got := fc.mirrored()
+			slices.Sort(got)
+			if !slices.Equal(got, c.want) {
+				t.Errorf("mirrored = %v, want %v", got, c.want)
+			}
+		})
+	}
+	// Without a cache there is nothing to mirror.
+	e := testEnv("4.22.0")
+	if err := mirror(context.Background(), e, Options{Namespace: ns}, &Plan{Target: "target", TargetVersion: "4.22.1"}, []string{"target"}, nil); err != nil {
+		t.Errorf("no cache: %v", err)
+	}
+}
+
+// failingCache refuses every mirror, as a registry without room does.
+type failingCache struct{}
+
+func (failingCache) Ensure(context.Context, string, release.Release, func(string)) (*cache.Prepared, error) {
+	return nil, errors.New("the registry volume has no room")
+}
+
+func TestMirrorReportsAFailure(t *testing.T) {
+	e := testEnv("4.22.0")
+	e.Resolver, e.Cache = fakeResolver{}, failingCache{}
+	p := &Plan{Target: "target", TargetVersion: "4.22.1"}
+	err := mirror(context.Background(), e, Options{Namespace: ns}, p, []string{"target"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "no room") {
+		t.Errorf("err = %v", err)
 	}
 }
