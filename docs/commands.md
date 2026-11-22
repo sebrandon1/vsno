@@ -400,13 +400,23 @@ DataVolumes, with what still uses each. Ends with the builder volume's usage. `v
 | Subcommand | What it does |
 |---|---|
 | [`iso list`](#vsno-iso-list) | List the ISOs, installer caches and ISO DataVolumes, and what uses them |
+| [`iso info`](#vsno-iso-info) | Show what one vSNO, installer or DataVolume holds, and who uses it |
 | [`iso delete`](#vsno-iso-delete) | Delete the ISOs, installers or ISO DataVolumes you name |
 | [`iso eject`](#vsno-iso-eject) | Remove a vSNO's install ISO, which it no longer boots from |
 | [`iso prune`](#vsno-iso-prune) | Remove the ISOs, installers and ISO DataVolumes no vSNO uses |
 
 ### `vsno iso list`
 
-Lists the ISOs, installer caches and ISO DataVolumes, and what uses them. Alias: `ls`.
+Lists the ISOs, installer caches and ISO DataVolumes, and what uses them, with each one's age.
+Alias: `ls`.
+
+### `vsno iso info`
+
+Shows one name's builder files — path, version, size, age and who uses them — its ISO DataVolume,
+the release an installer came from, and the builder volume's usage. A vSNO name brings its served
+ISO, build directory and DataVolume; an installer or DataVolume name brings itself.
+
+Takes one name and the global flags.
 
 ### `vsno iso delete`
 

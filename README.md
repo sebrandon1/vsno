@@ -51,7 +51,7 @@ vsno run                                        # ...or the whole IBU from a kub
 | `vsno run` | Do a whole Image Based Upgrade from only a kubeconfig |
 | `vsno snapshot create` / `list` / `delete` | Keep a vSNO's disk, and create from it |
 | `vsno cache add` / `list` / `prune` / `gc` | Manage the mirrored OpenShift releases |
-| `vsno iso list` / `delete` / `eject` / `prune` | Clean up what creates leave behind |
+| `vsno iso list` / `info` / `delete` / `eject` / `prune` | Clean up what creates leave behind |
 | `vsno teardown` | Delete a vSNO environment |
 | `vsno version` | Print the vsno version |
 
