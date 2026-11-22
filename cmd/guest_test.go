@@ -250,3 +250,38 @@ func TestLCAText(t *testing.T) {
 		t.Errorf("source = %q", lcaText(src))
 	}
 }
+
+// A command acting on one of several environments says the others exist, so
+// its output never quietly describes an environment the reader didn't expect.
+func TestEnvNote(t *testing.T) {
+	ctx := context.Background()
+	ns := func(name string, ours bool) runtime.Object {
+		n := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		if ours {
+			n.Labels = map[string]string{cluster.ManagedByLabel: "vsno"}
+		}
+		return n
+	}
+	for _, c := range []struct {
+		name string
+		objs []runtime.Object
+		want string
+	}{
+		{"alone", []runtime.Object{ns("vsno", true)}, ""},
+		{"others named", []runtime.Object{ns("vsno", true), ns("vsno-dev", true)}, "vsno is one of several vsno environments (also: vsno-dev); pass -n to choose another"},
+		{"unlabeled ones don't count", []runtime.Object{ns("vsno", true), ns("other", false)}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := envNote(ctx, kfake.NewClientset(c.objs...), "vsno")
+			if !strings.Contains(got, c.want) || (c.want == "") != (got == "") {
+				t.Errorf("envNote = %q, want %q", got, c.want)
+			}
+		})
+	}
+	// An unreadable list says nothing rather than failing the command.
+	k := kfake.NewClientset()
+	k.PrependReactor("list", "namespaces", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, errors.New("forbidden") })
+	if got := envNote(ctx, k, "vsno"); got != "" {
+		t.Errorf("on a list error: %q", got)
+	}
+}

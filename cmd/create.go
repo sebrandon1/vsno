@@ -125,6 +125,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--version is required to install a vSNO (or --from-snapshot to restore one)")
 	}
 	if outputFormat != formatJSON {
+		fmt.Fprint(cmd.ErrOrStderr(), envNote(cmd.Context(), c.Kube, namespace))
 		fmt.Fprintf(cmd.ErrOrStderr(), "Creating vSNO %s in %s on %s (context %q)...\n\n", name, namespace, c.Config.Host, c.Context)
 	}
 	snap, err := restoreFrom(cmd, name)

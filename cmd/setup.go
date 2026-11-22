@@ -137,6 +137,7 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if outputFormat != formatJSON {
+		fmt.Fprint(cmd.ErrOrStderr(), envNote(cmd.Context(), c.Kube, namespace))
 		fmt.Fprintf(cmd.ErrOrStderr(), "Setting up %s in %s (context %q)...\n\n", namespace, c.Config.Host, c.Context)
 	}
 	res, err := setup.Run(cmd.Context(), env, setup.Options{

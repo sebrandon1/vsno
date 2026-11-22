@@ -240,7 +240,10 @@ vsno delete a b
 ```
 
 `create` needs an environment from `vsno setup`. Without `-n`, the vSNO commands (and `status`) use
-the environment `vsno setup` created, if there is exactly one; with several, pass `-n`.
+the environment `vsno setup` created, if there is exactly one; with several, pass `-n`. When the
+default `vsno` is one of several, the command uses it and says so on stderr — `note: vsno is one of
+several vsno environments (also: vsno-dev); pass -n to choose another` — so an output is never
+taken for one of an environment it didn't describe.
 
 `create`:
 1. resolves `--version` to a release image
