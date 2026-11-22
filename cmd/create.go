@@ -56,7 +56,7 @@ see vsno oc, vsno ssh and vsno kubeconfig.`,
 
 func init() {
 	f := createCmd.Flags()
-	f.StringVar(&crVersion, "version", "", "OpenShift version to install (required)")
+	f.StringVar(&crVersion, "version", "", "OpenShift version to install (required unless --from-snapshot)")
 	f.StringVar(&crNode, "node", "", "worker to run on (default: the node vsno setup chose)")
 	f.IntVar(&crCores, "cores", guest.DefaultCores, "vCPUs")
 	f.Int64Var(&crMemory, "memory", guest.DefaultMemoryGiB, "memory, GiB")
