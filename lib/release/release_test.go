@@ -73,6 +73,18 @@ func TestResolveErrors(t *testing.T) {
 	}
 }
 
+func TestResolveOutsideChannelNamesThePullspec(t *testing.T) {
+	r := server(t)
+	_, err := r.Resolve(context.Background(), "4.20.99")
+	if err == nil {
+		t.Fatal("4.20.99 resolved, want an error")
+	}
+	want := "--version quay.io/openshift-release-dev/ocp-release:4.20.99-x86_64"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("err = %v, want it to contain %q", err, want)
+	}
+}
+
 func TestResolveEmptyChannel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, `{"nodes":[]}`) }))
 	defer srv.Close()
