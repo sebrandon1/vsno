@@ -211,9 +211,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - The builder installs RPMs with `tsflags=nocaps`, because the anyuid SCC can't set file
   capabilities.
 - setup waits for an existing HyperConverged that isn't Available instead of reusing it as is.
-- Without `-n`, the vSNO commands and `status` call `useEnvironment` (`cmd/root.go`): they use the
-  one namespace labeled `managed-by=vsno`, because the default name may hold something else.
-  `setup` and `teardown` keep the plain default.
+- Without `-n`, every command that acts on an environment calls `useEnvironment` (`cmd/root.go`):
+  it uses the one namespace labeled `managed-by=vsno`, because the default name may hold something
+  else, and refuses to guess when there are several. `setup` and `teardown` included — `teardown`
+  aiming at a default `vsno` while `vsno-dev` was the environment in use was the worst of the old
+  behaviour. `list` is the exception: without `-n` it reports every environment.
 - The VM labeled `vsno.io/name` is the vSNO inventory; there is no separate list. Its annotations
   hold the requested version, the release image and the installed version.
 - Guests reach each other's names only through dnsmasq. setup's `dnsmasq.conf` loads

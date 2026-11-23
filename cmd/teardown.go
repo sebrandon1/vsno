@@ -58,6 +58,13 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// Silence is not consent: without -n, tear down the environment that is
+	// here, and refuse to guess when there are several. Before this, a plain
+	// `vsno teardown` after `vsno setup -n vsno-dev` aimed at `vsno` and said
+	// there was nothing to delete.
+	if err := useEnvironment(cmd.Context(), c.Kube); err != nil {
+		return err
+	}
 	w := cmd.OutOrStdout()
 	o := teardown.Options{Namespace: namespace, Host: tdHost, Force: tdForce, Yes: tdYes, DryRun: tdDryRun}
 	planShown := false

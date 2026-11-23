@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -47,10 +48,11 @@ func looksTraced(s string) bool {
 	return false
 }
 
-const namespaceJSON = `{"apiVersion":"v1","kind":"Namespace","metadata":` +
-	`{"name":"vsno","labels":{"app.kubernetes.io/managed-by":"vsno"}}}`
-
-const namespaceListJSON = `{"apiVersion":"v1","kind":"NamespaceList","items":[` + namespaceJSON + `]}`
+// namespaceJSONFor is an environment's namespace, as vsno setup labels it.
+func namespaceJSONFor(name string) string {
+	return `{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"` + name +
+		`","labels":{"app.kubernetes.io/managed-by":"vsno"}}}`
+}
 
 // notFoundJSON is what the fake host says to every read it does not answer:
 // the commands then report "not set up" rather than hanging or panicking.
@@ -153,15 +155,20 @@ func run(t *testing.T, kubeconfig string, args ...string) result {
 // runs to its own conclusion with no cluster behind it.
 type fakeHost struct {
 	server *httptest.Server
+	// names are the vsno environments the host has.
+	names []string
 
 	mu    sync.Mutex
 	paths []string
 }
 
-// newFakeHost starts a host that has one namespace and nothing else in it.
-func newFakeHost(t *testing.T) *fakeHost {
+// newFakeHost starts a host with one environment, vsno, and nothing in it.
+func newFakeHost(t *testing.T) *fakeHost { return newFakeHostNamed(t, "vsno") }
+
+// newFakeHostNamed starts a host holding the named environments.
+func newFakeHostNamed(t *testing.T, names ...string) *fakeHost {
 	t.Helper()
-	f := &fakeHost{}
+	f := &fakeHost{names: names}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.server.Close)
 	return f
@@ -172,20 +179,32 @@ func (f *fakeHost) serve(w http.ResponseWriter, r *http.Request) {
 	f.paths = append(f.paths, r.URL.RequestURI())
 	f.mu.Unlock()
 
-	switch r.URL.Path {
-	case "/api/v1/namespaces":
-		writeJSON(w, http.StatusOK, namespaceListJSON)
-	case "/api/v1/namespaces/vsno":
-		writeJSON(w, http.StatusOK, namespaceJSON)
-	case "/api/v1/pods":
+	p := r.URL.Path
+	switch {
+	case p == "/api/v1/namespaces":
+		list := make([]string, len(f.names))
+		for i, n := range f.names {
+			list[i] = namespaceJSONFor(n)
+		}
+		writeJSON(w, http.StatusOK, `{"apiVersion":"v1","kind":"NamespaceList","items":[`+strings.Join(list, ",")+`]}`)
+	case f.namesOneOf(strings.TrimPrefix(p, "/api/v1/namespaces/")):
+		name := strings.TrimPrefix(p, "/api/v1/namespaces/")
+		writeJSON(w, http.StatusOK, namespaceJSONFor(name))
+	case p == "/api/v1/pods":
 		writeJSON(w, http.StatusOK, emptyList("v1", "PodList"))
-	case "/api/v1/namespaces/vsno/services":
+	case strings.HasSuffix(p, "/services"):
 		writeJSON(w, http.StatusOK, emptyList("v1", "ServiceList"))
-	case "/apis/kubevirt.io/v1/namespaces/vsno/virtualmachines":
+	case strings.HasSuffix(p, "/virtualmachines"):
 		writeJSON(w, http.StatusOK, emptyList("kubevirt.io/v1", "VirtualMachineList"))
 	default:
 		writeJSON(w, http.StatusNotFound, notFoundJSON)
 	}
+}
+
+// namesOneOf reports whether name is one of the host's environments, rather
+// than a path below one.
+func (f *fakeHost) namesOneOf(name string) bool {
+	return !strings.Contains(name, "/") && slices.Contains(f.names, name)
 }
 
 // requests returns the request paths the host has answered.
@@ -446,5 +465,45 @@ func TestJSONRefusedForStreams(t *testing.T) {
 	}
 	if r.stdout != "" {
 		t.Errorf("stdout = %q, want empty", r.stdout)
+	}
+}
+
+// setup and teardown work in the environment that is there, like every other
+// command: before this, `vsno teardown` after `vsno setup -n vsno-dev` aimed at
+// the default `vsno` and reported nothing to delete.
+func TestTeardownPicksTheEnvironment(t *testing.T) {
+	host := newFakeHostNamed(t, "vsno-dev")
+
+	r := run(t, host.kubeconfig(t), "teardown", "--dry-run")
+
+	if !strings.Contains(r.stdout+r.stderr, "vsno-dev") {
+		t.Errorf("output does not name vsno-dev:\nstdout: %s\nstderr: %s", r.stdout, r.stderr)
+	}
+	if strings.Contains(r.stderr, "Nothing to delete") {
+		t.Errorf("teardown aimed at the wrong environment: %s", r.stderr)
+	}
+}
+
+// Guessing at which environment to destroy is worse than asking.
+func TestTeardownRefusesToGuess(t *testing.T) {
+	host := newFakeHostNamed(t, "vsno", "vsno-dev")
+
+	r := run(t, host.kubeconfig(t), "teardown", "--dry-run")
+
+	if r.code == 0 {
+		t.Errorf("exit code = 0 with two environments and no -n")
+	}
+	if !strings.Contains(r.stderr, "several vsno environments") {
+		t.Errorf("stderr = %q, want the ambiguity error", r.stderr)
+	}
+}
+
+func TestSetupPicksTheEnvironment(t *testing.T) {
+	host := newFakeHostNamed(t, "vsno-dev")
+
+	r := run(t, host.kubeconfig(t), "setup", "--dry-run", "--no-probe")
+
+	if !strings.Contains(r.stderr, "Setting up vsno-dev") {
+		t.Errorf("stderr does not name vsno-dev: %q", r.stderr)
 	}
 }
