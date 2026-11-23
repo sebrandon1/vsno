@@ -109,6 +109,18 @@ func begin(ctx context.Context, e Env, o UpgradeOptions, res *UpgradeResult) (a 
 		if res.Before, err = identity(ctx, a); err != nil {
 			return a, "", "", err
 		}
+		if (o.Finalize || o.Rollback) && res.SeedVersion != "" && res.Before.Version == res.SeedVersion {
+			// Finalize and rollback end the upgrade that just ran. A target
+			// already at the seed's version has none: setting Prep to reach
+			// them starts a new upgrade, which LCA refuses, leaving the target
+			// in Prep until someone aborts it.
+			what := "--finalize"
+			if o.Rollback {
+				what = "--rollback"
+			}
+			return a, u.Spec.Stage, "", fmt.Errorf("the target already runs %s, the seed's version, so there is no upgrade to end with %s",
+				res.Before.Version, what)
+		}
 		if err := checkSeed(ctx, e, madeFrom, o.Target, a, res); err != nil {
 			return a, "", "", err
 		}

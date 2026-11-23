@@ -79,11 +79,11 @@ func Next(r *Report) string {
 	case len(ready) < len(r.VSNOs):
 		return "`vsno list` shows which vSNOs are not ready yet"
 	}
-	// An upgrade that has finished is the thing left undone: finalizing it is
-	// what frees the old stateroot, and it stays possible until someone does.
+	// A finished upgrade leaves nothing to run: vsno's upgrade ends at Idle,
+	// which is LCA's finalize. What is worth doing next is keeping the result.
 	for _, g := range ready {
 		if g.IBUDone() {
-			return fmt.Sprintf("finalize the upgrade with `vsno upgrade %s --finalize`", g.Name)
+			return fmt.Sprintf("the upgrade is done; keep it with `vsno snapshot create %s`", g.Name)
 		}
 	}
 	if target, seed, ok := ibuPair(ready); ok {

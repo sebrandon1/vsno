@@ -413,3 +413,29 @@ func TestPrepareNamesSeedPrecheck(t *testing.T) {
 		t.Errorf("err = %v, want the seed precheck hint", err)
 	}
 }
+
+// Finalize and rollback end an upgrade that ran. On a target back at Idle they
+// must refuse rather than start one: LCA would reject the Prep anyway, and the
+// target would be left in Prep.
+func TestUpgradeRefusesAnEndStageAtIdle(t *testing.T) {
+	for _, c := range []struct {
+		o    UpgradeOptions
+		want string
+	}{
+		{UpgradeOptions{Finalize: true}, "there is no upgrade to end with --finalize"},
+		{UpgradeOptions{Rollback: true}, "there is no upgrade to end with --rollback"},
+	} {
+		f := targetFake()
+		// The target already runs what the seed supplies.
+		f.OcReplies["get clusterversion version"] = []guestctltest.Reply{
+			{Out: `{"spec":{"clusterID":"c1"},"status":{"desired":{"version":"4.21.42"}}}`}}
+		target := &lca{Fake: f}
+		_, err := upgrade(t, target, c.o, nil)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%+v: err = %v, want %q", c.o, err, c.want)
+		}
+		if len(target.patches) != 0 {
+			t.Errorf("%+v: it changed the IBU anyway: %q", c.o, target.patches)
+		}
+	}
+}

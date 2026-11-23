@@ -339,7 +339,7 @@ func TestNext(t *testing.T) {
 		{"same version", &Report{Exists: true, VSNOs: []guest.Guest{ready("a", "4.22.22"), ready("b", "4.22.22")}}, "vsno seed create a"},
 		{"upgrade done", &Report{Exists: true, VSNOs: []guest.Guest{
 			{Name: "target", State: guest.Ready, Version: "4.22.22", IBU: "Upgrade done"},
-			ready("seed", "4.22.22")}}, "vsno upgrade target --finalize"},
+			ready("seed", "4.22.22")}}, "vsno snapshot create target"},
 	} {
 		if got := Next(c.rep); !strings.Contains(got, c.want) {
 			t.Errorf("%s: Next = %q, want %q", c.name, got, c.want)
