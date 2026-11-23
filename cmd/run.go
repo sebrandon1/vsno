@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/ibu"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/manifests"
@@ -152,7 +153,13 @@ func runRun(cmd *cobra.Command, _ []string) error {
 				Yes: o.Yes, Images: manifests.DefaultImages()})
 			return err
 		},
-		Stable:  resolver.Stable,
+		Stable: resolver.Stable,
+		// A version given as a pullspec — a release its channel has not
+		// published yet — is read from the image, so the plan can compare it
+		// with the other version and name it.
+		Version: func(ctx context.Context, image string) (string, error) {
+			return cache.Version(ctx, cache.Env{Kube: c.Kube, Builder: ge.Builder}, image)
+		},
 		Confirm: confirmOnTerminal(os.Stdin, cmd.ErrOrStderr()),
 	}
 	res, err := run.Run(cmd.Context(), env, o)

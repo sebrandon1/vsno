@@ -52,6 +52,10 @@ type Env struct {
 	Setup func(ctx context.Context) error
 	// Stable lists a minor's stable releases, oldest first.
 	Stable func(ctx context.Context, minor string) ([]string, error)
+	// Version is the OpenShift version a release image reports. It is how a
+	// --seed-version or --target-version given as a pullspec (a release not
+	// yet in its channel) becomes a version, for comparing and naming.
+	Version func(ctx context.Context, image string) (string, error)
 	// Confirm asks the user to type answer to approve question; nil never approves.
 	Confirm func(question, answer string) bool
 }
@@ -92,16 +96,21 @@ type Options struct {
 
 // Plan is what a run will do, shown before it starts.
 type Plan struct {
-	Namespace     string  `json:"namespace"`
-	Target        string  `json:"target"`
-	TargetVersion string  `json:"targetVersion"`
-	Seed          string  `json:"seed,omitempty"` // "" with a seed image
-	SeedVersion   string  `json:"seedVersion"`
-	SeedImage     string  `json:"seedImage,omitempty"`
-	LCA           string  `json:"lca"`
-	Then          string  `json:"then"` // finalize, rollback, delete, or keep
-	Stages        []Stage `json:"stages"`
-	Done          []Stage `json:"done,omitempty"` // stages an earlier run finished
+	Namespace     string `json:"namespace"`
+	Target        string `json:"target"`
+	TargetVersion string `json:"targetVersion"`
+	Seed          string `json:"seed,omitempty"` // "" with a seed image
+	SeedVersion   string `json:"seedVersion"`
+	// TargetRef and SeedRef are the release pullspecs to install from, set
+	// when a version was given as one. The versions above are what the plan
+	// compares, names and matches; the refs are only what it installs.
+	TargetRef string  `json:"targetRef,omitempty"`
+	SeedRef   string  `json:"seedRef,omitempty"`
+	SeedImage string  `json:"seedImage,omitempty"`
+	LCA       string  `json:"lca"`
+	Then      string  `json:"then"` // finalize, rollback, delete, or keep
+	Stages    []Stage `json:"stages"`
+	Done      []Stage `json:"done,omitempty"` // stages an earlier run finished
 	// Restore is the snapshot each vSNO the plan creates is restored from
 	// instead of installed, by vSNO name. A vSNO keeps its snapshot's name and
 	// version, so only a snapshot at the plan's version is used.
@@ -266,6 +275,9 @@ func makePlan(ctx context.Context, e Env, o Options) (*Plan, error) {
 	if err := p.versions(ctx, e, o); err != nil {
 		return nil, err
 	}
+	if err := p.refs(ctx, e); err != nil {
+		return nil, err
+	}
 	if p.SeedVersion != "" && release.Compare(p.TargetVersion, p.SeedVersion) >= 0 {
 		return nil, fmt.Errorf("the target (%s) must be older than the seed (%s)", p.TargetVersion, p.SeedVersion)
 	}
@@ -308,6 +320,42 @@ func (p *Plan) versions(ctx context.Context, e Env, o Options) error {
 		p.SeedVersion = seedV
 	}
 	return nil
+}
+
+// refs turns a version given as a release pullspec into that release's version,
+// keeping the pullspec: `--seed-version quay.io/...:4.22.23-x86_64` is the only
+// way to name a release its channel has not published yet, and the plan needs
+// both the version (to compare, name and match) and the image (to install).
+func (p *Plan) refs(ctx context.Context, e Env) error {
+	for _, v := range []*struct {
+		version *string
+		ref     *string
+	}{{&p.TargetVersion, &p.TargetRef}, {&p.SeedVersion, &p.SeedRef}} {
+		if !release.IsPullspec(*v.version) {
+			continue
+		}
+		if e.Version == nil {
+			return fmt.Errorf("%s is a release pullspec; reading its version needs the builder", *v.version)
+		}
+		version, err := e.Version(ctx, *v.version)
+		if err != nil {
+			return fmt.Errorf("reading the version of %s: %w", *v.version, err)
+		}
+		*v.ref, *v.version = *v.version, version
+	}
+	return nil
+}
+
+// refOf is what vSNO name installs from: the pullspec it was given as, or the
+// version.
+func (p *Plan) refOf(name string) string {
+	if name == p.Seed && p.SeedRef != "" {
+		return p.SeedRef
+	}
+	if name == p.Target && p.TargetRef != "" {
+		return p.TargetRef
+	}
+	return p.wanted()[name]
 }
 
 // restores is the snapshot each wanted vSNO is restored from: the snapshot of
@@ -415,7 +463,7 @@ func ensureVSNOs(ctx context.Context, e Env, o Options, plan *Plan, names []stri
 			}
 			continue
 		}
-		if _, err := guest.Create(ctx, e.Env.Env, guest.CreateOptions{Namespace: o.Namespace, Name: name, Version: want[name],
+		if _, err := guest.Create(ctx, e.Env.Env, guest.CreateOptions{Namespace: o.Namespace, Name: name, Version: plan.refOf(name),
 			Node: o.Node, Cores: o.Cores, MemoryGiB: o.MemoryGiB, Snapshot: plan.Restore[name]}); err != nil {
 			return fmt.Errorf("creating %s: %w", name, err)
 		}
@@ -436,13 +484,12 @@ func mirror(ctx context.Context, e Env, o Options, plan *Plan, names []string, e
 	if e.Cache == nil {
 		return nil
 	}
-	want := plan.wanted()
 	var rels []release.Release
 	for _, name := range names {
 		if plan.Restore[name] != "" || slices.ContainsFunc(existing, func(g guest.Guest) bool { return g.Name == name }) {
 			continue
 		}
-		rel, err := e.Resolver.Resolve(ctx, want[name])
+		rel, err := e.Resolver.Resolve(ctx, plan.refOf(name))
 		if err != nil {
 			return err
 		}

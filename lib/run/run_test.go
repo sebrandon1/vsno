@@ -729,3 +729,57 @@ func TestMirrorReportsAFailure(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// A release its channel has not published yet is named by its pullspec. The
+// plan keeps the pullspec to install from and the version to compare, name and
+// match — otherwise the pullspec string is compared with a version and the plan
+// is refused.
+func TestPlanPullspec(t *testing.T) {
+	ctx := context.Background()
+	const image = "quay.io/openshift-release-dev/ocp-release:4.22.23-x86_64"
+
+	e := testEnv("4.22.0", "4.22.1", "4.22.2")
+	var asked []string
+	e.Version = func(_ context.Context, img string) (string, error) {
+		asked = append(asked, img)
+		return "4.22.23", nil
+	}
+	o := Options{Namespace: ns, TargetVersion: "4.22.2", SeedVersion: image}
+	o.defaults()
+	p, err := makePlan(ctx, e, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(asked, []string{image}) {
+		t.Errorf("asked the builder for %q", asked)
+	}
+	if p.SeedVersion != "4.22.23" || p.SeedRef != image || p.TargetRef != "" {
+		t.Errorf("plan = %+v", p)
+	}
+	if !strings.Contains(p.String(), "seed     vSNO seed at 4.22.23") {
+		t.Errorf("plan text does not name the version:\n%s", p)
+	}
+	if got := p.refOf(p.Seed); got != image {
+		t.Errorf("the seed installs from %q, want the pullspec", got)
+	}
+	if got := p.refOf(p.Target); got != "4.22.2" {
+		t.Errorf("the target installs from %q, want its version", got)
+	}
+
+	// A target pullspec resolves the same way, and the two compare as versions.
+	e = testEnv("4.22.0", "4.22.1", "4.22.2")
+	e.Version = func(_ context.Context, _ string) (string, error) { return "4.22.1", nil }
+	o = Options{Namespace: ns, TargetVersion: "quay.io/x/y:4.22.1", SeedVersion: "4.22.2"}
+	o.defaults()
+	if p, err = makePlan(ctx, e, o); err != nil || p.TargetVersion != "4.22.1" || p.TargetRef != "quay.io/x/y:4.22.1" {
+		t.Errorf("plan = %+v, err = %v", p, err)
+	}
+
+	// Without a way to read the image the plan says so, rather than comparing a
+	// pullspec with a version.
+	o = Options{Namespace: ns, TargetVersion: "4.22.2", SeedVersion: image}
+	o.defaults()
+	if _, err := makePlan(ctx, testEnv("4.22.0", "4.22.1", "4.22.2"), o); err == nil || !strings.Contains(err.Error(), "needs the builder") {
+		t.Errorf("err = %v", err)
+	}
+}
