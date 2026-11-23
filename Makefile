@@ -23,6 +23,12 @@ lint:
 test:
 	go test ./... -v
 
+# Runs the built binary as a real process and asserts on its exit code, stdout
+# and stderr. No cluster: a fake API server stands in for one. Also runs under
+# `make test`, since it is an ordinary package.
+integration-test:
+	go test ./test/integration/... -v -count=1
+
 coverage:
 	go test ./... -coverprofile=coverage.out
 	go tool cover -func=coverage.out
@@ -37,4 +43,4 @@ fmt:
 clean:
 	rm -f $(APP_NAME) coverage.out coverage.html
 
-.PHONY: vet build install lint test coverage coverage-html fmt clean
+.PHONY: vet build install lint test integration-test coverage coverage-html fmt clean

@@ -82,6 +82,7 @@ Every command's flags are in **[docs/commands.md](docs/commands.md)**.
 make build   # ./vsno, versioned from git tags
 make install # build, then copy to $GOPATH/bin (or ~/go/bin)
 make test
+make integration-test # runs the built binary and asserts on stdout, stderr and exit codes
 make lint    # golangci-lint; CI also runs gosec, govulncheck and gitleaks
 ```
 
