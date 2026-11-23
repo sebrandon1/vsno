@@ -83,7 +83,8 @@ changed.
 Installs OpenShift Virtualization and LVM Storage (reused if already present), an `LVMCluster` on
 the chosen disk unless `lvms-vg-vsno` already serves the node, and the environment namespace with
 DNS, a builder, S3 and a TLS registry. Runs `precheck` first. Settings come from flags, then
-`--config`, then precheck's suggestion.
+`--config`, then precheck's suggestion. Without `-n` it sets up the environment that already exists;
+name a new one with `-n`.
 
 | Flag | Meaning |
 |---|---|
@@ -495,7 +496,8 @@ newest), and their ISO DataVolumes. Lists them and asks you to type `prune` unle
 Deletes the environment namespace: its VMs, support services, volumes and generated credentials.
 Only deletes a namespace vsno created. With `--host` it also removes what `setup` installed on the
 host. Lists what it will delete and asks you to type the namespace (or `host` with `--host`) unless
-`--yes`.
+`--yes`. Without `-n` it tears down the environment that exists, and refuses to choose when there
+are several.
 
 | Flag | Meaning |
 |---|---|

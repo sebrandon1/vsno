@@ -133,6 +133,11 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// As every other command does: without -n, work in the environment that is
+	// already here rather than making a second one beside it.
+	if err := useEnvironment(cmd.Context(), c.Kube); err != nil {
+		return err
+	}
 	env, err := setupEnv(cmd, c, !suNoProbe, suTimeout)
 	if err != nil {
 		return err
