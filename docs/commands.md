@@ -347,6 +347,7 @@ unless `--yes`. Each stage reuses what's there, so running it again after a stop
 | `--seed-image <ref>` | Upgrade to this existing seed image instead of making one |
 | `--seed-repo <repo>` | Push the seed image to `<repo>:<version>` instead of the environment's registry |
 | `--node <name>` | Worker for the vSNOs (default: setup's) |
+| `--timeout <duration>` | How long the setup stage may take (default `20m`) |
 | `--cores <n>` | vCPUs per vSNO (default as `vsno create`) |
 | `--memory <gib>` | GiB of memory per vSNO (default as `vsno create`) |
 | `--device <path>` | Disk for LVM Storage on the node, as `vsno setup --device` (default: precheck's pick). It was `--disk`, which still works and warns |

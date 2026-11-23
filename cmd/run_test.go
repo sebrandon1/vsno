@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sebrandon1/vsno/lib/run"
 )
@@ -69,6 +70,23 @@ func TestRunOptions(t *testing.T) {
 
 // --device was --disk; a file's "disk" setting is still overridden by either
 // spelling, because the precedence is keyed on the flag that was given.
+func TestRunSetupTimeout(t *testing.T) {
+	f := runCmd.Flags()
+	t.Cleanup(func() {
+		rnTimeout = 20 * time.Minute
+		_ = f.Set("timeout", "20m")
+	})
+	if err := f.Set("timeout", "45m"); err != nil {
+		t.Fatal(err)
+	}
+	if rnTimeout != 45*time.Minute {
+		t.Errorf("timeout = %s, want 45m", rnTimeout)
+	}
+	if d := f.Lookup("timeout").DefValue; d != "20m0s" {
+		t.Errorf("default = %q, want 20m0s", d)
+	}
+}
+
 func TestRunDeviceFromTheOldFlag(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "vsno.yaml")
