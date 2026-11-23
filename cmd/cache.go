@@ -33,6 +33,11 @@ that version install from the cluster instead of the internet. create does
 this itself the first time it uses a version; add is for doing it ahead of
 time, or for a version you want ready.
 
+It returns as soon as the mirror is running: the work happens in a Job in the
+environment, so it carries on after the command exits. --watch follows it to
+the end instead, and vsno cache list shows how far it has got. A release
+already cached comes back at once.
+
 <version> takes what create accepts: 4.20.46, 4.20, a nightly, or a release
 image pullspec. Nightlies need registry.ci.openshift.org credentials in the
 cluster's pull secret, which create already requires for them.`,
@@ -71,16 +76,23 @@ var cacheListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
 	Short:   "List the mirrored releases, their size, and the vSNOs using them",
-	Args:    cobra.NoArgs,
-	RunE:    runCacheList,
+	Long: `list shows each cached release, its size and the vSNOs installing from it.
+A release being mirrored is shown as mirroring, with how much it has pushed,
+how fast and how much is left; -w refreshes until interrupted. A mirror that
+finished while nothing was watching is recorded before the list is shown.`,
+	Args: cobra.NoArgs,
+	RunE: runCacheList,
 }
 
 var (
-	cgYes    bool
-	cpKeep   int
-	cpYes    bool
-	cpDryRun bool
-	cpNoGC   bool
+	cgYes      bool
+	cpKeep     int
+	cpYes      bool
+	cpDryRun   bool
+	cpNoGC     bool
+	caWatch    bool
+	cwWatch    bool
+	cwInterval time.Duration
 )
 
 func init() {
@@ -89,6 +101,9 @@ func init() {
 	f.BoolVar(&cpYes, "yes", false, "don't ask for confirmation")
 	f.BoolVar(&cpDryRun, "dry-run", false, "list what would be removed and change nothing")
 	f.BoolVar(&cpNoGC, "no-gc", false, "skip the registry garbage collection, which is what frees the space")
+	cacheAddCmd.Flags().BoolVarP(&caWatch, "watch", "w", false, "follow the mirror until it finishes")
+	cacheListCmd.Flags().BoolVarP(&cwWatch, "watch", "w", false, "refresh until interrupted")
+	cacheListCmd.Flags().DurationVar(&cwInterval, "interval", 15*time.Second, "refresh interval for --watch")
 	cacheGCCmd.Flags().BoolVar(&cgYes, "yes", false, "don't ask for confirmation")
 	cacheCmd.AddCommand(cacheAddCmd, cacheListCmd, cacheGCCmd, cachePruneCmd)
 	rootCmd.AddCommand(cacheCmd)
@@ -120,28 +135,56 @@ func runCacheAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	start := time.Now()
+	o := cache.EnsureOptions{Namespace: namespace, Release: rel}
+	if !caWatch {
+		p, err := cache.Start(cmd.Context(), env, o)
+		if err != nil {
+			return err
+		}
+		return reportCacheAdd(cmd, p, args[0], nil)
+	}
 	ps := newProgress().Start("Mirroring " + args[0])
-	p, err := cache.Ensure(cmd.Context(), env, cache.EnsureOptions{Namespace: namespace, Release: rel, OnLine: ps.Update})
+	o.OnLine = ps.Update
+	p, err := cache.Ensure(cmd.Context(), env, o)
 	if err != nil {
 		ps.Fail(err.Error())
 		return err
 	}
+	return reportCacheAdd(cmd, p, args[0], ps)
+}
+
+// reportCacheAdd says what happened: the release was already there, a mirror
+// is running, or --watch followed one to the end.
+func reportCacheAdd(cmd *cobra.Command, p *cache.Prepared, asked string, ps *ui.Step) error {
 	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
 	if outputFormat == formatJSON {
-		ps.Done("")
+		if ps != nil {
+			ps.Done("")
+		}
 		return writeJSON(w, p)
 	}
-	if p.Hit {
-		ps.Done("already cached")
-		fmt.Fprintf(w, "%s %s is already in %s.\n", pal.Icon("✓"), p.Image, p.Repo)
-		return nil
+	done := func(msg string) {
+		if ps != nil {
+			ps.Done(msg)
+		}
 	}
-	elapsed := time.Since(start)
-	ps.Done("mirrored in " + ui.FormatElapsed(elapsed))
-	fmt.Fprintf(w, "%s Mirrored %s into %s: %s in %s (%s).\n", pal.Icon("✓"), p.Image, p.Repo,
-		bytesText(p.SizeBytes), ui.FormatElapsed(elapsed), cache.Rate(p.SizeBytes, elapsed))
-	fmt.Fprintln(w, "vSNOs of this version now install from the registry.")
+	switch {
+	case p.Hit:
+		done("already cached")
+		fmt.Fprintf(w, "%s %s is already in %s.\n", pal.Icon("✓"), p.Image, p.Repo)
+	case p.Running && ps == nil:
+		fmt.Fprintf(w, "%s Mirroring %s into %s as Job %s, in the background.\n", pal.Icon("→"), p.Image, p.Repo, p.Job)
+		fmt.Fprintf(w, "  %s\n", pal.Dim("vsno cache list                    how far it has got"))
+		fmt.Fprintf(w, "  %s\n", pal.Dim("vsno cache add "+asked+" --watch   follow it here"))
+	default:
+		done("mirrored in " + ui.FormatElapsed(p.Elapsed))
+		fmt.Fprintf(w, "%s Mirrored %s into %s: %s in %s (%s).\n", pal.Icon("✓"), p.Image, p.Repo,
+			bytesText(p.SizeBytes), ui.FormatElapsed(p.Elapsed), cache.Rate(p.SizeBytes, p.Elapsed))
+		if p.Signatures != "" {
+			fmt.Fprintf(w, "  %s\n", pal.Dim("signatures: "+p.Signatures))
+		}
+		fmt.Fprintln(w, "vSNOs of this version now install from the registry.")
+	}
 	return nil
 }
 
@@ -258,15 +301,33 @@ func runCacheList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	users, err := releaseUsers(cmd, genv)
-	if err != nil {
-		return err
+	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
+	for {
+		// A mirror that ended while nothing was watching is recorded first, so
+		// the list says what happened instead of showing it still running.
+		if err := cache.Reconcile(cmd.Context(), env, namespace); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "note: "+err.Error())
+		}
+		users, err := releaseUsers(cmd, genv)
+		if err != nil {
+			return err
+		}
+		rep, err := cache.List(cmd.Context(), env, namespace, users)
+		if err != nil {
+			return err
+		}
+		if cwWatch && pal.On {
+			fmt.Fprint(w, "\033[H\033[2J") // clear the screen between refreshes
+		}
+		if err := renderCache(w, rep, time.Now(), pal); err != nil || !cwWatch || outputFormat == formatJSON {
+			return err
+		}
+		select {
+		case <-cmd.Context().Done():
+			return nil
+		case <-time.After(cwInterval):
+		}
 	}
-	rep, err := cache.List(cmd.Context(), env, namespace, users)
-	if err != nil {
-		return err
-	}
-	return renderCache(cmd.OutOrStdout(), rep, time.Now(), palette(cmd.OutOrStdout()))
 }
 
 func renderCache(w io.Writer, rep *cache.Report, now time.Time, pal ui.Palette) error {
@@ -281,9 +342,10 @@ func renderCache(w io.Writer, rep *cache.Report, now time.Time, pal ui.Palette) 
 		return nil
 	}
 	var t ui.Table
-	t.Row(pal.Bold("VERSION"), pal.Bold("STATE"), pal.Bold("IMAGE"), pal.Bold("SIZE"), pal.Bold("MIRRORED"), pal.Bold("LAST USED"), pal.Bold("VSNOS"))
+	t.Row(pal.Bold("VERSION"), pal.Bold("STATE"), pal.Bold("PROGRESS"), pal.Bold("IMAGE"), pal.Bold("SIZE"), pal.Bold("MIRRORED"), pal.Bold("LAST USED"), pal.Bold("VSNOS"))
 	for _, e := range rep.Entries {
-		t.Row(orDash(e.Version), cacheState(e, now), e.Image, bytesText(e.SizeBytes), ageSince(now, e.Mirrored), ageSince(now, e.LastUsed), joinItems(e.Users))
+		t.Row(orDash(e.Version), e.StateText(), progressText(e), e.Image, bytesText(e.SizeBytes),
+			ageSince(now, e.Mirrored), ageSince(now, e.LastUsed), joinItems(e.Users))
 	}
 	t.Write(w)
 	if rep.Total > 0 {
@@ -293,12 +355,12 @@ func renderCache(w io.Writer, rep *cache.Report, now time.Time, pal ui.Palette) 
 	return nil
 }
 
-// cacheState is the entry's state, with how long a mirror has been running.
-func cacheState(e cache.Entry, now time.Time) string {
-	if e.State == cache.StateMirroring && !e.Started.IsZero() {
-		return e.StateText() + " " + age(now.Sub(e.Started))
+// progressText is a running mirror's numbers, or "-" when it is not running.
+func progressText(e cache.Entry) string {
+	if e.Progress == nil {
+		return "-"
 	}
-	return e.StateText()
+	return e.Progress.Text()
 }
 
 // joinItems is items joined by ", ", or "-" when there are none.
