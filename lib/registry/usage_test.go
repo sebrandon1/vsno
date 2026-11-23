@@ -2,8 +2,12 @@ package registry
 
 import (
 	"context"
+	"errors"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/sebrandon1/vsno/lib/builder"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -74,5 +78,40 @@ func TestPod(t *testing.T) {
 	k = kfake.NewClientset()
 	if _, err := Pod(ctx, k, ns); err == nil || !strings.Contains(err.Error(), "isn't running") {
 		t.Errorf("no pod: %v", err)
+	}
+}
+
+// Usage reads df in the registry pod; the exec is injected, so the whole path
+// is exercised without a cluster.
+func TestEnvUsage(t *testing.T) {
+	ctx := context.Background()
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "registry-abc", Labels: map[string]string{"app": Service}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	k := kfake.NewClientset(pod)
+	var ran []string
+	e := Env{Kube: k, Exec: func(_ context.Context, ns, pod, container string, command []string, s builder.IO) error {
+		ran = append(ran, ns+"/"+pod+" "+container+" "+strings.Join(command, " "))
+		_, _ = io.WriteString(s.Stdout, "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/x 1048576 524288 524288 50% /var/lib/registry\n")
+		return nil
+	}}
+	used, total, err := e.Usage(ctx, ns)
+	if err != nil || used != 512<<20 || total != 1<<30 {
+		t.Fatalf("Usage = %d, %d, %v", used, total, err)
+	}
+	if want := ns + "/registry-abc " + Service + " df -Pk /var/lib/registry"; len(ran) != 1 || ran[0] != want {
+		t.Errorf("ran %q, want %q", ran, want)
+	}
+
+	failing := Env{Kube: k, Exec: func(_ context.Context, _, _, _ string, _ []string, s builder.IO) error {
+		_, _ = io.WriteString(s.Stderr, "exec failed")
+		return errors.New("exit 1")
+	}}
+	if _, _, err := failing.Usage(ctx, ns); err == nil || !strings.Contains(err.Error(), "exec failed") {
+		t.Errorf("exec failure: %v", err)
+	}
+
+	noPod := Env{Kube: kfake.NewClientset()}
+	if _, _, err := noPod.Usage(ctx, ns); err == nil || !strings.Contains(err.Error(), "isn't running") {
+		t.Errorf("missing pod: %v", err)
 	}
 }
