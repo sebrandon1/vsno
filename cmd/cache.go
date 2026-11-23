@@ -137,10 +137,15 @@ func runCacheAdd(cmd *cobra.Command, args []string) error {
 	}
 	o := cache.EnsureOptions{Namespace: namespace, Release: rel}
 	if !caWatch {
+		// Start is quick for a release that is not cached, but a hit re-checks
+		// the mirror's signatures: one listing of its tags per image.
+		ps := newProgress().Start("Checking " + args[0])
 		p, err := cache.Start(cmd.Context(), env, o)
 		if err != nil {
+			ps.Fail(err.Error())
 			return err
 		}
+		ps.Done("")
 		return reportCacheAdd(cmd, p, args[0], nil)
 	}
 	ps := newProgress().Start("Mirroring " + args[0])
