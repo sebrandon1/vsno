@@ -23,6 +23,12 @@ var (
 	spImage   string
 	spInstall bool
 	spTimeout time.Duration
+	ssTo      string
+	ssFrom    string
+	ssAuth    string
+	ssCA      string
+	ssTLS     bool
+	ssForce   bool
 )
 
 var seedCmd = &cobra.Command{
@@ -84,6 +90,26 @@ registry frees their space only when it is garbage collected.`,
 	RunE: runSeedDelete,
 }
 
+var seedSyncCmd = &cobra.Command{
+	Use:   "sync <vsno>:<version> {--to <repo> | --from <image>}",
+	Short: "Copy a seed image to another registry, or bring one in",
+	Long: `sync copies a seed image between the environment's registry and another one.
+
+--to pushes a seed out: the repository you name gets the seed's own tag, so
+--to quay.io/me/seeds puts seeds/<vsno>:<version> there under <version>.
+
+--from brings an image in, stored as <vsno>:<version>, so the version has to
+come with it. A peer registry on a private CA needs --ca as well as --authfile.
+
+Credentials for the registry that is not the environment's come from your
+container auth file, the first one that covers it, or --authfile; nothing is
+written to the cluster. An existing tag on the far side is left alone unless
+--overwrite. The copy runs in the builder pod, so the image never passes
+through your machine.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSeedSync,
+}
+
 func init() {
 	f := seedCreateCmd.Flags()
 	f.StringVar(&sdImage, "image", "", "push the seed here instead of the environment's registry")
@@ -95,7 +121,14 @@ func init() {
 	f.DurationVar(&spTimeout, "timeout", time.Hour, "how long --install may wait for each install")
 	seedDeleteCmd.Flags().BoolVar(&sdYes, "yes", false, "don't ask for confirmation")
 	seedDeleteCmd.Flags().BoolVar(&sdDryRun, "dry-run", false, "list what would be deleted and change nothing")
-	seedCmd.AddCommand(seedCreateCmd, seedPrecheckCmd, seedListCmd, seedDeleteCmd)
+	f = seedSyncCmd.Flags()
+	f.StringVar(&ssTo, "to", "", "copy the seed to this repository")
+	f.StringVar(&ssFrom, "from", "", "copy the seed from this image")
+	f.StringVar(&ssAuth, "authfile", "", "credentials for the other registry (default: your container auth file)")
+	f.StringVar(&ssCA, "ca", "", "the other registry's CA certificate, when it is not publicly trusted")
+	f.BoolVar(&ssTLS, "insecure", false, "the other registry may be plain HTTP or hold a certificate this environment does not trust")
+	f.BoolVar(&ssForce, "overwrite", false, "replace the other registry's tag when it already exists")
+	seedCmd.AddCommand(seedCreateCmd, seedPrecheckCmd, seedListCmd, seedDeleteCmd, seedSyncCmd)
 	rootCmd.AddCommand(seedCmd)
 }
 
@@ -227,6 +260,44 @@ func bytesText(n int64) string {
 		return fmt.Sprintf("%dMi", (n+(1<<20)-1)>>20)
 	}
 	return "-"
+}
+
+func runSeedSync(cmd *cobra.Command, args []string) error {
+	env, err := seedEnv(cmd, 0)
+	if err != nil {
+		return err
+	}
+	if outputFormat != formatJSON {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Copying seed image %s...\n\n", args[0])
+	}
+	res, err := seed.Sync(cmd.Context(), env, seed.SyncOptions{
+		Namespace: namespace, Seed: args[0], To: ssTo, From: ssFrom,
+		AuthFile: ssAuth, CAPath: ssCA, Insecure: ssTLS, Overwrite: ssForce,
+	})
+	if err != nil {
+		return err
+	}
+	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
+	if outputFormat == formatJSON {
+		return writeJSON(w, res)
+	}
+	renderSeedSync(w, res, pal)
+	return nil
+}
+
+// renderSeedSync prints where one seed image went and what the far side holds.
+func renderSeedSync(w io.Writer, res *seed.SyncResult, pal ui.Palette) {
+	what := res.Name
+	if res.Version != "" {
+		what += ":" + res.Version
+	}
+	fmt.Fprintf(w, "%s synced %s %s\n", pal.Icon("✓"), pal.Bold(what), pal.Dim(bytesText(res.SizeBytes)))
+	// The label is padded before coloring, so the color codes cannot shift it.
+	fmt.Fprintf(w, "  %s %s\n", pal.Dim(fmt.Sprintf("%-6s", "from")), res.Source)
+	fmt.Fprintf(w, "  %s %s\n", pal.Dim(fmt.Sprintf("%-6s", "to")), res.Destination)
+	if res.Digest != "" {
+		fmt.Fprintf(w, "  %s %s\n", pal.Dim(fmt.Sprintf("%-6s", "digest")), res.Digest)
+	}
 }
 
 func runSeedDelete(cmd *cobra.Command, args []string) error {

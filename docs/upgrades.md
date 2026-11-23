@@ -15,6 +15,8 @@ vsno seed create a --stop          # ...and stop a afterwards, to free its memor
 vsno seed list                     # or ls, or -o json
 vsno seed delete a:4.20.46 --dry-run
 vsno seed delete a                 # all of a's seeds
+vsno seed sync a:4.20.46 --to quay.io/me/seeds   # hand the seed to another registry
+vsno seed sync b:4.20.46 --from quay.io/me/seeds/a:4.20.46   # bring one in as b
 ```
 
 `seed precheck` reports everything `seed create` needs before it starts the 15–30 minute generation:

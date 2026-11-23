@@ -236,6 +236,7 @@ as `seeds/<vSNO>:<version>`.
 | [`seed list`](#vsno-seed-list) | List the seed images in the environment's registry |
 | [`seed delete`](#vsno-seed-delete) | Delete seed images |
 | [`seed precheck`](#vsno-seed-precheck) | Check what a seed generation needs |
+| [`seed sync`](#vsno-seed-sync) | Copy a seed image to another registry, or bring one in |
 
 ### `vsno seed create`
 
@@ -263,6 +264,34 @@ Lists them and asks you to type the arguments unless `--yes`.
 |---|---|
 | `--dry-run` | List what would be deleted and change nothing |
 | `--yes` | Don't ask for confirmation |
+
+### `vsno seed sync`
+
+Copies a seed image between the environment's registry and another one. `--to` pushes a seed out,
+and the repository you name gets the seed's own tag, so `--to quay.io/me/seeds` puts
+`seeds/<vsno>:<version>` there under `<version>`. `--from` brings an image in, stored as
+`<vsno>:<version>`, so the version has to come with it. Exactly one of the two is required.
+
+```bash
+vsno seed sync seed-a:4.20.46 --to quay.io/me/seeds
+vsno seed sync seed-a:4.20.46 --from registry.example.com/seeds/seed-a:4.20.46
+```
+
+Credentials for the registry that is not the environment's come from your container auth file (the
+one `podman login` and `docker login` write), the first one that covers it, or `--authfile`;
+nothing is written to the cluster. A peer registry on a private CA also needs `--ca`. An existing
+tag on the far side is left alone unless `--overwrite`. The copy runs in the builder pod, so the
+image never passes through your machine.
+
+| Flag | Meaning |
+|---|---|
+| `--to <repo>` | Copy the seed to this repository, tagged with the seed's own tag |
+| `--from <image>` | Copy the seed from this image |
+| `--authfile <path>` | Credentials for the other registry (default: your container auth file) |
+| `--ca <path>` | The other registry's CA certificate, when it is not publicly trusted |
+| `--insecure` | The other registry may be plain HTTP or hold a certificate this environment does not trust |
+| `--overwrite` | Replace the other registry's tag when it already exists |
+| `-o json` | `name`, `version`, `source`, `destination`, `digest`, `sizeBytes` |
 
 ### `vsno seed precheck`
 

@@ -11,6 +11,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"strconv"
 	"strings"
 
 	"github.com/sebrandon1/vsno/lib/builder"
@@ -135,10 +137,64 @@ func Script(name string) string {
 // Run runs registry.sh through the builder with the registry's credentials on
 // stdin, and returns its stdout.
 func (r Registry) Run(ctx context.Context, b builder.Runner, args ...string) ([]byte, error) {
+	return r.run(ctx, b, Script("registry.sh"), bytes.NewReader(r.Stdin()), args...)
+}
+
+// run runs one embedded script through the builder and returns its stdout.
+func (r Registry) run(ctx context.Context, b builder.Runner, script string, stdin io.Reader, args ...string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
-	err := b.Run(ctx, Script("registry.sh"), args, builder.IO{Stdin: bytes.NewReader(r.Stdin()), Stdout: &stdout, Stderr: &stderr})
+	err := b.Run(ctx, script, args, builder.IO{Stdin: stdin, Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
 		return stdout.Bytes(), fmt.Errorf("%w%s", err, builder.Tail(stderr.String()))
 	}
 	return stdout.Bytes(), nil
+}
+
+// SyncOptions is one image copied between the environment's registry and
+// another one.
+type SyncOptions struct {
+	Source      string // where the image is, as a full reference without a scheme
+	Destination string // where it goes
+	AuthFile    string // the other registry's dockerconfigjson; "" is anonymous
+	CAFile      string // the other registry's CA, PEM; "" uses the system trust store
+	LocalSource bool   // the environment's registry is Source, so this is a push
+	Insecure    bool   // the other registry may be plain HTTP or untrusted
+	Overwrite   bool   // replace Destination when it already exists
+}
+
+// SyncResult is what the destination holds after a copy.
+type SyncResult struct {
+	Digest    string `json:"digest"`
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
+// Sync copies one image between the environment's registry and another,
+// through the builder: the environment's credentials and CA go on its side,
+// the caller's own on the other.
+func (r Registry) Sync(ctx context.Context, b builder.Runner, o SyncOptions) (*SyncResult, error) {
+	files := map[string]string{"auth.json": r.Auth(), "ca.crt": r.CA}
+	if o.AuthFile != "" {
+		files["remote-auth.json"] = o.AuthFile
+	}
+	if o.CAFile != "" {
+		files["remote-ca.crt"] = o.CAFile
+	}
+	t, err := builder.Tar(files)
+	if err != nil {
+		return nil, fmt.Errorf("packing the registry credentials: %w", err)
+	}
+	dir := "in"
+	if o.LocalSource {
+		dir = "out"
+	}
+	out, err := r.run(ctx, b, Script("sync.sh"), bytes.NewReader(t),
+		dir, o.Source, o.Destination, strconv.FormatBool(o.Insecure), strconv.FormatBool(o.Overwrite))
+	if err != nil {
+		return nil, fmt.Errorf("copying %s: %w", o.Source, err)
+	}
+	var res SyncResult
+	if err := json.Unmarshal(bytes.TrimSpace(out), &res); err != nil {
+		return nil, fmt.Errorf("reading the copy's result: %w", err)
+	}
+	return &res, nil
 }

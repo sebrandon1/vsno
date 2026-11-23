@@ -1,11 +1,14 @@
 package registry
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -107,18 +110,17 @@ func TestAddress(t *testing.T) {
 	}
 }
 
-// fakeRunner answers registry.sh and records what it ran.
+// fakeRunner answers a registry script and records what it ran.
 type fakeRunner struct {
-	args  []string
-	stdin string
-	out   string
-	err   error
+	script string
+	args   []string
+	stdin  string
+	out    string
+	err    error
 }
 
 func (f *fakeRunner) Run(_ context.Context, s string, args []string, io_ builder.IO) error {
-	if s != Script("registry.sh") {
-		return errors.New("unexpected script")
-	}
+	f.script = s
 	f.args = args
 	if io_.Stdin != nil {
 		b, _ := io.ReadAll(io_.Stdin)
@@ -139,8 +141,8 @@ func TestRun(t *testing.T) {
 	if err != nil || string(out) != "one\ntwo\n" {
 		t.Fatalf("Run = %q, %v", out, err)
 	}
-	if len(f.args) != 3 || f.args[2] != "seeds/" {
-		t.Errorf("args = %q", f.args)
+	if f.script != Script("registry.sh") || len(f.args) != 3 || f.args[2] != "seeds/" {
+		t.Errorf("script = %q, args = %q", f.script, f.args)
 	}
 	// The credentials go on stdin, as JSON.
 	if !strings.Contains(f.stdin, `"password":"p"`) || !strings.Contains(f.stdin, "BEGIN CERTIFICATE") {
@@ -150,5 +152,76 @@ func TestRun(t *testing.T) {
 	f = &fakeRunner{err: errors.New("exit 1")}
 	if _, err := testRegistry.Run(context.Background(), f, "h", "list"); err == nil || !strings.Contains(err.Error(), "last line") {
 		t.Errorf("error without the stderr tail: %v", err)
+	}
+}
+
+// tarNames lists the files a Sync sent the script on stdin.
+func tarNames(t *testing.T, tarred string) []string {
+	t.Helper()
+	var names []string
+	tr := tar.NewReader(bytes.NewReader([]byte(tarred)))
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return names
+		}
+		if err != nil {
+			t.Fatalf("reading the tar: %v", err)
+		}
+		names = append(names, h.Name)
+	}
+}
+
+func TestSyncPush(t *testing.T) {
+	const result = `{"digest":"sha256:abc","sizeBytes":1234}`
+	f := &fakeRunner{out: result + "\n"}
+	res, err := testRegistry.Sync(context.Background(), f, SyncOptions{
+		Source: "h/seeds/a:4.22.1", Destination: "quay.io/me/seeds:4.22.1",
+		AuthFile: `{"auths":{"quay.io":{"auth":"eA=="}}}`, CAFile: "PEM", LocalSource: true, Insecure: true, Overwrite: true,
+	})
+	if err != nil || res.Digest != "sha256:abc" || res.SizeBytes != 1234 {
+		t.Fatalf("Sync = %+v, %v", res, err)
+	}
+	if f.script != Script("sync.sh") {
+		t.Errorf("script = %q", f.script)
+	}
+	want := []string{"out", "h/seeds/a:4.22.1", "quay.io/me/seeds:4.22.1", "true", "true"}
+	if !slices.Equal(f.args, want) {
+		t.Errorf("args = %q, want %q", f.args, want)
+	}
+	if got, want := tarNames(t, f.stdin), []string{"auth.json", "ca.crt", "remote-auth.json", "remote-ca.crt"}; !slices.Equal(got, want) {
+		t.Errorf("stdin files = %q, want %q", got, want)
+	}
+}
+
+func TestSyncPullAnonymous(t *testing.T) {
+	f := &fakeRunner{out: `{"digest":"sha256:abc","sizeBytes":1}`}
+	if _, err := testRegistry.Sync(context.Background(), f, SyncOptions{Source: "quay.io/me/seeds:1", Destination: "h/seeds/a:1"}); err != nil {
+		t.Fatal(err)
+	}
+	if f.args[0] != "in" || f.args[3] != "false" || f.args[4] != "false" {
+		t.Errorf("args = %q", f.args)
+	}
+	if got := tarNames(t, f.stdin); slices.Contains(got, "remote-auth.json") {
+		t.Errorf("stdin files = %q, want no remote credentials", got)
+	}
+}
+
+func TestSyncErrors(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		out  string
+		err  error
+		want string
+	}{
+		{"script failure", "", errors.New("exit 1"), "last line"},
+		{"unreadable result", "not json\n", nil, "reading the copy's result"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeRunner{out: c.out, err: c.err}
+			if _, err := testRegistry.Sync(context.Background(), f, SyncOptions{Source: "s:1", Destination: "d:1"}); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want %q", err, c.want)
+			}
+		})
 	}
 }

@@ -76,3 +76,27 @@ func TestRenderSeedPlan(t *testing.T) {
 		t.Errorf("empty plan printed %q, want nothing", b.String())
 	}
 }
+
+func TestRenderSeedSync(t *testing.T) {
+	res := &seed.SyncResult{
+		Name: "seed-a", Version: "4.20.46",
+		Source:      "registry.vsno.svc.cluster.local:5000/seeds/seed-a:4.20.46",
+		Destination: "quay.io/me/seeds:4.20.46",
+		Digest:      "sha256:aa",
+		SizeBytes:   3 << 30,
+	}
+	for _, want := range []string{"synced seed-a:4.20.46", "3.0Gi", "from", res.Source, "to", res.Destination, "sha256:aa"} {
+		var b bytes.Buffer
+		renderSeedSync(&b, res, plain)
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, b.String())
+		}
+	}
+
+	// Without a digest there is no digest line rather than an empty one.
+	var b bytes.Buffer
+	renderSeedSync(&b, &seed.SyncResult{Name: "seed-a", Source: "s", Destination: "d"}, plain)
+	if strings.Contains(b.String(), "digest") {
+		t.Errorf("no digest, but printed one:\n%s", b.String())
+	}
+}
