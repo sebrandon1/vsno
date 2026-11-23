@@ -220,3 +220,26 @@ func TestListEmpty(t *testing.T) {
 		t.Errorf("report = %+v, %v", rep, err)
 	}
 }
+
+// A release its channel has not published yet is named by its pullspec; this is
+// how `vsno run` turns that back into a version it can compare.
+func TestVersion(t *testing.T) {
+	const info = `{"digest":"sha256:1111111111111111aaaa","metadata":{"version":"4.22.23"}}`
+	r := &runner{out: info}
+	got, err := Version(context.Background(), env(r), "quay.io/x:4.22.23-x86_64")
+	if err != nil || got != "4.22.23" {
+		t.Fatalf("Version = %q, %v", got, err)
+	}
+	if len(r.ran) != 1 || r.ran[0] != "quay.io/x:4.22.23-x86_64" {
+		t.Errorf("ran %q", r.ran)
+	}
+
+	r = &runner{out: `{"digest":"sha256:1111111111111111aaaa"}`}
+	if _, err := Version(context.Background(), env(r), "quay.io/x:1"); err == nil || !strings.Contains(err.Error(), "names no version") {
+		t.Errorf("no version: %v", err)
+	}
+	r = &runner{err: errors.New("exit 1")}
+	if _, err := Version(context.Background(), env(r), "quay.io/x:1"); err == nil || !strings.Contains(err.Error(), "last line") {
+		t.Errorf("failure: %v", err)
+	}
+}

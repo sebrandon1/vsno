@@ -162,7 +162,10 @@ func short(digest string) string {
 
 // info is the part of `oc adm release info -o json` the cache reads.
 type info struct {
-	Digest     string `json:"digest"`
+	Digest   string `json:"digest"`
+	Metadata struct {
+		Version string `json:"version"`
+	} `json:"metadata"`
 	References struct {
 		Spec struct {
 			Tags []struct {
@@ -216,6 +219,30 @@ func describe(ctx context.Context, e Env, image string) (payload, error) {
 	slices.Sort(r.Sources)
 	slices.Sort(r.Images)
 	return r, nil
+}
+
+// Version is the OpenShift version a release image reports. A version not yet
+// in its release channel has to be given as a pullspec, and this is how it
+// becomes a version again — for comparing it with another, say.
+func Version(ctx context.Context, e Env, image string) (string, error) {
+	ps, err := pullSecret(ctx, e.Kube)
+	if err != nil {
+		return "", err
+	}
+	var stdout, stderr bytes.Buffer
+	err = e.Builder.Run(ctx, script("release-info.sh"), []string{image},
+		builder.IO{Stdin: strings.NewReader(ps), Stdout: &stdout, Stderr: &stderr})
+	if err != nil {
+		return "", fmt.Errorf("reading release %s: %w%s", image, err, builder.Tail(stderr.String()))
+	}
+	var in info
+	if err := json.Unmarshal(stdout.Bytes(), &in); err != nil {
+		return "", fmt.Errorf("reading release %s: %w", image, err)
+	}
+	if in.Metadata.Version == "" {
+		return "", fmt.Errorf("release %s names no version", image)
+	}
+	return in.Metadata.Version, nil
 }
 
 // repoOf strips an image reference's tag or digest, leaving its repository.

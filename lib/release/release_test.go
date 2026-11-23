@@ -164,3 +164,21 @@ func TestGetRetries(t *testing.T) {
 		t.Errorf("after two 503s: %v, %d request(s)", err, n)
 	}
 }
+
+func TestIsPullspec(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{
+		{"quay.io/openshift-release-dev/ocp-release:4.22.23-x86_64", true},
+		{"registry.example.com:5000/release@sha256:abc", true},
+		{"4.22.23", false},
+		{"4.22", false},
+		{"4.22-nightly", false},
+		{"4.22.0-0.nightly-2026-11-03-073516", false},
+	} {
+		if got := IsPullspec(c.in); got != c.want {
+			t.Errorf("IsPullspec(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}

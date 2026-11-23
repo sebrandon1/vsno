@@ -129,8 +129,11 @@ vsno run -f vsno.yaml                           # the same settings from a file
 
 By default the seed is the newest stable release of the host's OpenShift minor and the target the
 release before it. `--seed-version` and `--target-version` take anything `vsno create` accepts, and
-the target must be older. The plan (versions, names, LCA source and what happens afterwards) is
-shown and confirmed first, unless `--yes`.
+the target must be older. A release whose channel has not published it yet is named by its pullspec
+(`--seed-version quay.io/openshift-release-dev/ocp-release:4.22.23-x86_64`): vsno reads the version
+from the image so the plan can compare the two, and installs from the pullspec. The plan
+(versions, names, LCA source and what happens afterwards) is shown and confirmed first, unless
+`--yes`.
 
 Each stage reuses what's already there: a vSNO of that name at the right version, the seed image an
 earlier run made, an upgrade part way. So when a run is interrupted, running it again carries on;

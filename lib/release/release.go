@@ -101,6 +101,11 @@ func (r Resolver) Resolve(ctx context.Context, v string) (Release, error) {
 	return rel, nil
 }
 
+// IsPullspec reports whether v is a release image reference rather than a
+// version Resolve can look up: the form a release that is not in its channel
+// yet has to be given as.
+func IsPullspec(v string) bool { return strings.ContainsAny(v, "/@") }
+
 // Minor is "4.21" of "4.21.5" or "4.21.0-0.nightly-...", or "" when v has
 // no minor.
 func Minor(v string) string {

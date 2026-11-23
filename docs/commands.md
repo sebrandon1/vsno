@@ -330,8 +330,8 @@ unless `--yes`. Each stage reuses what's there, so running it again after a stop
 
 | Flag | Meaning |
 |---|---|
-| `--target-version <version>` | The target's OpenShift version (default: the release before the seed's) |
-| `--seed-version <version>` | The seed's OpenShift version (default: the newest stable release of the host's minor) |
+| `--target-version <version>` | The target's OpenShift version, or its release pullspec (default: the release before the seed's) |
+| `--seed-version <version>` | The seed's OpenShift version, or its release pullspec (default: the newest stable release of the host's minor) |
 | `--target-name <name>` | The target vSNO's name (default `target`) |
 | `--seed-name <name>` | The seed vSNO's name (default `seed`) |
 | `--seed-image <ref>` | Upgrade to this existing seed image instead of making one |
