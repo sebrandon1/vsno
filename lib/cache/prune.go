@@ -22,9 +22,11 @@ type PruneOptions struct {
 	Keep int
 	// Users maps a release image to the vSNOs running it; a cached release in
 	// use is never pruned.
-	Users    map[string][]string
-	DryRun   bool
-	Yes      bool
+	Users  map[string][]string
+	DryRun bool
+	Yes    bool
+	// Confirm asks question and approves answer, which may be "y|prune": the
+	// first is what the prompt asks for, the rest are what it used to.
 	Confirm  func(question, answer string) bool
 	ShowPlan func(*PrunePlan)
 	// NoGC skips the registry garbage collection that frees the space.
@@ -81,8 +83,10 @@ func confirm(o PruneOptions, p *PrunePlan) bool {
 		o.ShowPlan(p)
 	}
 	q := fmt.Sprintf("This deletes %d cached release(s); the registry frees their %s when it is garbage collected. Type %q to continue",
-		len(p.Entries), bytesText(p.Bytes), "prune")
-	return o.Confirm != nil && o.Confirm(q, "prune")
+		len(p.Entries), bytesText(p.Bytes), "y")
+	// "prune" is what this asked for before the confirmations were brought
+	// together; it keeps working so a script need not change.
+	return o.Confirm != nil && o.Confirm(q, "y|prune")
 }
 
 // apply deletes the plan's images, forgets them, and collects the garbage.

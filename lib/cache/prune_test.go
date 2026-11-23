@@ -109,7 +109,8 @@ func TestPruneNotConfirmed(t *testing.T) {
 	shown := 0
 	_, err := Prune(context.Background(), e, PruneOptions{Namespace: ns, Version: "4.21.0",
 		ShowPlan: func(p *PrunePlan) { shown = len(p.Entries) }, Confirm: func(_, a string) bool {
-			if a != "prune" {
+			// y, or the word the prompt asked for before.
+			if a != "y|prune" {
 				t.Errorf("confirm answer = %q", a)
 			}
 			return false

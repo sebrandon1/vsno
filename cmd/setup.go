@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -230,10 +231,15 @@ func confirmOnTerminal(in *os.File, w io.Writer) func(question, answer string) b
 	}
 }
 
+// confirm asks question and approves when the answer is one answer allows.
+// answer is "|"-separated: the first is the one asked for, the rest are what the
+// prompt used before it changed, so a script written against the old prompt
+// keeps working.
 func confirm(in io.Reader, w io.Writer, question, answer string) bool {
-	fmt.Fprintf(w, "%s [%s]: ", question, answer)
+	wanted := strings.Split(answer, "|")
+	fmt.Fprintf(w, "%s [%s]: ", question, wanted[0])
 	line, _ := bufio.NewReader(in).ReadString('\n')
-	return strings.TrimSpace(line) == answer
+	return slices.Contains(wanted, strings.TrimSpace(line))
 }
 
 // stepIcon marks a setup or teardown step: = left alone (reused, kept,

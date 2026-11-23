@@ -202,8 +202,8 @@ func runCacheGC(cmd *cobra.Command, _ []string) error {
 	}
 	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
 	if !cgYes {
-		q := fmt.Sprintf("This stops the registry in %s for a few seconds to collect its garbage. Type %q to continue", namespace, "gc")
-		if !confirmOnTerminal(os.Stdin, cmd.ErrOrStderr())(q, "gc") {
+		q := fmt.Sprintf("This stops the registry in %s for a few seconds to collect its garbage. Type %q to continue", namespace, "y")
+		if !confirmOnTerminal(os.Stdin, cmd.ErrOrStderr())(q, "y|gc") {
 			return errors.New("not confirmed; rerun with --yes to skip the question")
 		}
 	}

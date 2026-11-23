@@ -213,7 +213,7 @@ func testPruneConfirmed(t *testing.T) {
 	var asked string
 	env := testEnv(t, r)
 	res, err := Prune(ctx, env, PruneOptions{Namespace: ns, Confirm: func(_, a string) bool { asked = a; return true }})
-	if err != nil || asked != "prune" {
+	if err != nil || asked != "y|prune" {
 		t.Fatalf("err %v, asked %q", err, asked)
 	}
 	if len(res.Removed) != 4 || res.Bytes == 0 {

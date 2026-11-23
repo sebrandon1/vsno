@@ -230,7 +230,7 @@ func Delete(ctx context.Context, e Env, o DeleteOptions) (Deleted, error) {
 	if out.Empty() || o.DryRun {
 		return out, nil
 	}
-	if !o.Yes && (o.Confirm == nil || !o.Confirm(fmt.Sprintf("Delete %d snapshot(s)?", len(out.Snapshots)), "yes")) {
+	if !o.Yes && (o.Confirm == nil || !o.Confirm(fmt.Sprintf("Delete %d snapshot(s)?", len(out.Snapshots)), "y|yes")) {
 		return out, fmt.Errorf("not confirmed; pass --yes to delete")
 	}
 	for _, s := range out.Snapshots {
