@@ -82,6 +82,16 @@ func TestInstalledLCA(t *testing.T) {
 	if _, fromSource, err := seed.SourceLCA(ctx, olm); err != nil || fromSource {
 		t.Errorf("OLM's deployment: fromSource = %v %v", fromSource, err)
 	}
+	// OLM's Deployment answers with the image it runs, so an operator installed
+	// by the catalog and one deployed from that image compare equal.
+	if name, err := seed.InstalledLCA(ctx, olm); err != nil || name != "" {
+		t.Errorf("OLM's deployment without an image: %q %v", name, err)
+	}
+	olmImage := &guestctltest.Fake{OcReplies: map[string][]guestctltest.Reply{
+		lcaDeployGet + " --ignore-not-found": {deployment(lcaImage, 1)}}}
+	if name, err := seed.InstalledLCA(ctx, olmImage); err != nil || name != lcaImage {
+		t.Errorf("OLM's deployment with an image: %q %v", name, err)
+	}
 	if name, err := seed.InstalledLCA(ctx, &guestctltest.Fake{}); err != nil || name != "" {
 		t.Errorf("none: %q %v", name, err)
 	}

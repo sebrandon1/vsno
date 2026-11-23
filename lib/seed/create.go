@@ -170,11 +170,17 @@ func SourceLCA(ctx context.Context, a Access) (image string, fromSource bool, er
 	return image, image != "", nil
 }
 
-// InstalledLCA names the LCA a vSNO runs: the controller's image when it was
-// deployed from a ref, or its CSV when OLM installed it; "" when none runs.
+// InstalledLCA names the LCA a vSNO runs by the image of its controller, so
+// the two ways of installing the same operator compare equal: OLM sets the
+// image on the Deployment too. It falls back to the CSV when the Deployment
+// can't be read, and is "" when no LCA runs.
 func InstalledLCA(ctx context.Context, a Access) (string, error) {
-	if image, fromSource, err := SourceLCA(ctx, a); err != nil || fromSource {
-		return image, err
+	var d guestctl.Deployment
+	found, err := guestctl.Get(ctx, a, &d, "get", "deployments", LCADeployment, "-n", LCANamespace, "--ignore-not-found")
+	if err == nil && found {
+		if image := d.Image("manager"); image != "" {
+			return image, nil
+		}
 	}
 	csv, _, err := LCA.CSV(ctx, a)
 	return csv, err

@@ -143,10 +143,17 @@ func TestUpgradeSeed(t *testing.T) {
 	})
 	t.Run("different LCA", func(t *testing.T) {
 		_, err := upgrade(t, &lca{Fake: targetFake()}, UpgradeOptions{}, map[string]guestctl.Access{"shiny-crane": lcaV("lifecycle-agent.v4.20.9")})
-		if err == nil || !strings.Contains(err.Error(), "must be the same version") {
-			t.Errorf("err = %v", err)
+		// A cross-minor upgrade is the usual cause: say how to give the target
+		// the LCA the seed was made with, rather than only what differs.
+		for _, want := range []string{"lifecycle-agent.v4.20.9", "the target needs the LCA from the seed's release",
+			"vsno prepare t --lca-ref release-4.21 --lca-image lifecycle-agent.v4.20.9",
+			"seed vSNO stopped skips this comparison"} {
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("err = %v, want %q in it", err, want)
+			}
 		}
 	})
+	t.Run("the same image installed two ways", TestUpgradeSeedSameImageInstalledTwoWays)
 	t.Run("seed vSNO stopped", func(t *testing.T) {
 		res, err := upgrade(t, &lca{Fake: targetFake()}, UpgradeOptions{}, nil)
 		if err != nil || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "can't read the seed vSNO shiny-crane") {
@@ -288,6 +295,20 @@ func TestIdentityReadFailures(t *testing.T) {
 }
 
 // A seed image without LCA's labels can't say its version, so it must be given.
+// TestUpgradeSeedSameImageInstalledTwoWays is a cross-minor upgrade done the
+// supported way: the seed's LCA from its catalog, the target's deployed from
+// the seed's image. The same operator, so the comparison passes.
+func TestUpgradeSeedSameImageInstalledTwoWays(t *testing.T) {
+	both := targetFake()
+	both.OcReplies[lcaDeployGet+" --ignore-not-found"] = []guestctltest.Reply{deployment(lcaImage, 1)}
+	seedFake := &guestctltest.Fake{OcReplies: map[string][]guestctltest.Reply{
+		lcaDeployGet + " --ignore-not-found": {deployment(lcaImage, 1)}}}
+	res, err := upgrade(t, &lca{Fake: both}, UpgradeOptions{}, map[string]guestctl.Access{"shiny-crane": seedFake})
+	if err != nil || len(res.Warnings) != 0 {
+		t.Errorf("err = %v, warnings = %q", err, res.Warnings)
+	}
+}
+
 func TestUpgradeSeedWithoutVersionLabel(t *testing.T) {
 	e := testEnv(map[string]guestctl.Access{"t": &lca{Fake: targetFake()}})
 	e.Builder = listing{out: `{"repo":"seeds/plain","tag":"1","digest":"sha256:c","created":"2026-11-19T23:00:00Z","labels":{},"size":1}` + "\n"}
