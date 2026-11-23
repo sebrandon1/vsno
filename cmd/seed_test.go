@@ -100,3 +100,19 @@ func TestRenderSeedSync(t *testing.T) {
 		t.Errorf("no digest, but printed one:\n%s", b.String())
 	}
 }
+
+// A seed copied in shows when it arrived, and says so; one made here shows its
+// own age.
+func TestSeedAgePrefersTheSyncTime(t *testing.T) {
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-1201 * 24 * time.Hour)
+	synced := now.Add(-5 * time.Minute)
+	img := seed.Image{Created: old}
+	if got, want := seedAge(now, img), "1201d"; got != want {
+		t.Errorf("no sync: %q, want %q", got, want)
+	}
+	img.SyncedAt = &synced
+	if got, want := seedAge(now, img), "5m (synced)"; got != want {
+		t.Errorf("synced: %q, want %q", got, want)
+	}
+}

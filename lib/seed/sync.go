@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/registry"
@@ -71,6 +72,17 @@ func Sync(ctx context.Context, e Env, o SyncOptions) (*SyncResult, error) {
 		return res, err
 	}
 	res.Digest, res.SizeBytes = out.Digest, out.SizeBytes
+	if o.From != "" {
+		// The copy arrived here. Its manifest keeps the upstream's build time,
+		// so remember when it landed; seed list says so.
+		at := time.Now()
+		if e.Now != nil {
+			at = e.Now()
+		}
+		if err := recordSync(ctx, e, o.Namespace, res.Destination, res.Digest, at); err != nil {
+			return res, fmt.Errorf("the image was copied, but recording when: %w", err)
+		}
+	}
 	return res, nil
 }
 

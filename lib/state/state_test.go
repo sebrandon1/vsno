@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -118,5 +119,29 @@ func TestDensityText(t *testing.T) {
 		if got := c.d.String(); got != c.want {
 			t.Errorf("%+v = %q, want %q", c.d, got, c.want)
 		}
+	}
+}
+
+func TestSyncsRoundTrip(t *testing.T) {
+	at := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	st := &State{}
+	st.RecordSync(Sync{Ref: "r/seeds/a:4.20.46", Digest: "sha256:aa", SyncedAt: at})
+	st.RecordSync(Sync{Ref: "r/seeds/b:4.20.46", SyncedAt: at.Add(time.Hour)})
+	st.RecordSync(Sync{Ref: "r/seeds/b:4.20.46", SyncedAt: at.Add(2 * time.Hour)}) // a newer copy wins
+	st.DropSync("r/seeds/a:4.20.46")
+	if _, ok := st.Synced("r/seeds/a:4.20.46"); ok {
+		t.Error("dropped entry is still there")
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back State
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := back.Synced("r/seeds/b:4.20.46")
+	if !ok || !got.SyncedAt.Equal(at.Add(2*time.Hour)) {
+		t.Errorf("got %+v, ok = %v", got, ok)
 	}
 }

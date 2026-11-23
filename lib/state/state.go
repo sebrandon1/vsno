@@ -47,9 +47,42 @@ type State struct {
 	// Versions maps a component (e.g. operator CSV) to its version.
 	Versions map[string]string `json:"versions,omitempty"`
 	Stages   []Stage           `json:"stages,omitempty"`
+	// Syncs records when an image arrived in the environment's registry from
+	// another one, by image reference.
+	Syncs map[string]Sync `json:"syncs,omitempty"`
 	// PreviousDensity is HyperConverged's density settings before setup
 	// first changed them, which teardown puts back; nil when setup didn't.
 	PreviousDensity *Density `json:"previousDensity,omitempty"`
+}
+
+// Sync is when an image came into the environment's registry from another one.
+// The image's manifest keeps the upstream build time — rewriting it would
+// change the digest — so without this a seed pulled in a minute ago would show
+// the age of the image it was copied from.
+type Sync struct {
+	Ref      string    `json:"ref"`
+	Digest   string    `json:"digest,omitempty"`
+	SyncedAt time.Time `json:"syncedAt"`
+}
+
+// RecordSync notes when ref arrived. The most recent copy wins.
+func (s *State) RecordSync(sync Sync) {
+	if s.Syncs == nil {
+		s.Syncs = map[string]Sync{}
+	}
+	sync.SyncedAt = sync.SyncedAt.UTC()
+	s.Syncs[sync.Ref] = sync
+}
+
+// Synced returns when ref arrived, if it was copied in.
+func (s *State) Synced(ref string) (Sync, bool) {
+	sync, ok := s.Syncs[ref]
+	return sync, ok
+}
+
+// DropSync forgets ref, once its image is gone.
+func (s *State) DropSync(ref string) {
+	delete(s.Syncs, ref)
 }
 
 // Density is how tightly OpenShift Virtualization packs VMs: memory

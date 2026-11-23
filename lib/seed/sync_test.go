@@ -11,10 +11,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/registry"
+	"github.com/sebrandon1/vsno/lib/state"
 	kfake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -304,5 +306,44 @@ func TestFarAuth(t *testing.T) {
 	}
 	if _, err := farAuth(filepath.Join(t.TempDir(), "absent.json"), ref, true, nil); err == nil || !strings.Contains(err.Error(), "reading the auth file") {
 		t.Errorf("missing --authfile: %v", err)
+	}
+}
+
+// A pull records when the image arrived: its own build time is the upstream's.
+func TestSyncPullRecordsWhenItArrived(t *testing.T) {
+	e := syncEnv(&syncRunner{out: `{"digest":"sha256:ee","sizeBytes":5}`})
+	at := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	e.Now = func() time.Time { return at }
+	res, err := Sync(context.Background(), e, SyncOptions{
+		Namespace: ns, Seed: "copy:4.22.0", From: "quay.io/me/seeds:4.22.0", AuthFile: authFile(t, "quay.io"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _, err := state.Load(context.Background(), e.Kube, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := st.Synced(res.Destination)
+	if !ok || !got.SyncedAt.Equal(at) || got.Digest != "sha256:ee" {
+		t.Errorf("recorded %+v, ok = %v; want %s at %s", got, ok, res.Destination, at)
+	}
+}
+
+// A push copies the seed out; the environment's copy is unchanged, so nothing
+// is recorded.
+func TestSyncPushRecordsNothing(t *testing.T) {
+	e := syncEnv(&syncRunner{listing: listing, out: `{"digest":"sha256:dd","sizeBytes":1}`})
+	if _, err := Sync(context.Background(), e, SyncOptions{
+		Namespace: ns, Seed: "a:4.20.46", To: "quay.io/me/seeds", AuthFile: authFile(t, "quay.io"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st, _, err := state.Load(context.Background(), e.Kube, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Syncs) != 0 {
+		t.Errorf("syncs = %+v, want none", st.Syncs)
 	}
 }
