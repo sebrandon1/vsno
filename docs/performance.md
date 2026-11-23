@@ -65,8 +65,9 @@ removes what a failed or deleted create left behind.
 ## Release cache
 
 ```bash
-vsno cache add 4.20.46            # mirror a release now
-vsno cache list                   # versions, size, last used, the vSNOs using each
+vsno cache add 4.20.46            # start mirroring a release, and return
+vsno cache add 4.20.46 --watch    # ...or follow it to the end
+vsno cache list -w                # versions, size, last used, and a live mirror's progress
 vsno cache prune --dry-run        # unused releases
 vsno cache prune --keep 1 --yes   # ...removing all but the newest unused one
 vsno cache gc                     # free the space of images already deleted
@@ -74,6 +75,11 @@ vsno cache gc                     # free the space of images already deleted
 
 The environment's registry holds mirrored OpenShift releases under `ocp/release/<digest>`. `create`
 mirrors a version the first time it needs it unless `--no-cache`; `cache add` does it ahead of time.
+
+`cache add` starts the mirror in a Job and returns, so one shell can queue several releases (they
+take the builder's lock in turn) and `cache list` shows each one's progress, or `--watch` follows it
+in place. Mirrors report their progress from the registry volume's growth since they began, which is
+why a second process can see it.
 The vSNO's install-config gets `imageDigestSources` pointing at the registry's **ClusterIP** (the
 guest's own `cluster.local` hides the host's Service names) and the registry's CA as
 `additionalTrustBundle`, so the installer and the cluster pull from the cluster.

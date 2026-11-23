@@ -407,14 +407,35 @@ instead of pulling 15–20 GB from the internet. `create` mirrors a release the 
 ### `vsno cache add`
 
 Mirrors a release's payload into the environment's registry ahead of time. `<version>` takes what
-`create` accepts. A mirror that stopped part way keeps what it already pushed, so running the same
-command again carries on from there rather than starting over.
+`create` accepts.
 
-Takes only the global flags.
+It returns as soon as the mirror is running: the work happens in a Job in the environment, so the
+mirror carries on after the command exits — and after the shell closes. `--watch` follows it here
+until it finishes instead. `vsno cache list` shows a running mirror's progress from any shell: how
+much it has pushed, how fast, and how much is left.
+
+A release already cached comes back at once, and so does one whose mirror is still running: that
+second call follows the existing Job rather than starting another. Mirrors queue on the builder's
+lock, so `cache add` several releases and walk away; they run one at a time.
+
+A mirror that stopped part way keeps what it already pushed, so running the same command again
+carries on from there rather than starting over. A failed mirror leaves its Job and log in place
+(`kubectl -n vsno logs job/cache-mirror-<first 16 hex digits of the payload digest>`); a finished one removes them.
+
+| Flag | Meaning |
+|---|---|
+| `-w`, `--watch` | Follow the mirror until it finishes, exiting non-zero if it fails |
 
 ### `vsno cache list`
 
-Lists the mirrored releases, their size, and the vSNOs using them. Alias: `ls`.
+Lists the mirrored releases, their size, and the vSNOs using them. A release being mirrored shows
+its progress — bytes pushed against the estimate, the rate, and what is left. A mirror that
+finished while nothing was watching is recorded before the list is shown. Alias: `ls`.
+
+| Flag | Meaning |
+|---|---|
+| `-w`, `--watch` | Refresh until interrupted |
+| `--interval <duration>` | Refresh interval for `--watch` (default 15s) |
 
 ### `vsno cache prune`
 

@@ -49,6 +49,8 @@ type Env struct {
 	Poll time.Duration
 	// Progress is how often a mirror reports its throughput; 0 = 5s.
 	Progress time.Duration
+	// Logs reads a Job's log; nil reads the pod the Job made.
+	Logs func(ctx context.Context, ns, job string, tail int64) string
 }
 
 // Volume is the registry volume's used and total size, however Env gets them.
@@ -90,6 +92,83 @@ type Entry struct {
 	State State `json:"state,omitempty"`
 	// Started is when the current mirror began; set only while mirroring.
 	Started time.Time `json:"started,omitempty"`
+	// Job is the Job mirroring this release; set only while mirroring.
+	Job string `json:"job,omitempty"`
+	// BaselineBytes is the registry volume's usage when the mirror began, so
+	// what a mirror has pushed is the volume's usage less this. Set only while
+	// mirroring: it is the one measure a second process can read, which is how
+	// `cache list` shows a mirror it did not start.
+	BaselineBytes int64 `json:"baselineBytes,omitempty"`
+	// Signatures is signature.sh's summary once a mirror copied them.
+	Signatures string `json:"signatures,omitempty"`
+	// Progress is how far a running mirror has got, filled in by List.
+	Progress *MirrorProgress `json:"progress,omitempty"`
+}
+
+// MirrorProgress is a running mirror's numbers. The registry volume's growth
+// is the only measure of what a mirror has pushed, so these are that growth
+// against the estimate, over the time since it started.
+type MirrorProgress struct {
+	ElapsedSeconds float64 `json:"elapsedSeconds,omitempty"`
+	BytesComplete  int64   `json:"bytesComplete,omitempty"`
+	EstimatedBytes int64   `json:"estimatedBytes,omitempty"`
+	Percent        float64 `json:"percent,omitempty"`
+	BytesPerSecond float64 `json:"bytesPerSecond,omitempty"`
+	ETASeconds     float64 `json:"etaSeconds,omitempty"`
+}
+
+// ProgressAt is a mirroring entry's progress, given the registry volume's
+// current usage and what a mirror is expected to take.
+func (e Entry) ProgressAt(now time.Time, used, est int64) *MirrorProgress {
+	if e.State != StateMirroring {
+		return nil
+	}
+	p := &MirrorProgress{EstimatedBytes: est}
+	if !e.Started.IsZero() {
+		p.ElapsedSeconds = now.Sub(e.Started).Seconds()
+	}
+	if e.BaselineBytes > 0 && used > e.BaselineBytes {
+		p.BytesComplete = used - e.BaselineBytes
+	}
+	if p.ElapsedSeconds > 0 && p.BytesComplete > 0 {
+		p.BytesPerSecond = float64(p.BytesComplete) / p.ElapsedSeconds
+	}
+	if est > 0 && p.BytesComplete > 0 {
+		p.Percent = 100 * float64(p.BytesComplete) / float64(est)
+		if p.Percent > 100 {
+			p.Percent = 100 // a mirror of a release already partly there can outgrow the estimate
+		}
+		if p.BytesPerSecond > 0 && est > p.BytesComplete {
+			p.ETASeconds = float64(est-p.BytesComplete) / p.BytesPerSecond
+		}
+	}
+	return p
+}
+
+// Text is the progress as `cache list` and `cache add --watch` say it.
+func (p *MirrorProgress) Text() string {
+	if p == nil {
+		return "-"
+	}
+	var parts []string
+	switch {
+	case p.BytesComplete > 0 && p.EstimatedBytes > 0:
+		parts = append(parts, fmt.Sprintf("%s of ~%s (%.0f%%)", bytesText(p.BytesComplete), bytesText(p.EstimatedBytes), p.Percent))
+	case p.BytesComplete > 0:
+		parts = append(parts, bytesText(p.BytesComplete))
+	}
+	if p.BytesPerSecond > 0 {
+		parts = append(parts, Rate(int64(p.BytesPerSecond), time.Second))
+	}
+	if p.ETASeconds > 0 {
+		parts = append(parts, "~"+time.Duration(p.ETASeconds*float64(time.Second)).Round(time.Second).String()+" left")
+	} else if p.ElapsedSeconds > 0 {
+		parts = append(parts, time.Duration(p.ElapsedSeconds*float64(time.Second)).Round(time.Second).String())
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // State is how far a cache entry has got.
@@ -135,9 +214,12 @@ func List(ctx context.Context, e Env, ns string, users map[string][]string) (*Re
 		return nil, err
 	}
 	rep := &Report{Entries: make([]Entry, 0, len(m.Entries))}
+	rep.Used, rep.Total, _ = e.Volume(ctx, ns) // a missing pod leaves them zero
+	est, now := estimate(m), e.Now()
 	for _, ent := range m.Entries {
 		ent.Users = users[ent.Image]
 		ent.InUse = len(ent.Users) > 0
+		ent.Progress = ent.ProgressAt(now, rep.Used, est)
 		rep.Entries = append(rep.Entries, *ent)
 	}
 	slices.SortFunc(rep.Entries, func(a, b Entry) int {
@@ -146,7 +228,6 @@ func List(ctx context.Context, e Env, ns string, users map[string][]string) (*Re
 		}
 		return a.Mirrored.Compare(b.Mirrored)
 	})
-	rep.Used, rep.Total, _ = e.Volume(ctx, ns) // a missing pod leaves them zero
 	return rep, nil
 }
 

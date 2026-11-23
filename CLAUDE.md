@@ -145,10 +145,18 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   curl and skopeo, credentials on stdin) and `scripts/sync.sh` (one image to or from another
   registry: `skopeo copy --all` with each side's own auth file and cert dir, from a tar on stdin).
   `lib/seed` re-exports it.
-- `lib/cache`: mirrored OpenShift releases. `Ensure` looks a payload's digest up in ConfigMap
-  `vsno-cache`, mirrors on a miss with `oc adm release mirror` in the builder (`scripts/mirror.sh`,
-  one repository per payload under `ocp/release/<sha16>`), and returns the install-config's
-  `imageDigestSources`, the CA, and a pull secret with the registry added. `Prune` deletes a
+- `lib/cache`: mirrored OpenShift releases. `Start` looks a payload's digest up in ConfigMap
+  `vsno-cache`, and on a miss records it as mirroring and creates the Job that runs
+  `oc adm release mirror` (`scripts/mirror.sh`) and copies signatures (`scripts/signature.sh`) — one
+  repository per payload under `ocp/release/<sha16>`. `job.go` builds the Job from the builder pod
+  (its node, SELinux level, service account and image) because it mounts the builder's volume, and
+  one credentials Secret per release because mirrors queue on the builder's lock. `Wait` follows the
+  Job and settles the entry: ready with the release's size, or failed with the log's tail.
+  `Ensure` is `Start` + `Wait`, which is what `create` and `run` need; both return the
+  install-config's `imageDigestSources`, the CA, and a pull secret with the registry added.
+  `Reconcile` settles a Job that
+  finished while nothing was watching, so `cache list` shows the truth and can show a running
+  mirror's progress from the registry volume's growth since it began. `Prune` deletes a
   release's manifests and runs `GarbageCollect`, which stops the registry, runs its collector in a
   Job over the same volume, and starts it again.
 - `lib/isos`: what creates leave behind. `List` runs `scripts/isos.sh` in the builder (served ISOs,
