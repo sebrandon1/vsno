@@ -182,7 +182,10 @@ func (in *inspector) api(ctx context.Context) {
 	}
 	why := unstable(cos, mcps)
 	if len(why) > 0 && in.o.Settle {
-		if err := waitStable(ctx, in.Env, in.a, in.Progress.Start("Waiting for a stable cluster")); err != nil {
+		err := guestctl.Step(in.Progress, "Waiting for a stable cluster", func(ps precheck.ProgressStep) (string, error) {
+			return "", waitStable(ctx, in.Env, in.a, ps)
+		})
+		if err != nil {
 			why = []string{err.Error()}
 		} else {
 			why = nil
@@ -287,7 +290,12 @@ func (in *inspector) target(ctx context.Context) {
 func install(ctx context.Context, e Env, in *inspector) {
 	warn := func(err error) { in.rep.Warnings = append(in.rep.Warnings, err.Error()) }
 	if status(in.rep, checkLCA) != precheck.Pass {
-		name, err := ensureLCA(ctx, e, in.a, e.Progress.Start("Installing the Lifecycle Agent"))
+		var name string
+		err := guestctl.Step(e.Progress, "Installing the Lifecycle Agent", func(ps precheck.ProgressStep) (string, error) {
+			var err error
+			name, err = ensureLCA(ctx, e, in.a, ps)
+			return name, err
+		})
 		if err != nil {
 			warn(err)
 		} else {
@@ -307,7 +315,10 @@ func install(ctx context.Context, e Env, in *inspector) {
 	default:
 		return // someone else's ConfigMap: trust() says which key to add
 	}
-	if err := EnsureTrust(ctx, e, in.a, in.reg, e.Progress.Start("Trusting the environment registry")); err != nil {
+	err := guestctl.Step(e.Progress, "Trusting the environment registry", func(ps precheck.ProgressStep) (string, error) {
+		return "", EnsureTrust(ctx, e, in.a, in.reg, ps)
+	})
+	if err != nil {
 		warn(err)
 		return
 	}
