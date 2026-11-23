@@ -94,7 +94,7 @@ name a new one with `-n`.
 |---|---|
 | `--config <file>` | Settings file written by `vsno precheck --write-config` |
 | `--node <name>` | Worker that will run the VMs (default: precheck's suggestion) |
-| `--disk <path>` | Disk for LVMS, a `/dev/disk/by-id` path (default: precheck's suggestion) |
+| `--device <path>` | Disk for LVMS, a `/dev/disk/by-id` path (default: precheck's suggestion). It was `--disk`, which still works and warns |
 | `--registry-size <size>` | Size of the in-cluster registry's volume, which holds mirrored releases; it only grows (default `100Gi`) |
 | `--memory-overcommit <percent>` | OpenShift Virtualization's memory overcommit, e.g. `150`; changes every VM on the cluster, asks unless `--yes` |
 | `--ksm` | Turn on kernel samepage merging for the vSNO node; asks unless `--yes` |
@@ -346,7 +346,7 @@ unless `--yes`. Each stage reuses what's there, so running it again after a stop
 | `--node <name>` | Worker for the vSNOs (default: setup's) |
 | `--cores <n>` | vCPUs per vSNO (default as `vsno create`) |
 | `--memory <gib>` | GiB of memory per vSNO (default as `vsno create`) |
-| `--disk <path>` | Disk for LVM Storage on the node, as `vsno setup --disk` (default: precheck's pick) |
+| `--device <path>` | Disk for LVM Storage on the node, as `vsno setup --device` (default: precheck's pick). It was `--disk`, which still works and warns |
 | `--lca-ref <ref>` | Build LCA from this ref and use it on both vSNOs |
 | `--lca-repo <url>` | The git repository `--lca-ref` is in |
 | `--lca-image <image>` | Use this prebuilt LCA image on both vSNOs |

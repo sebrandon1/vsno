@@ -87,7 +87,11 @@ exists but vsno didn't create it, so setup would overwrite it). Add
 func init() {
 	f := setupCmd.Flags()
 	f.StringVar(&suNode, "node", "", "worker that will run the VMs (default: precheck's suggestion)")
-	f.StringVar(&suDisk, "disk", "", "disk for LVMS, a /dev/disk/by-id path (default: precheck's suggestion)")
+	f.StringVar(&suDisk, "device", "", "disk for LVMS, a /dev/disk/by-id path (default: precheck's suggestion)")
+	// --disk meant a device here and a size on create; one of them had to move.
+	// The old name keeps working, and warns, for a release.
+	f.StringVar(&suDisk, "disk", "", "deprecated: use --device")
+	_ = f.MarkDeprecated("disk", "use --device")
 	f.StringVar(&suConfig, "config", "", "settings file written by 'vsno precheck --write-config'")
 	f.BoolVar(&suYes, "yes", false, "approve taking over the LVMS disk without asking")
 	f.BoolVar(&suForce, "force", false, "take over an existing namespace vsno didn't create without asking, overwriting objects in it")

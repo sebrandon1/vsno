@@ -38,13 +38,14 @@ func TestRunOptions(t *testing.T) {
 	f := runCmd.Flags()
 	t.Cleanup(func() {
 		rnFile, rnOpts = "", run.Options{}
-		for _, name := range []string{"disk", "seed-name"} {
+		for _, name := range []string{"device", "disk", "seed-name"} {
 			_ = f.Set(name, "")
 			f.Lookup(name).Changed = false
 		}
 	})
 	rnFile = file
-	if err := f.Set("disk", "/dev/disk/by-id/b"); err != nil {
+	// --device is the flag now; the file still calls the setting "disk".
+	if err := f.Set("device", "/dev/disk/by-id/b"); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Set("seed-name", "s1"); err != nil {
@@ -63,5 +64,31 @@ func TestRunOptions(t *testing.T) {
 	}
 	if _, err := runOptions(runCmd); err == nil || !strings.Contains(err.Error(), "parsing") {
 		t.Errorf("unknown key: %v", err)
+	}
+}
+
+// --device was --disk; a file's "disk" setting is still overridden by either
+// spelling, because the precedence is keyed on the flag that was given.
+func TestRunDeviceFromTheOldFlag(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "vsno.yaml")
+	if err := os.WriteFile(file, []byte("disk: /dev/disk/by-id/a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := runCmd.Flags()
+	t.Cleanup(func() {
+		rnFile, rnOpts = "", run.Options{}
+		for _, name := range []string{"device", "disk"} {
+			_ = f.Set(name, "")
+			f.Lookup(name).Changed = false
+		}
+	})
+	rnFile = file
+	if err := f.Set("disk", "/dev/disk/by-id/old"); err != nil {
+		t.Fatal(err)
+	}
+	o, err := runOptions(runCmd)
+	if err != nil || o.Disk != "/dev/disk/by-id/old" {
+		t.Errorf("options = %+v, err = %v", o, err)
 	}
 }
