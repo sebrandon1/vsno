@@ -133,7 +133,7 @@ func runCacheAdd(cmd *cobra.Command, args []string) error {
 	}
 	rel, err := release.Resolver{}.Resolve(cmd.Context(), args[0])
 	if err != nil {
-		return err
+		return fmt.Errorf("%w; `vsno cache list` shows what is already mirrored", err)
 	}
 	o := cache.EnsureOptions{Namespace: namespace, Release: rel}
 	if !caWatch {

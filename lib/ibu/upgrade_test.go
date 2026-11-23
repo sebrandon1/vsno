@@ -401,3 +401,15 @@ func TestUpgradeAbort(t *testing.T) {
 		t.Errorf("abort with a seed: err = %v", err)
 	}
 }
+
+// A prepare that fails on what the vSNO is missing names the command that
+// would set it up.
+func TestPrepareNamesSeedPrecheck(t *testing.T) {
+	// Nothing answers: no LCA CSV, and no lifecycle-agent package in the catalog.
+	bare := &guestctltest.Fake{}
+	e := testEnv(map[string]guestctl.Access{"s": bare})
+	_, err := Prepare(context.Background(), e, PrepareOptions{Namespace: ns, Names: []string{"s"}, Role: RoleSeed})
+	if err == nil || !strings.Contains(err.Error(), "vsno seed precheck s --install") {
+		t.Errorf("err = %v, want the seed precheck hint", err)
+	}
+}

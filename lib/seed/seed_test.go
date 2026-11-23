@@ -551,3 +551,15 @@ func TestSetSeeding(t *testing.T) {
 		t.Errorf("the mark stayed: %q", v)
 	}
 }
+
+// A registry that can't be reached names the command that says whether it is up.
+func TestListNamesTheNextStep(t *testing.T) {
+	e := Env{Env: guest.Env{Kube: kfake.NewClientset()}} // no registry Secrets
+	if _, err := List(context.Background(), e, ns); err == nil || !strings.Contains(err.Error(), "vsno status") {
+		t.Errorf("err = %v, want a `vsno status` hint", err)
+	}
+	r := &fakeRunner{err: errors.New("the builder is gone")}
+	if _, err := List(context.Background(), imagesEnv(r), ns); err == nil || !strings.Contains(err.Error(), "vsno status") {
+		t.Errorf("builder err = %v, want a `vsno status` hint", err)
+	}
+}

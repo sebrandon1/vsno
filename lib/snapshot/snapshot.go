@@ -83,7 +83,7 @@ func List(ctx context.Context, e Env, ns string) ([]Entry, error) {
 	}
 	if err != nil {
 		ps.Fail(err.Error())
-		return nil, fmt.Errorf("listing snapshots: %w", err)
+		return nil, fmt.Errorf("listing snapshots: %w; `vsno list` shows the vSNOs they belong to", err)
 	}
 	names, err := vsnoNames(ctx, e, ns) // one listing, not one per snapshot
 	if err != nil {
