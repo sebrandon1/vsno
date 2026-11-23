@@ -14,7 +14,9 @@ type PruneOptions struct {
 	DryRun    bool
 	Yes       bool
 	// Keep is how many unused openshift-install binaries to keep, newest first.
-	Keep     int
+	Keep int
+	// Confirm asks question and approves answer, which may be "y|prune": the
+	// first is what the prompt asks for, the rest are what it used to.
 	Confirm  func(question, answer string) bool
 	ShowPlan func(*Plan)
 }
@@ -68,7 +70,7 @@ func Prune(ctx context.Context, e Env, o PruneOptions) (*Result, error) {
 		}
 		q := fmt.Sprintf("This deletes %d orphaned ISO(s), %d unused installer(s) and %d ISO DataVolume(s), freeing %s. Type %q to continue",
 			len(res.Plan.VSNOs), len(res.Plan.Installers), len(res.Plan.Disks), bytesText(res.Plan.Bytes), answer)
-		if o.Confirm == nil || !o.Confirm(q, answer) {
+		if o.Confirm == nil || !o.Confirm(q, answer+"|"+legacyAnswer) {
 			return res, errors.New("not confirmed; rerun with --yes to skip the question")
 		}
 	}
@@ -76,8 +78,10 @@ func Prune(ctx context.Context, e Env, o PruneOptions) (*Result, error) {
 	return res, err
 }
 
-// answer is what the user types to confirm.
-const answer = "prune"
+// answer is what the user types to confirm: y, or the word the prompt used
+// before the confirmations were brought together.
+const answer = "y"
+const legacyAnswer = "prune"
 
 // planFor picks what to remove. An orphaned vSNO's served ISO and build
 // directory count once: they go together.

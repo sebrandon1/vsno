@@ -190,6 +190,9 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - Without `--seed-repo`, the "Seed registry" row is `info` (the in-cluster registry is the
   default) and no auth files are read.
 - Progress goes to stderr and is turned off for `-o json`, so stdout stays machine-readable.
+- A confirmation answers `y`, or the name of what is being destroyed when it cannot be got back (a
+  disk, a namespace, vSNOs, seed images). `confirm` in `cmd/setup.go` takes `"y|prune"`, so the
+  word a command used to ask for keeps working: change the prompt, not the scripts.
 - `-o` is checked centrally in `PersistentPreRunE`, next to `checkWide` (`cmd/root.go`): `checkJSON`
   refuses it on the commands in `commandsWithoutJSON`, which stream (oc, ssh, kubeconfig, screenshot)
   or only report completion (iso eject, cache gc), instead of printing human text anyway.

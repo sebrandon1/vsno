@@ -19,6 +19,10 @@ Accepted by every command, before or after the command name:
 | `-h, --help` | Help for the command |
 | `--version` | Print the vsno version (root only; also `vsno version`). Not `-v`, which is verbose |
 
+Anything that deletes asks first, unless it takes `--yes`. The answer is `y`, or the name of what
+you are destroying when the thing is hard to get back: a vSNO's disk, a namespace, a vSNO or a seed
+image. The words older versions asked for (`prune`, `gc`, `yes`) still work.
+
 Anything after a vSNO's name goes to `oc` or `ssh`, not to vsno. Put vsno's own flags, such as
 `-n`, before the name: `vsno oc seed get nodes -o wide` sends `get nodes -o wide` to `oc`. The same
 goes for `-v`: `vsno -v oc seed get nodes` traces the session, `vsno oc seed get nodes -v` passes

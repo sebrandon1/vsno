@@ -69,6 +69,29 @@ func TestConfirm(t *testing.T) {
 	}
 }
 
+// The prompt asks for one word; the word it used to ask for still works, so a
+// script that types "prune" need not change.
+func TestConfirmAcceptingTheOldWord(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{
+		{"y\n", true},
+		{" prune \n", true},
+		{"n\n", false},
+		{"y|prune\n", false},
+		{"\n", false},
+	} {
+		var w bytes.Buffer
+		if got := confirm(strings.NewReader(c.in), &w, "Prune?", "y|prune"); got != c.want {
+			t.Errorf("input %q: got %v, want %v", c.in, got, c.want)
+		}
+		if w.String() != "Prune? [y]: " {
+			t.Errorf("prompt = %q, want it to ask for y alone", w.String())
+		}
+	}
+}
+
 func TestConfirmOnTerminalRefusesPipes(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
