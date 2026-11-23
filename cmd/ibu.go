@@ -28,10 +28,15 @@ var prepareCmd = &cobra.Command{
 	Short: "Get vSNOs ready for an Image Based Upgrade",
 	Long: `prepare installs what an Image Based Upgrade needs on each vSNO, reusing
 what's already there: the Lifecycle Agent and OADP from the vSNO's own catalog,
-and trust in the environment's registry. A target (the default role) also gets
-a backup location in the environment's S3 for OADP, waiting until it is
-Available, and the pull secret for the seed image. vsno upgrade prepares its
-target itself, so this is for checking a vSNO ahead of time.`,
+and trust in the environment's registry. These are the same steps vsno seed
+precheck --install takes, so both leave a vSNO in the same state; LCA's own
+prerequisites have OADP on the seed as well as the target, so both roles get
+it.
+
+A target (the default role) also gets a backup location in the environment's S3
+for OADP, waiting until it is Available, and the pull secret for the seed
+image. vsno upgrade prepares its target itself, so this is for checking a vSNO
+ahead of time.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runPrepare,
 }
@@ -68,7 +73,7 @@ func addLCAFlags(f *pflag.FlagSet) {
 }
 
 func init() {
-	prepareCmd.Flags().StringVar(&prRole, "role", string(ibu.RoleTarget), "what the vSNOs are for: seed or target")
+	prepareCmd.Flags().StringVar(&prRole, "role", string(ibu.RoleTarget), "what the vSNOs are for: seed (LCA, OADP and trust) or target (those, plus a backup location and the seed pull secret)")
 	addLCAFlags(prepareCmd.Flags())
 	addLCAFlags(upgradeCmd.Flags())
 	f := upgradeCmd.Flags()

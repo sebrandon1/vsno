@@ -221,8 +221,11 @@ emergency mode after a reboot.
 ## `vsno prepare`
 
 Installs what an Image Based Upgrade needs on each vSNO, reusing what's already there: the
-Lifecycle Agent and OADP from the vSNO's own catalog, and trust in the environment's registry. A
-`target` also gets an S3 backup location and the seed pull secret. `vsno upgrade` prepares its
+Lifecycle Agent and OADP from the vSNO's own catalog, and trust in the environment's registry. These
+are the same steps `vsno seed precheck --install` takes, so a vSNO readied by either ends up the
+same. LCA's own prerequisites have OADP on the seed as well as the target, so both roles get it.
+
+A `target` also gets an S3 backup location and the seed pull secret. `vsno upgrade` prepares its
 target itself, so this is for checking a vSNO ahead of time.
 
 | Flag | Meaning |
@@ -308,7 +311,7 @@ exits non-zero if anything is missing.
 | Flag | Meaning |
 |---|---|
 | `--image <ref>` | The seed image reference to check, instead of the environment's registry |
-| `--install` | Install LCA and set up registry trust where they're missing |
+| `--install` | Install LCA and OADP, and set up registry trust where they're missing |
 | `--timeout <duration>` | How long `--install` may wait for each install (default `1h`) |
 
 ## `vsno upgrade`

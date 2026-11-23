@@ -23,26 +23,21 @@ import (
 type Role string
 
 const (
-	// RoleSeed makes seed images: it needs LCA.
+	// RoleSeed makes seed images: it needs LCA, and OADP, which LCA's
+	// prerequisites have on the seed as well as the target.
 	RoleSeed Role = "seed"
-	// RoleTarget is upgraded: it also needs OADP with a backup location, and
-	// the credentials to pull the seed image.
+	// RoleTarget is upgraded: it needs the same, plus a backup location for
+	// OADP and the credentials to pull the seed image.
 	RoleTarget Role = "target"
 )
 
-// OADP is the OpenShift API for Data Protection, which LCA backs the target's
-// applications up with before the upgrade and restores them from after.
-var OADP = guestctl.Operator{Name: "OADP", Package: "redhat-oadp-operator", CSVPrefix: "oadp-operator.", Namespace: oadpNamespace}
-
 const (
-	oadpNamespace = "openshift-adp"
-	dpaName       = "dataprotectionapplication"
+	dpaName = "dataprotectionapplication"
 	// PullSecret is the Secret in LCA's namespace the target pulls the seed
 	// image with.
 	PullSecret = "seed-pull-secret"
 
-	operatorWait = 10 * time.Minute
-	backupWait   = 5 * time.Minute
+	backupWait = 5 * time.Minute
 )
 
 // PrepareOptions are the user's choices for vsno prepare.
@@ -66,6 +61,8 @@ type Prepared struct {
 }
 
 // Prepare readies each vSNO for its role, reusing whatever is already there.
+// The steps are seed.EnsureReady's — the ones `vsno seed precheck --install`
+// takes — plus, for a target, the backup location and the seed pull secret.
 func Prepare(ctx context.Context, e Env, o PrepareOptions) ([]Prepared, error) {
 	e.Defaults(o.Namespace)
 	reg, err := seed.LoadRegistry(ctx, e.Kube, o.Namespace)
@@ -101,41 +98,30 @@ func Prepare(ctx context.Context, e Env, o PrepareOptions) ([]Prepared, error) {
 	return out, nil
 }
 
+// prepareOne readies one vSNO: the same steps `vsno seed precheck --install`
+// takes, plus, for a target, the backup location and the seed pull secret.
 func prepareOne(ctx context.Context, e Env, ns, name string, role Role, reg seed.Registry, store *backupStore, built *BuiltLCA) (Prepared, error) {
 	p := Prepared{Name: name, Role: role, Built: built}
 	a := e.Access(name)
 	c := e.Clock()
-	if err := guestctl.Step(e.Progress, name+": LCA", func(ps precheck.ProgressStep) (string, error) {
-		if built == nil {
-			// A vSNO running LCA from a ref keeps it: subscribing to the
-			// catalog's would replace it.
-			if image, fromSource, err := seed.SourceLCA(ctx, a); err != nil || fromSource {
-				p.LCA = image
-				return image + " (from source, kept)", err
+	if built != nil {
+		if err := guestctl.Step(e.Progress, name+": the Lifecycle Agent", func(ps precheck.ProgressStep) (string, error) {
+			p.LCA = built.Image
+			p.Warnings = append(p.Warnings, versionWarning(ctx, a, built)...)
+			if err := deployLCA(ctx, a, c, built, reg, ps); err != nil {
+				return "", err
 			}
-			var err error
-			p.LCA, err = seed.LCA.Ensure(ctx, a, c, operatorWait, ps)
-			return p.LCA, err
+			return built.String(), recordLCA(ctx, e, ns, name, built)
+		}); err != nil {
+			return p, err
 		}
-		p.LCA = built.Image
-		p.Warnings = append(p.Warnings, versionWarning(ctx, a, built)...)
-		if err := deployLCA(ctx, a, c, built, reg, ps); err != nil {
-			return "", err
-		}
-		return built.String(), recordLCA(ctx, e, ns, name, built)
-	}); err != nil {
-		return p, err
 	}
-	if err := guestctl.Step(e.Progress, name+": "+OADP.Name, func(ps precheck.ProgressStep) (string, error) {
-		var err error
-		p.OADP, err = OADP.Ensure(ctx, a, c, operatorWait, ps)
-		return p.OADP, err
-	}); err != nil {
-		return p, err
+	r, err := seed.EnsureReady(ctx, e, a, seed.PrepOptions{Prefix: name + ": ", Registry: reg, NoLCA: built != nil})
+	if built == nil {
+		p.LCA = r.LCA
 	}
-	if err := guestctl.Step(e.Progress, name+": trusting the environment registry", func(ps precheck.ProgressStep) (string, error) {
-		return reg.Host, seed.EnsureTrust(ctx, e, a, reg, ps)
-	}); err != nil {
+	p.OADP = r.OADP
+	if err != nil {
 		return p, err
 	}
 	if role != RoleTarget {
@@ -207,7 +193,7 @@ func ensureBackupLocation(ctx context.Context, a guestctl.Access, c guestctl.Clo
 	var phase string
 	err = guestctl.Poll(ctx, c, backupWait, func() (bool, error) {
 		var bsls guestctl.ObjectList
-		if _, err := guestctl.Get(ctx, a, &bsls, "get", "backupstoragelocations", "-n", oadpNamespace); err != nil {
+		if _, err := guestctl.Get(ctx, a, &bsls, "get", "backupstoragelocations", "-n", seed.OADPNamespace); err != nil {
 			return false, err
 		}
 		phase = "not created yet"
@@ -218,7 +204,7 @@ func ensureBackupLocation(ctx context.Context, a guestctl.Access, c guestctl.Clo
 		return phase == "Available", nil
 	})
 	if errors.Is(err, guestctl.ErrTimeout) {
-		return fmt.Errorf("the backup location at %s was %s after %s (`vsno oc <name> -- get backupstoragelocations -n %s -o yaml`)", s.url, phase, backupWait, oadpNamespace)
+		return fmt.Errorf("the backup location at %s was %s after %s (`vsno oc <name> -- get backupstoragelocations -n %s -o yaml`)", s.url, phase, backupWait, seed.OADPNamespace)
 	}
 	return err
 }
@@ -235,7 +221,7 @@ type data struct {
 }
 
 func render(name string, d data) (string, error) {
-	d.OADPNamespace, d.DPA, d.LCANamespace, d.PullSecret, d.Bucket = oadpNamespace, dpaName, seed.LCANamespace, PullSecret, manifests.DefaultS3Bucket
+	d.OADPNamespace, d.DPA, d.LCANamespace, d.PullSecret, d.Bucket = seed.OADPNamespace, dpaName, seed.LCANamespace, PullSecret, manifests.DefaultS3Bucket
 	var b bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&b, name, d); err != nil {
 		return "", fmt.Errorf("rendering %s: %w", name, err)

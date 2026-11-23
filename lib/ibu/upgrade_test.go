@@ -3,6 +3,7 @@ package ibu
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -247,6 +248,29 @@ func TestPrepare(t *testing.T) {
 			t.Errorf("out = %+v, err = %v", out, err)
 		}
 	})
+}
+
+// A seed's preparation is seed.EnsureReady's — the steps vsno seed precheck
+// --install takes — so the two commands cannot disagree about what it needs.
+func TestPrepareSeedTakesSeedPrecheckSteps(t *testing.T) {
+	e := testEnv(map[string]guestctl.Access{"s": targetFake()})
+	p := &titles{}
+	e.Progress = p
+	if _, err := Prepare(context.Background(), e, PrepareOptions{Namespace: ns, Names: []string{"s"}, Role: RoleSeed}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"s: the Lifecycle Agent", "s: OADP", "s: trusting the environment registry"}
+	if !slices.Equal(p.titles, want) {
+		t.Errorf("steps %q, want %q", p.titles, want)
+	}
+}
+
+// titles records the steps a run starts.
+type titles struct{ titles []string }
+
+func (t *titles) Start(title string) precheck.ProgressStep {
+	t.titles = append(t.titles, title)
+	return &steps{}
 }
 
 // Without the environment's S3, a target can't be given a backup location.
