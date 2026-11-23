@@ -20,6 +20,7 @@ var (
 	dlDryRun  bool
 	dlTimeout time.Duration
 	pwWait    bool
+	pwTimeout time.Duration
 )
 
 var deleteCmd = &cobra.Command{
@@ -53,6 +54,7 @@ func init() {
 	f.DurationVar(&dlTimeout, "timeout", 10*time.Minute, "how long to wait for each vSNO to be gone")
 	for _, c := range []*cobra.Command{startCmd, stopCmd} {
 		c.Flags().BoolVar(&pwWait, "wait", false, "wait until the vSNO is ready (start) or stopped (stop)")
+		c.Flags().DurationVar(&pwTimeout, "timeout", 30*time.Minute, "how long to wait for the vSNO to change state")
 	}
 	rootCmd.AddCommand(deleteCmd, startCmd, stopCmd)
 }
@@ -114,7 +116,7 @@ func runPower(cmd *cobra.Command, name string, run bool) error {
 	if err != nil {
 		return err
 	}
-	env, err := guestEnv(cmd.Context(), c, 30*time.Minute)
+	env, err := guestEnv(cmd.Context(), c, pwTimeout)
 	if err != nil {
 		return err
 	}

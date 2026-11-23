@@ -75,7 +75,7 @@ changed.
 | `--seed-repo <repo>` | Registry repo for the seed image (e.g. `quay.io/me/ibu-seed`); checks local push credentials |
 | `--vms <n>` | VMs that must run at the same time, seed + target (default `2`) |
 | `--vm-cores <n>` | vCPUs per VM (default `16`) |
-| `--vm-memory <n>` | Guest memory per VM, GiB (default `32`) |
+| `--vm-memory <n>` | Guest memory per VM, GiB (default `32`: sized for seed generation and the IBU precache. `vsno create` makes 16 GiB VMs by default, which the capacity line in `vsno list` uses) |
 | `--min-disk <gb>` | Minimum size of the LVMS disk (default `600`) |
 
 ## `vsno setup`
@@ -152,6 +152,7 @@ Starts a stopped vSNO, keeping its disk.
 | Flag | Meaning |
 |---|---|
 | `--wait` | Wait until the vSNO is ready |
+| `--timeout <duration>` | How long to wait for the change (default `30m`) |
 
 ## `vsno stop`
 
@@ -160,6 +161,7 @@ Stops a vSNO, keeping its disk and freeing its memory.
 | Flag | Meaning |
 |---|---|
 | `--wait` | Wait until the vSNO is stopped |
+| `--timeout <duration>` | How long to wait for the change (default `30m`) |
 
 ## `vsno delete`
 
@@ -363,14 +365,13 @@ name. A running vSNO is stopped for the snapshot and started again afterwards. A
 | [`snapshot list`](#vsno-snapshot-list) | List the snapshots |
 | [`snapshot delete`](#vsno-snapshot-delete) | Delete snapshots |
 
-`--timeout <duration>` on `vsno snapshot` (and inherited by its subcommands) is how long to wait for
-the storage driver (default `30m`).
-
 ### `vsno snapshot create`
 
 Stops the vSNO if needed, snapshots its disk, and starts it again.
 
-Takes the `snapshot` flags (`--timeout`) and the global flags.
+| Flag | Meaning |
+|---|---|
+| `--timeout <duration>` | How long to wait for the storage driver (default `30m`) |
 
 ### `vsno snapshot list`
 
@@ -402,7 +403,8 @@ instead of pulling 15–20 GB from the internet. `create` mirrors a release the 
 ### `vsno cache add`
 
 Mirrors a release's payload into the environment's registry ahead of time. `<version>` takes what
-`create` accepts.
+`create` accepts. A mirror that stopped part way keeps what it already pushed, so running the same
+command again carries on from there rather than starting over.
 
 Takes only the global flags.
 

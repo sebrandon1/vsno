@@ -349,7 +349,11 @@ func runMirror(ctx context.Context, e Env, o EnsureOptions, files []byte, host, 
 	_ = pr.Close()
 	errRun := <-done
 	if errRun != nil {
-		return fmt.Errorf("mirroring %s: %w%s", o.Release.Requested, errRun, builder.Tail(stderr.String()))
+		// A mirror that stopped part way keeps what it already pushed, so the
+		// same command carries on: say so, rather than leave the user to guess
+		// whether a second attempt starts over.
+		return fmt.Errorf("mirroring %s: %w%s (run the same command again to carry on: it keeps what it already pushed)",
+			o.Release.Requested, errRun, builder.Tail(stderr.String()))
 	}
 	if err := sc.Err(); err != nil {
 		return fmt.Errorf("reading the mirror's output: %w", err)

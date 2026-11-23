@@ -153,6 +153,23 @@ func Classify(o Observed) (State, string) {
 	return classifyProbe(o)
 }
 
+// finishingFromCV reads a control plane that is not Available yet. The CVO
+// reports errors that clear themselves while it rolls out, so a fresh one is
+// not worth repeating; and it keeps naming whichever operator it failed on
+// last until it next reconciles, so a message every operator contradicts is
+// stale — after an IBU it can still say "the cluster operator authentication
+// is not available" while authentication reports Available. The raw message
+// stays in CVMessage (`-o json`) and `vsno status`.
+func finishingFromCV(o Observed, p *Probe) (State, string) {
+	if o.Now.IsZero() || p.CV.Since.IsZero() || o.Now.Sub(p.CV.Since) < rolloutGrace {
+		return Finishing, "control plane rolling out"
+	}
+	if p.Unhealthy != nil && *p.Unhealthy == 0 {
+		return Finishing, "control plane rolling out"
+	}
+	return Finishing, p.CV.Message
+}
+
 // classifyProbe classifies a running vSNO by what its installer and API report.
 func classifyProbe(o Observed) (State, string) {
 	p := o.Probe
@@ -163,12 +180,7 @@ func classifyProbe(o Observed) (State, string) {
 		}
 		return Ready, ""
 	case p.CV != nil:
-		// Still rolling out: say so, rather than pass the CVO's transient
-		// error through as if the install had died.
-		if o.Now.IsZero() || p.CV.Since.IsZero() || o.Now.Sub(p.CV.Since) < rolloutGrace {
-			return Finishing, "control plane rolling out"
-		}
-		return Finishing, p.CV.Message
+		return finishingFromCV(o, p)
 	case p.Agent == nil && o.Seeding:
 		return MakingSeed, ""
 	case p.Agent == nil:

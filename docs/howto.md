@@ -280,7 +280,10 @@ vsno screenshot <name> --file console.png
 
 - `finishing` with "control plane rolling out" during a fresh install is normal; the CVO reports
   errors that clear themselves while it applies. After 20 minutes the DETAIL shows the CVO's
-  message, which is also always in `-o json` (`cvMessage`) and in `vsno status`.
+  message — unless every cluster operator reports `Available`, in which case the CVO is naming an
+  operator that has since recovered (authentication right after an IBU, say) and DETAIL keeps
+  saying "control plane rolling out". The raw message is always in `-o json` (`cvMessage`) and in
+  `vsno status`.
 - `making-seed` means seed generation is running and the guest is deliberately silent.
 - A vSNO that reads `failed`, or an install that never reaches `ready`, is in `vsno list`'s DETAIL.
   The agent installer's own log is on the guest:
