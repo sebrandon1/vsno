@@ -24,8 +24,9 @@ import (
 )
 
 var (
-	rnFile string
-	rnOpts run.Options
+	rnFile    string
+	rnTimeout time.Duration
+	rnOpts    run.Options
 )
 
 var runCmd = &cobra.Command{
@@ -75,6 +76,7 @@ func init() {
 	f.BoolVar(&rnOpts.Delete, "delete", false, "delete both vSNOs afterwards")
 	f.BoolVar(&rnOpts.Restart, "restart", false, "run every stage again instead of skipping the ones an earlier run of this plan finished")
 	f.BoolVar(&rnOpts.Yes, "yes", false, "run the plan without asking (for CI)")
+	f.DurationVar(&rnTimeout, "timeout", 20*time.Minute, "how long the setup stage may take")
 	addRunLCAFlags(f)
 	rootCmd.AddCommand(runCmd)
 }
@@ -148,7 +150,7 @@ func runRun(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	se, err := setupEnv(cmd, c, true, 20*time.Minute)
+	se, err := setupEnv(cmd, c, true, rnTimeout)
 	if err != nil {
 		return err
 	}
