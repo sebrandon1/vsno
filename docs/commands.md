@@ -463,6 +463,7 @@ runs; it refuses while a release mirror is running.
 | Flag | Meaning |
 |---|---|
 | `--yes` | Don't ask for confirmation |
+| `--dry-run` | Report what the collection would free — the volume's used bytes less what the tagged releases and seed images take — and change nothing |
 
 ## `vsno iso`
 
