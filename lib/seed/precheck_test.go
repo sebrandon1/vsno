@@ -238,6 +238,36 @@ func TestInstall(t *testing.T) {
 	}
 }
 
+// A step nobody finishes keeps redrawing over the report that follows it: every
+// step install starts has to end.
+func TestInstallFinishesItsSteps(t *testing.T) {
+	ctx := context.Background()
+	fa := readyAccess()
+	fa.OcReplies[csvGet] = []resp{{Out: ""}, {Out: ""}, {Out: csvDone}}
+	fa.OcReplies[pmGet] = []resp{{Out: `{"status":{"catalogSource":"redhat-operators","catalogSourceNamespace":"openshift-marketplace","defaultChannel":"stable"}}`}}
+	fa.OcReplies[imgGet] = []resp{{Out: imgNone}, {Out: imgOurs}}
+	fa.SSHReplies[certTest] = []resp{{Err: errors.New("exit 1")}, {}}
+	in, _ := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
+	p := &countingSteps{}
+	in.Progress = p
+	install(ctx, in.Env, in)
+	if p.started == 0 || p.started != p.finished {
+		t.Errorf("started %d steps, finished %d", p.started, p.finished)
+	}
+}
+
+// countingSteps records the steps a run starts and ends.
+type countingSteps struct{ started, finished int }
+
+type countingStep countingSteps
+
+func (c *countingSteps) Start(string) precheck.ProgressStep { c.started++; return (*countingStep)(c) }
+func (s *countingStep) Update(string)                       {}
+func (s *countingStep) SetProgress(int, int)                {}
+func (s *countingStep) Done(string)                         { s.finished++ }
+func (s *countingStep) Warn(string)                         { s.finished++ }
+func (s *countingStep) Fail(string)                         { s.finished++ }
+
 func TestInstallLeavesOthersAlone(t *testing.T) {
 	ctx := context.Background()
 	fa := readyAccess()
