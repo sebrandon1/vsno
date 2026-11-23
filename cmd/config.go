@@ -45,7 +45,7 @@ var configPathCmd = &cobra.Command{
 var configGetCmd = &cobra.Command{
 	Use:   "get <key>",
 	Short: "Print one setting",
-	Args:  oneArg("name a setting, as `vsno config` lists them"),
+	Args:  oneArg("a setting, as `vsno config` lists them"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := config.Key(args[0])
 		if err := config.Check(key); err != nil {
@@ -87,7 +87,7 @@ var configSetCmd = &cobra.Command{
 var configUnsetCmd = &cobra.Command{
 	Use:   "unset <key>",
 	Short: "Forget one setting",
-	Args:  oneArg("name a setting, as `vsno config` lists them"),
+	Args:  oneArg("a setting, as `vsno config` lists them"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := config.Key(args[0])
 		if err := config.Unset(key); err != nil {

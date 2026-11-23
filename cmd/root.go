@@ -199,15 +199,26 @@ func envNote(ctx context.Context, kube kubernetes.Interface, ns string) string {
 	if err != nil {
 		return ""
 	}
+	var found bool
 	var others []string
 	for _, n := range l.Items {
-		if n.Name != ns {
-			others = append(others, n.Name)
+		if n.Name == ns {
+			found = true
+			continue
 		}
-	}
-	if len(others) == 0 {
-		return ""
+		others = append(others, n.Name)
 	}
 	slices.Sort(others)
+	switch {
+	case !found:
+		// Naming something that isn't an environment is not a choice between
+		// environments: say which ones there are instead.
+		if len(others) == 0 {
+			return ""
+		}
+		return fmt.Sprintf("note: %s is not a vsno environment; there is %s\n", ns, strings.Join(others, ", "))
+	case len(others) == 0 || rootCmd.PersistentFlags().Changed("namespace"):
+		return "" // one environment, or one was chosen: nothing to say
+	}
 	return fmt.Sprintf("note: %s is one of several vsno environments (also: %s); pass -n to choose another\n", ns, strings.Join(others, ", "))
 }

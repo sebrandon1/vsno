@@ -190,7 +190,9 @@ func renderUpgrade(w io.Writer, res *ibu.UpgradeResult, o ibu.UpgradeOptions, pa
 		fmt.Fprintf(w, "\n%s\n", pal.Bold("Stages"))
 		renderHistory(w, res.History, pal)
 	}
-	fmt.Fprintf(w, "\nThe target is in stage %s.", pal.Bold(orDash(string(res.Stage))))
+	if res.Stage != "" {
+		fmt.Fprintf(w, "\nThe target is in stage %s.", pal.Bold(string(res.Stage)))
+	}
 	if hint := nextStep(res, o); hint != "" {
 		fmt.Fprintf(w, " %s", hint)
 	}

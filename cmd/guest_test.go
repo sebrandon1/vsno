@@ -282,13 +282,26 @@ func TestEnvNote(t *testing.T) {
 		{"alone", []runtime.Object{ns("vsno", true)}, ""},
 		{"others named", []runtime.Object{ns("vsno", true), ns("vsno-dev", true)}, "vsno is one of several vsno environments (also: vsno-dev); pass -n to choose another"},
 		{"unlabeled ones don't count", []runtime.Object{ns("vsno", true), ns("other", false)}, ""},
+		// Naming something that isn't an environment is not a choice between
+		// them: say which exist instead.
+		{"not an environment", []runtime.Object{ns("vsno", true)}, "nosuch is not a vsno environment; there is vsno"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := envNote(ctx, kfake.NewClientset(c.objs...), "vsno")
+			name := "vsno"
+			if strings.Contains(c.want, "nosuch") {
+				name = "nosuch"
+			}
+			got := envNote(ctx, kfake.NewClientset(c.objs...), name)
 			if !strings.Contains(got, c.want) || (c.want == "") != (got == "") {
 				t.Errorf("envNote = %q, want %q", got, c.want)
 			}
 		})
+	}
+	// With -n given, there is no other environment to choose.
+	rootCmd.PersistentFlags().Lookup("namespace").Changed = true
+	t.Cleanup(func() { rootCmd.PersistentFlags().Lookup("namespace").Changed = false })
+	if got := envNote(ctx, kfake.NewClientset(ns("vsno", true), ns("vsno-dev", true)), "vsno"); got != "" {
+		t.Errorf("with -n chosen: %q", got)
 	}
 	// An unreadable list says nothing rather than failing the command.
 	k := kfake.NewClientset()
