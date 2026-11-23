@@ -111,7 +111,6 @@ var commandsWithoutJSON = map[string]bool{
 	"vsno kubeconfig": true,
 	"vsno screenshot": true,
 	"vsno iso eject":  true,
-	"vsno cache gc":   true,
 }
 
 // checkJSON refuses -o json where the command has nothing to put in it.

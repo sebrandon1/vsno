@@ -119,7 +119,7 @@ func TestCheckJSON(t *testing.T) {
 		{[]string{"kubeconfig"}, formatJSON, true},
 		{[]string{"screenshot"}, formatJSON, true},
 		{[]string{"iso", "eject"}, formatJSON, true},
-		{[]string{"cache", "gc"}, formatJSON, true},
+		{[]string{"cache", "gc"}, formatJSON, false},
 		{[]string{"list"}, formatJSON, false},
 		{[]string{"version"}, formatJSON, false},
 		{[]string{"oc"}, formatTable, false},

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,10 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sebrandon1/go-toolbox/cliout"
 	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/release"
+	"github.com/sebrandon1/vsno/lib/seed"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
 )
@@ -67,7 +70,10 @@ the space that deleted images still hold, whether they were removed by prune or
 by "vsno seed delete".
 
 The registry is unavailable while it runs, so this stops it, runs the collector
-in a Job, and starts it again; it refuses while a release mirror is running.`,
+in a Job, and starts it again; it refuses while a release mirror is running.
+
+--dry-run says what it would free — the registry volume's used bytes less what
+the tagged releases and seed images still take — and changes nothing.`,
 	Args: cobra.NoArgs,
 	RunE: runCacheGC,
 }
@@ -86,6 +92,7 @@ finished while nothing was watching is recorded before the list is shown.`,
 
 var (
 	cgYes      bool
+	cgDryRun   bool
 	cpKeep     int
 	cpYes      bool
 	cpDryRun   bool
@@ -105,6 +112,7 @@ func init() {
 	cacheListCmd.Flags().BoolVarP(&cwWatch, "watch", "w", false, "refresh until interrupted")
 	cacheListCmd.Flags().DurationVar(&cwInterval, "interval", 15*time.Second, "refresh interval for --watch")
 	cacheGCCmd.Flags().BoolVar(&cgYes, "yes", false, "don't ask for confirmation")
+	cacheGCCmd.Flags().BoolVar(&cgDryRun, "dry-run", false, "report what the collection would free and change nothing")
 	cacheCmd.AddCommand(cacheAddCmd, cacheListCmd, cacheGCCmd, cachePruneCmd)
 	rootCmd.AddCommand(cacheCmd)
 }
@@ -248,11 +256,18 @@ func runCachePrune(cmd *cobra.Command, args []string) error {
 }
 
 func runCacheGC(cmd *cobra.Command, _ []string) error {
-	env, _, err := cacheEnv(cmd)
+	env, genv, err := cacheEnv(cmd)
 	if err != nil {
 		return err
 	}
 	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
+	if cgDryRun {
+		plan, err := gcPlanFor(cmd.Context(), env, genv)
+		if err != nil {
+			return err
+		}
+		return renderGCDryRun(w, plan, pal)
+	}
 	if !cgYes {
 		q := fmt.Sprintf("This stops the registry in %s for a few seconds to collect its garbage. Type %q to continue", namespace, "y")
 		if !confirmOnTerminal(os.Stdin, cmd.ErrOrStderr())(q, "y|gc") {
@@ -261,7 +276,7 @@ func runCacheGC(cmd *cobra.Command, _ []string) error {
 	}
 	start := time.Now()
 	ps := newProgress().Start("Collecting the registry's garbage")
-	before, _, berr := env.Volume(cmd.Context(), namespace)
+	before, total, berr := env.Volume(cmd.Context(), namespace)
 	if err := cache.GarbageCollect(cmd.Context(), env, namespace); err != nil {
 		ps.Fail(err.Error())
 		return err
@@ -269,11 +284,74 @@ func runCacheGC(cmd *cobra.Command, _ []string) error {
 	after, _, aerr := env.Volume(cmd.Context(), namespace)
 	elapsed := ui.FormatElapsed(time.Since(start))
 	ps.Done("done in " + elapsed)
-	freed := "nothing was left to free"
+	res := gcReport{Used: before, Total: total}
 	if berr == nil && aerr == nil && before > after { // an unread volume is not a zero
-		freed = "freeing " + bytesText(before-after)
+		res.Freed = before - after
+	}
+	if outputFormat == formatJSON {
+		return cliout.PrintJSON(w, res)
+	}
+	freed := "nothing was left to free"
+	if res.Freed > 0 {
+		freed = "freeing " + bytesText(res.Freed)
 	}
 	fmt.Fprintf(w, "%s Collected the registry's garbage in %s, %s.\n", pal.Icon("✓"), elapsed, freed)
+	return nil
+}
+
+// gcReport is what a garbage collection freed, or would free.
+type gcReport struct {
+	Used     int64 `json:"used"`               // the registry volume's bytes in use
+	Total    int64 `json:"total"`              // the volume's size
+	Tagged   int64 `json:"tagged,omitempty"`   // what the releases and seed images still take
+	Freeable int64 `json:"freeable,omitempty"` // a dry run's estimate of what the collector can free
+	Freed    int64 `json:"freed,omitempty"`    // what it did free
+	DryRun   bool  `json:"dryRun,omitempty"`
+}
+
+// gcPlanFor measures what a collection would free: the volume's used bytes less
+// the bytes the images vsno still has tagged take. Both are read while the
+// registry stays up, so nothing is changed and nothing is stopped.
+func gcPlanFor(ctx context.Context, env cache.Env, genv guest.Env) (gcReport, error) {
+	var rep gcReport
+	used, total, err := env.Volume(ctx, namespace)
+	if err != nil {
+		return rep, err
+	}
+	rep = gcReport{Used: used, Total: total, DryRun: true}
+	rel, err := cache.List(ctx, env, namespace, nil)
+	if err != nil {
+		return rep, err
+	}
+	for _, e := range rel.Entries {
+		rep.Tagged += e.SizeBytes
+	}
+	imgs, err := seed.List(ctx, seed.Env{Env: genv}, namespace)
+	if err != nil {
+		return rep, err
+	}
+	for _, i := range imgs {
+		rep.Tagged += i.SizeBytes
+	}
+	if rep.Used > rep.Tagged {
+		rep.Freeable = rep.Used - rep.Tagged
+	}
+	return rep, nil
+}
+
+// renderGCDryRun says what the collection would free, and that it did nothing.
+func renderGCDryRun(w io.Writer, r gcReport, pal ui.Palette) error {
+	if outputFormat == formatJSON {
+		return cliout.PrintJSON(w, r)
+	}
+	fmt.Fprintf(w, "The registry's volume holds %s of %s.\n", bytesText(r.Used), bytesText(r.Total))
+	if r.Freeable == 0 {
+		fmt.Fprintln(w, "The releases and seed images vsno has tagged account for it, so there is nothing to collect.")
+	} else {
+		fmt.Fprintf(w, "Tagged releases and seed images take %s, so the collector would free about %s.\n",
+			bytesText(r.Tagged), bytesText(r.Freeable))
+	}
+	fmt.Fprintln(w, pal.Dim("\nDry run: the registry was not stopped and nothing was changed."))
 	return nil
 }
 
