@@ -42,6 +42,7 @@ a temporary namespace (like 'oc debug node'), then deletes it. Nothing else on
 the cluster is changed. Use --no-probe to skip it.
 
 Exits non-zero if any check fails.`,
+	Args: cobra.NoArgs,
 	RunE: runPrecheck,
 }
 

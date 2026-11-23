@@ -64,6 +64,9 @@ Start with:  vsno precheck`,
 		if err := checkWide(cmd); err != nil {
 			return err
 		}
+		if err := checkJSON(cmd); err != nil {
+			return err
+		}
 		if verbose {
 			trace.Enable(cmd.ErrOrStderr())
 		} else {
@@ -98,6 +101,25 @@ func checkWide(cmd *cobra.Command) error {
 		return nil
 	}
 	return fmt.Errorf("%s has no wide output; use -o table or -o json", cmd.CommandPath())
+}
+
+// commandsWithoutJSON hand over a stream (oc, ssh, a kubeconfig, a PNG) or only
+// say they are done, so -o json would be silently ignored. Refusing says so.
+var commandsWithoutJSON = map[string]bool{
+	"vsno oc":         true,
+	"vsno ssh":        true,
+	"vsno kubeconfig": true,
+	"vsno screenshot": true,
+	"vsno iso eject":  true,
+	"vsno cache gc":   true,
+}
+
+// checkJSON refuses -o json where the command has nothing to put in it.
+func checkJSON(cmd *cobra.Command) error {
+	if outputFormat != formatJSON || !commandsWithoutJSON[cmd.CommandPath()] {
+		return nil
+	}
+	return fmt.Errorf("%s has no json output; drop -o json", cmd.CommandPath())
 }
 
 // palette colors table output written to a terminal.

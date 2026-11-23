@@ -13,7 +13,7 @@ Accepted by every command, before or after the command name:
 | `--kubeconfig <path>` | Path to the host cluster kubeconfig (default: `$KUBECONFIG`, then `~/.kube/config`) |
 | `--context <name>` | Kubeconfig context to use |
 | `-n, --namespace <name>` | Namespace that holds the vSNO environment (default `vsno`) |
-| `-o, --output table\|wide\|json` | Output format (default `table`). `wide` is only meaningful for `list` and `iso list`; the other commands refuse it |
+| `-o, --output table\|wide\|json` | Output format (default `table`). `wide` is only meaningful for `list` and `iso list`; the other commands refuse it. `oc`, `ssh`, `kubeconfig`, `screenshot`, `iso eject` and `cache gc` hand over a stream or only report that they are done, so they refuse `json` rather than ignore it. `start` and `stop` print `vsno`, `action` and, with `--wait`, `state`; `version` prints `version` |
 | `--no-color` | Don't color the output (also `NO_COLOR=1`); never used with `-o json` |
 | `-v, --verbose` | Trace what vsno does underneath on stderr: each cluster request as `oc`/`kubectl` would name it, and each command it runs in the builder pod. A request it repeats is shown once, then again with its count (`(x3)`) when the run ends. stdout stays clean, so `-o json` still pipes |
 | `-h, --help` | Help for the command |

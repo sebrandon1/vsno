@@ -364,3 +364,87 @@ func TestJSONStaysCleanWithTrace(t *testing.T) {
 		t.Errorf("stderr = %q, want the services request traced", r.stderr)
 	}
 }
+
+// TestCommandsRejectStrayArguments pins cobra.NoArgs on the commands that take
+// no operands: "vsno setup typo" used to succeed, silently doing nothing with
+// the typo.
+func TestCommandsRejectStrayArguments(t *testing.T) {
+	for _, cmd := range []string{"setup", "precheck", "status", "teardown", "version"} {
+		t.Run(cmd, func(t *testing.T) {
+			r := run(t, "", cmd, "typo")
+
+			if r.code == 0 {
+				t.Errorf("%s typo exited 0, want an error", cmd)
+			}
+			if !strings.Contains(r.stderr, "typo") {
+				t.Errorf("stderr = %q, want it to name the argument", r.stderr)
+			}
+		})
+	}
+}
+
+// TestListWideEmpty covers the wide view's empty state against a host that
+// answers: the hint, not a bare header row. A populated row needs a VM fixture
+// the fake host does not carry yet.
+func TestListWideEmpty(t *testing.T) {
+	host := newFakeHost(t)
+
+	r := run(t, host.kubeconfig(t), "list", "-o", "wide")
+
+	if r.code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr: %s", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "No vSNOs") {
+		t.Errorf("stdout = %q, want the empty-state hint", r.stdout)
+	}
+	if looksTraced(r.stdout) {
+		t.Errorf("stdout carries trace lines: %q", r.stdout)
+	}
+}
+
+// TestStatusJSON: -o json must stay parseable even when the command exits
+// non-zero because the environment is not set up.
+func TestStatusJSON(t *testing.T) {
+	host := newFakeHost(t)
+
+	r := run(t, host.kubeconfig(t), "-v", "-o", "json", "status")
+
+	var out map[string]any
+	if err := json.Unmarshal([]byte(r.stdout), &out); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%q", err, r.stdout)
+	}
+	if !looksTraced(r.stderr) {
+		t.Errorf("stderr = %q, want the requests traced", r.stderr)
+	}
+}
+
+func TestVersionJSON(t *testing.T) {
+	r := run(t, "", "-o", "json", "version")
+
+	if r.code != 0 {
+		t.Fatalf("exit code = %d; stderr: %s", r.code, r.stderr)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(r.stdout), &out); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%q", err, r.stdout)
+	}
+	if v, _ := out["version"].(string); v == "" {
+		t.Errorf("version = %v, want it set", out["version"])
+	}
+}
+
+// A command that hands over a stream has nothing to put in -o json, and says so
+// rather than printing human text that a parser would choke on.
+func TestJSONRefusedForStreams(t *testing.T) {
+	r := run(t, "", "-o", "json", "oc", "seed")
+
+	if r.code == 0 {
+		t.Errorf("exit code = 0, want an error")
+	}
+	if !strings.Contains(r.stderr, "has no json output") {
+		t.Errorf("stderr = %q, want the refusal", r.stderr)
+	}
+	if r.stdout != "" {
+		t.Errorf("stdout = %q, want empty", r.stdout)
+	}
+}

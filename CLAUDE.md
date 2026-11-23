@@ -190,6 +190,9 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - Without `--seed-repo`, the "Seed registry" row is `info` (the in-cluster registry is the
   default) and no auth files are read.
 - Progress goes to stderr and is turned off for `-o json`, so stdout stays machine-readable.
+- `-o` is checked centrally in `PersistentPreRunE`, next to `checkWide` (`cmd/root.go`): `checkJSON`
+  refuses it on the commands in `commandsWithoutJSON`, which stream (oc, ssh, kubeconfig, screenshot)
+  or only report completion (iso eject, cache gc), instead of printing human text anyway.
 - Tables with colored cells use `ui.Table`, not `text/tabwriter`, which counts color codes as width.
   With the codes stripped, colored output must equal plain output (`TestColorKeepsLayout`).
 - dnsmasq publishes only `api`, `api-int` and `apps` for each guest, never a wildcard on the cluster

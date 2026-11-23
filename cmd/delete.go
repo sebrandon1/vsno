@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/sebrandon1/go-toolbox/cliout"
@@ -121,7 +122,11 @@ func runPower(cmd *cobra.Command, name string, run bool) error {
 		return err
 	}
 	verb, want := powerWait(run)
+	res := powerResult{VSNO: name, Action: strings.TrimSuffix(verb, "ing")}
 	if !pwWait {
+		if outputFormat == formatJSON {
+			return writeJSON(cmd.OutOrStdout(), res)
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "%s %s; follow it with `vsno list --watch`\n", verb, name)
 		return nil
 	}
@@ -129,7 +134,20 @@ func runPower(cmd *cobra.Command, name string, run bool) error {
 	if err == nil && st == guest.Failed {
 		err = fmt.Errorf("vSNO %s failed to start; see `vsno list` and `vsno screenshot %s`", name, name)
 	}
+	res.State = string(st)
+	if outputFormat == formatJSON {
+		if jerr := writeJSON(cmd.OutOrStdout(), res); jerr != nil && err == nil {
+			err = jerr
+		}
+	}
 	return err
+}
+
+// powerResult is what start and stop report in JSON.
+type powerResult struct {
+	VSNO   string `json:"vsno"`
+	Action string `json:"action"`          // start or stop
+	State  string `json:"state,omitempty"` // the state waited for, with --wait
 }
 
 // powerWait is what start and stop say they are doing, and the states they wait
