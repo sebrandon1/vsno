@@ -44,7 +44,7 @@ already cached comes back at once.
 <version> takes what create accepts: 4.20.46, 4.20, a nightly, or a release
 image pullspec. Nightlies need registry.ci.openshift.org credentials in the
 cluster's pull secret, which create already requires for them.`,
-	Args: cobra.ExactArgs(1),
+	Args: oneArg("the release to mirror: 4.20.46, 4.20, a nightly, or a release image pullspec"),
 	RunE: runCacheAdd,
 }
 

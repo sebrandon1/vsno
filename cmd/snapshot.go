@@ -57,7 +57,7 @@ var snapshotDeleteCmd = &cobra.Command{
 	Short: "Delete snapshots",
 	Long: `delete removes the named snapshots and the installer files kept with them.
 It lists what it will delete and asks you to type "yes", unless --yes.`,
-	Args: cobra.MinimumNArgs(1),
+	Args: someArgs("the vSNOs to snapshot, as `vsno list` shows them"),
 	RunE: runSnapshotDelete,
 }
 
