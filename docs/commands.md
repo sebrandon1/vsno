@@ -420,7 +420,7 @@ lock, so `cache add` several releases and walk away; they run one at a time.
 
 A mirror that stopped part way keeps what it already pushed, so running the same command again
 carries on from there rather than starting over. A failed mirror leaves its Job and log in place
-(`kubectl -n vsno logs job/cache-mirror-<digest>`); a finished one removes them.
+(`kubectl -n vsno logs job/cache-mirror-<first 16 hex digits of the payload digest>`); a finished one removes them.
 
 | Flag | Meaning |
 |---|---|
