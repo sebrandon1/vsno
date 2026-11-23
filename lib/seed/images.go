@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/sebrandon1/vsno/lib/state"
 )
 
 // Image is one seed image in the environment's registry.
@@ -21,7 +23,11 @@ type Image struct {
 	Version   string    `json:"version,omitempty"` // the seed's OpenShift version, from its label
 	Format    string    `json:"format,omitempty"`  // LCA's seed format version
 	SizeBytes int64     `json:"sizeBytes"`
-	Created   time.Time `json:"created"`
+	Created   time.Time `json:"created"` // the image's own build time
+	// SyncedAt is when a `seed sync --from` brought the image in, if it did:
+	// the copy keeps the upstream's build time, so this is what says how new
+	// the seed is here.
+	SyncedAt *time.Time `json:"syncedAt,omitempty"`
 }
 
 // inspected is one line of registry.sh list.
@@ -72,7 +78,50 @@ func List(ctx context.Context, e Env, ns string) ([]Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing the registry through the builder: %w; `vsno status` says whether the registry and the builder are up", err)
 	}
-	return parseImages(reg.Host, out)
+	imgs, err := parseImages(reg.Host, out)
+	if err != nil {
+		return nil, err
+	}
+	synced(ctx, e, ns, imgs) // an unreadable record only costs the sync time
+	return imgs, nil
+}
+
+// synced fills each image's SyncedAt from the environment's state. Failing to
+// read it is not a failure to list: the image's own Created still says
+// something.
+func synced(ctx context.Context, e Env, ns string, imgs []Image) {
+	st, _, err := state.Load(ctx, e.Kube, ns)
+	if err != nil || st == nil {
+		return
+	}
+	for i := range imgs {
+		if s, ok := st.Synced(imgs[i].Ref); ok && !s.SyncedAt.IsZero() {
+			at := s.SyncedAt
+			imgs[i].SyncedAt = &at
+		}
+	}
+}
+
+// recordSync notes in the environment's state when ref arrived.
+func recordSync(ctx context.Context, e Env, ns, ref, digest string, at time.Time) error {
+	st, _, err := state.Load(ctx, e.Kube, ns)
+	if err != nil {
+		return err
+	}
+	st.RecordSync(state.Sync{Ref: ref, Digest: digest, SyncedAt: at})
+	return state.Save(ctx, e.Kube, ns, st)
+}
+
+// dropSync forgets the arrival times of images that are gone.
+func dropSync(ctx context.Context, e Env, ns string, refs []string) error {
+	st, _, err := state.Load(ctx, e.Kube, ns)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		st.DropSync(ref)
+	}
+	return state.Save(ctx, e.Kube, ns, st)
 }
 
 // Match returns the images arg names: a full reference, <vSNO>:<tag>, or
@@ -163,6 +212,13 @@ func Delete(ctx context.Context, e Env, o DeleteOptions) (*DeleteResult, error) 
 	}
 	if err != nil {
 		return res, fmt.Errorf("deleting from the registry: %w", err)
+	}
+	gone := make([]string, 0, len(res.Images))
+	for _, img := range res.Images {
+		gone = append(gone, img.Ref)
+	}
+	if err := dropSync(ctx, e, o.Namespace, gone); err != nil {
+		return res, fmt.Errorf("the images were deleted, but forgetting when they arrived: %w", err)
 	}
 	return res, nil
 }

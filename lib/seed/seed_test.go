@@ -20,6 +20,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/guestctl"
 	"github.com/sebrandon1/vsno/lib/guestctl/guestctltest"
 	"github.com/sebrandon1/vsno/lib/registry"
+	"github.com/sebrandon1/vsno/lib/state"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -561,5 +562,40 @@ func TestListNamesTheNextStep(t *testing.T) {
 	r := &fakeRunner{err: errors.New("the builder is gone")}
 	if _, err := List(context.Background(), imagesEnv(r), ns); err == nil || !strings.Contains(err.Error(), "vsno status") {
 		t.Errorf("builder err = %v, want a `vsno status` hint", err)
+	}
+}
+
+// seed list says when a seed was copied in, and delete forgets it.
+func TestListShowsAndDeleteForgetsSyncTime(t *testing.T) {
+	ctx := context.Background()
+	ref := testRegistry.Host + "/seeds/a:4.20.46"
+	at := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	k := registrySecrets()
+	st := &state.State{}
+	st.RecordSync(state.Sync{Ref: ref, Digest: "sha256:aa", SyncedAt: at})
+	if err := state.Save(ctx, k, ns, st); err != nil {
+		t.Fatal(err)
+	}
+	e := Env{Env: guest.Env{Kube: k, Builder: &fakeRunner{out: listing}}}
+	imgs, err := List(ctx, e, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// imgs is sorted by ref, so seeds/a is first.
+	if imgs[0].SyncedAt == nil || !imgs[0].SyncedAt.Equal(at) {
+		t.Errorf("a: syncedAt = %v, want %s", imgs[0].SyncedAt, at)
+	}
+	if imgs[1].SyncedAt != nil {
+		t.Errorf("b: syncedAt = %v, want none", imgs[1].SyncedAt)
+	}
+	if _, err := Delete(ctx, Env{Env: guest.Env{Kube: k, Builder: &fakeRunner{out: listing}}}, DeleteOptions{Namespace: ns, Args: []string{"a"}, Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	st, _, err = state.Load(ctx, k, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Synced(ref); ok {
+		t.Errorf("the deleted image's sync time is still recorded: %+v", st.Syncs)
 	}
 }

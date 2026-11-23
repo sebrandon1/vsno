@@ -246,10 +246,20 @@ func renderSeeds(w io.Writer, imgs []seed.Image, now time.Time, pal ui.Palette) 
 		if v == "" {
 			v = "-"
 		}
-		t.Row(img.Ref, img.From, v, bytesText(img.SizeBytes), ageSince(now, img.Created))
+		t.Row(img.Ref, img.From, v, bytesText(img.SizeBytes), seedAge(now, img))
 	}
 	t.Write(w)
 	return nil
+}
+
+// seedAge is how long the seed has been here: when it was copied in if it was,
+// and otherwise the image's own build time. The table says which, because an
+// image pulled in a minute ago would otherwise read as old as its upstream.
+func seedAge(now time.Time, img seed.Image) string {
+	if img.SyncedAt != nil {
+		return ageSince(now, *img.SyncedAt) + " (synced)"
+	}
+	return ageSince(now, img.Created)
 }
 
 // bytesText renders a size in GiB or MiB.

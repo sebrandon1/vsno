@@ -263,7 +263,10 @@ generation and follows it. The image lands in the registry as `seeds/<vsno>:<ver
 
 ### `vsno seed list`
 
-Lists the seed images in the environment's registry. Alias: `ls`. Takes only the global flags.
+Lists the seed images in the environment's registry. Alias: `ls`. `AGE` is how long the seed has
+been here: a copy made by `seed sync --from` keeps the upstream image's build time, so the time it
+arrived is recorded in the environment's state and shown instead, marked `(synced)`; `-o json` has
+both as `syncedAt` and `created`. Takes only the global flags.
 
 ### `vsno seed delete`
 
@@ -292,6 +295,9 @@ one `podman login` and `docker login` write), the first one that covers it, or `
 nothing is written to the cluster. A peer registry on a private CA also needs `--ca`. An existing
 tag on the far side is left alone unless `--overwrite`. The copy runs in the builder pod, so the
 image never passes through your machine.
+
+A pull is recorded in the environment's state, so `vsno seed list` shows when the seed arrived rather
+than how old the upstream image is.
 
 | Flag | Meaning |
 |---|---|
