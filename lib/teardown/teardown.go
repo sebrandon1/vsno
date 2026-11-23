@@ -100,7 +100,7 @@ type Result struct {
 	Unmanaged []string `json:"unmanaged,omitempty"`
 	// Allocated is storage the environment still holds after a teardown that
 	// otherwise finished: volumes whose claim is gone but whose disk isn't.
-	Allocated []allocatedPV `json:"allocated,omitempty"`
+	Allocated []AllocatedPV `json:"allocated,omitempty"`
 	// Targets are what teardown deletes itself, in order.
 	Targets []Target `json:"targets"`
 }
@@ -181,9 +181,9 @@ func (p *planner) execute(ctx context.Context, res *Result) error {
 // LogicalVolumes are where a stuck PV's capacity actually sits.
 const volumeGroup = "vg-vsno"
 
-// allocatedPV is a PersistentVolume the environment still holds: its claim is
+// AllocatedPV is a PersistentVolume the environment still holds: its claim is
 // gone, but the volume — and the capacity behind it — is not.
-type allocatedPV struct {
+type AllocatedPV struct {
 	Name  string            `json:"name"`
 	Claim string            `json:"claim"` // namespace/name it was made for
 	Phase string            `json:"phase"`
@@ -194,18 +194,18 @@ type allocatedPV struct {
 // namespace. Deleting the namespace leaves them Released rather than deleted:
 // the PVC is gone, the PV stays, and nothing else in vsno looks at them. The
 // boot-source images belong to another namespace and are not counted.
-func (p *planner) allocated(ctx context.Context) ([]allocatedPV, error) {
+func (p *planner) allocated(ctx context.Context) ([]AllocatedPV, error) {
 	pvs, err := p.Kube.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing PersistentVolumes: %w", err)
 	}
-	var out []allocatedPV
+	var out []AllocatedPV
 	for _, pv := range pvs.Items {
 		ref := pv.Spec.ClaimRef
 		if ref == nil || ref.Namespace != p.o.Namespace {
 			continue
 		}
-		out = append(out, allocatedPV{Name: pv.Name, Claim: ref.Namespace + "/" + ref.Name,
+		out = append(out, AllocatedPV{Name: pv.Name, Claim: ref.Namespace + "/" + ref.Name,
 			Phase: string(pv.Status.Phase), Size: pv.Spec.Capacity[corev1.ResourceStorage]})
 	}
 	return out, nil
@@ -216,7 +216,7 @@ func (p *planner) allocated(ctx context.Context) ([]allocatedPV, error) {
 // looks at the namespace can succeed while the disk is still allocated.
 func (p *planner) awaitStorageReleased(ctx context.Context, res *Result) error {
 	ps := p.Progress.Start("Checking the storage was released")
-	var last []allocatedPV
+	var last []AllocatedPV
 	err := wait.PollUntilContextTimeout(ctx, p.Poll, p.Timeout, true, func(ctx context.Context) (bool, error) {
 		var err error
 		last, err = p.allocated(ctx)
@@ -237,7 +237,7 @@ func (p *planner) awaitStorageReleased(ctx context.Context, res *Result) error {
 }
 
 // allocatedError says what is still allocated and how to find the holder.
-func allocatedError(pvs []allocatedPV) error {
+func allocatedError(pvs []AllocatedPV) error {
 	var total resource.Quantity
 	for _, pv := range pvs {
 		total.Add(pv.Size)

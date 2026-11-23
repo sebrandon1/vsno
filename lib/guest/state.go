@@ -48,10 +48,17 @@ func (u *IBU) Text() string {
 	case u == nil || u.Stage == "" || u.Stage == "Idle":
 		return ""
 	case u.Completed:
-		return u.Stage + " done"
+		return u.Stage + ibuDone
 	}
 	return u.Stage
 }
+
+// ibuDone marks a finished stage in the text Guest.IBU carries.
+const ibuDone = " done"
+
+// IBUDone reports whether the vSNO's Image Based Upgrade reports a finished
+// stage, which is what leaves the finalize (or the rollback) to do.
+func (g Guest) IBUDone() bool { return strings.HasSuffix(g.IBU, ibuDone) }
 
 // Agent is the agent installer's view of the cluster, before the first reboot.
 type Agent struct {

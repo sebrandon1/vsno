@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 
 	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/cluster"
@@ -83,7 +82,7 @@ func Next(r *Report) string {
 	// An upgrade that has finished is the thing left undone: finalizing it is
 	// what frees the old stateroot, and it stays possible until someone does.
 	for _, g := range ready {
-		if strings.Contains(g.IBU, "done") {
+		if g.IBUDone() {
 			return fmt.Sprintf("finalize the upgrade with `vsno upgrade %s --finalize`", g.Name)
 		}
 	}

@@ -94,3 +94,15 @@ func TestIBUText(t *testing.T) {
 		}
 	}
 }
+
+// IBUDone reads the text Guest.IBU carries: a finished stage ends in " done".
+func TestIBUDone(t *testing.T) {
+	for _, c := range []struct {
+		ibu  string
+		want bool
+	}{{"", false}, {"Upgrade", false}, {"Upgrade done", true}, {"Rollback done", true}, {"Prep done", true}} {
+		if got := (Guest{IBU: c.ibu}).IBUDone(); got != c.want {
+			t.Errorf("IBUDone(%q) = %v", c.ibu, got)
+		}
+	}
+}

@@ -166,3 +166,26 @@ func TestListAndNames(t *testing.T) {
 		t.Errorf("names() = %v, want sorted", got)
 	}
 }
+
+// Without XDG_CONFIG_HOME the file lives under the home directory.
+func TestPathFallsBackToHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", home)
+	p, err := Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".config", "vsno", "config"); p != want {
+		t.Errorf("Path() = %q, want %q", p, want)
+	}
+}
+
+func TestSettingFor(t *testing.T) {
+	if s, ok := SettingFor(SeedSyncTo); !ok || s.Env != "VSNO_SEED_SYNC_TO" || s.Flag != "--to" {
+		t.Errorf("SettingFor(seed.sync.to) = %+v, %v", s, ok)
+	}
+	if _, ok := SettingFor("nope"); ok {
+		t.Error("SettingFor(nope) found something")
+	}
+}

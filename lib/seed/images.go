@@ -102,26 +102,30 @@ func synced(ctx context.Context, e Env, ns string, imgs []Image) {
 	}
 }
 
-// recordSync notes in the environment's state when ref arrived.
-func recordSync(ctx context.Context, e Env, ns, ref, digest string, at time.Time) error {
+// changeSyncs loads the environment's state, lets change edit it, and saves it.
+func changeSyncs(ctx context.Context, e Env, ns string, change func(*state.State)) error {
 	st, _, err := state.Load(ctx, e.Kube, ns)
 	if err != nil {
 		return err
 	}
-	st.RecordSync(state.Sync{Ref: ref, Digest: digest, SyncedAt: at})
+	change(st)
 	return state.Save(ctx, e.Kube, ns, st)
+}
+
+// recordSync notes in the environment's state when ref arrived.
+func recordSync(ctx context.Context, e Env, ns, ref, digest string, at time.Time) error {
+	return changeSyncs(ctx, e, ns, func(st *state.State) {
+		st.RecordSync(state.Sync{Ref: ref, Digest: digest, SyncedAt: at})
+	})
 }
 
 // dropSync forgets the arrival times of images that are gone.
 func dropSync(ctx context.Context, e Env, ns string, refs []string) error {
-	st, _, err := state.Load(ctx, e.Kube, ns)
-	if err != nil {
-		return err
-	}
-	for _, ref := range refs {
-		st.DropSync(ref)
-	}
-	return state.Save(ctx, e.Kube, ns, st)
+	return changeSyncs(ctx, e, ns, func(st *state.State) {
+		for _, ref := range refs {
+			st.DropSync(ref)
+		}
+	})
 }
 
 // Match returns the images arg names: a full reference, <vSNO>:<tag>, or
