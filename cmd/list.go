@@ -12,8 +12,13 @@ import (
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
+	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/release"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/dynamic"
 )
 
 var (
@@ -45,6 +50,7 @@ func init() {
 // listing is list's report. Namespace is set only when -n picked one.
 type listing struct {
 	Namespace string           `json:"namespace,omitempty"`
+	HostMinor string           `json:"hostMinor,omitempty"` // the host's OpenShift minor, for the empty hint
 	VSNOs     []guest.Guest    `json:"vsnos"`
 	Capacity  []guest.Capacity `json:"capacity,omitempty"`
 }
@@ -101,6 +107,7 @@ func collect(ctx context.Context, c *kube.Clients, env guest.Env, single bool) (
 		}
 	}
 	d, _ := cluster.ReadDensity(ctx, c.Dyn) // unreadable: count without overcommit
+	l.HostMinor = hostMinor(ctx, c.Dyn)
 	for _, n := range slices.Sorted(maps.Keys(nodes)) {
 		if capa, cerr := guest.NodeCapacity(ctx, c.Kube, n, d.Percent()); cerr == nil {
 			l.Capacity = append(l.Capacity, capa)
@@ -109,16 +116,37 @@ func collect(ctx context.Context, c *kube.Clients, env guest.Env, single bool) (
 	return l, nil
 }
 
+// emptyHint names the version to create a first vSNO at: the host's own minor
+// when it could be read, since that is what the release cache and the default
+// `vsno run` versions are built from.
+func emptyHint(l *listing) string {
+	v := "<minor>"
+	if l.HostMinor != "" {
+		v = l.HostMinor
+	}
+	return "Create one with `vsno create <name> --version " + v + "`."
+}
+
+// hostMinor reads the host's OpenShift minor, or "" when it can't be read.
+func hostMinor(ctx context.Context, dyn dynamic.Interface) string {
+	cv, err := dyn.Resource(precheck.GVRClusterVersion).Get(ctx, "version", metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+	v, _, _ := unstructured.NestedString(cv.Object, "status", "desired", "version")
+	return release.Minor(v)
+}
+
 func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 	if outputFormat == formatJSON {
 		return cliout.PrintJSON(w, l)
 	}
 	if len(l.VSNOs) == 0 {
 		if l.Namespace == "" {
-			fmt.Fprintln(w, "No vSNOs in any vsno environment. Create one with `vsno create <name> --version 4.20`.")
+			fmt.Fprintln(w, "No vSNOs in any vsno environment. "+emptyHint(l))
 			return nil
 		}
-		fmt.Fprintf(w, "No vSNOs in %s. Create one with `vsno create <name> --version 4.20`.\n", l.Namespace)
+		fmt.Fprintf(w, "No vSNOs in %s. %s\n", l.Namespace, emptyHint(l))
 	} else {
 		var t ui.Table
 		head := []string{pal.Bold("NAMESPACE"), pal.Bold("NAME"), pal.Bold("STATE"), pal.Bold("VERSION"), pal.Bold("AGE"),
