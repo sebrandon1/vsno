@@ -92,7 +92,8 @@ func (r Resolver) Resolve(ctx context.Context, v string) (Release, error) {
 			return rel, err
 		}
 		if !slices.Contains(versions, v) {
-			return rel, fmt.Errorf("%s is not in channel stable-%s.%s; pass its release image pullspec to install it anyway", v, m[1], m[2])
+			return rel, fmt.Errorf("%s is not in channel stable-%s.%s; install it from its release image with --version %s",
+				v, m[1], m[2], releaseImage(v))
 		}
 		rel.Version, rel.Image = v, releaseImage(v)
 	default:
