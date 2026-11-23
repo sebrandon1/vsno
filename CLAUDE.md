@@ -115,9 +115,9 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   a restore needs. `Use` is what `create --from-snapshot` restores from; `guest.create` makes the
   root PVC with a `VolumeSnapshot` dataSource (a thin clone on LVMS, seconds — never CDI's
   host-assisted `DataVolume` snapshot copy) and mounts it directly in the VM.
-- `lib/ibu`: Image Based Upgrades. `Prepare` installs LCA and OADP (via `guestctl.Operator`), registry
-  trust, and for a target the backup location (`backup.yaml.tmpl`, S3 by ClusterIP) and
-  `seed-pull-secret`. `Upgrade` resolves the seed, prepares the target, then `begin` (identity, LCA
+- `lib/ibu`: Image Based Upgrades. `Prepare` runs `seed.EnsureReady` (see `lib/seed`) and, for a
+  target, adds the backup location (`backup.yaml.tmpl`, S3 by ClusterIP) and `seed-pull-secret`.
+  `Upgrade` resolves the seed, prepares the target, then `begin` (identity, LCA
   match, `resumeFrom`) and `drive` (`moveTo` each stage, tolerating the API's absence while the node
   reboots). `IBU.Toward` is the one classifier of LCA's conditions (`stageConditions`,
   `failedReasons`). Tests drive a simulated LCA (`lca` in `ibu_test.go`). `LCASource` (`--lca-ref`,
@@ -133,9 +133,12 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   idempotent, which is what makes a rerun resume.
 - `lib/seed`: Image Based Upgrade seed images. `Precheck` reports what a seed needs (vSNO state,
   registry, guest API and cluster settling, LCA, registry trust, the image and its push credentials)
-  and with `Install` sets up LCA and trust; `Create` runs it first, then drives the Lifecycle Agent
-  (`waitStable`, `ensureLCA`, `EnsureTrust`, `generate`, `finish`); while the guest API is
-  down it reads progress from the node's `lca-generate-seed-image` unit. `List`/`Delete` talk to the
+  and with `Install` sets up what it can; `EnsureReady` (`prep.go`) is the one definition of that —
+  LCA, OADP and registry trust — used by `Precheck`, `Create` and `lib/ibu.Prepare`, so the commands
+  cannot disagree (LCA's prerequisites have OADP on the seed too: `OADP`, `OADPNamespace`).
+  `Create` runs the precheck first, then drives the Lifecycle Agent (`waitStable`, `generate`,
+  `finish`); while the guest API is down it reads progress from the node's
+  `lca-generate-seed-image` unit. `List`/`Delete` talk to the
   environment's registry through `scripts/registry.sh` (skopeo + curl, credentials on stdin) from the
   builder. Templates and the script are embedded; goldens in `testdata/`.
 - `lib/registry`: the environment's in-cluster OCI registry. `Registry{Host,User,Password,CA}`,

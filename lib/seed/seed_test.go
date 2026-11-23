@@ -199,6 +199,10 @@ const (
 	pmGet      = "get packagemanifests lifecycle-agent -n openshift-marketplace --ignore-not-found"
 	csvPending = `{"items":[{"metadata":{"name":"lifecycle-agent.v4.20.7"},"status":{"phase":"Installing"}}]}`
 	csvDone    = `{"items":[{"metadata":{"name":"lifecycle-agent.v4.20.7"},"status":{"phase":"Succeeded"}}]}`
+
+	oadpCSVGet = "get clusterserviceversions -n " + OADPNamespace + " --ignore-not-found"
+	oadpPMGet  = "get packagemanifests redhat-oadp-operator -n openshift-marketplace --ignore-not-found"
+	oadpDone   = `{"items":[{"metadata":{"name":"oadp-operator.v1.5.8"},"status":{"phase":"Succeeded"}}]}`
 )
 
 func TestEnsureLCA(t *testing.T) {

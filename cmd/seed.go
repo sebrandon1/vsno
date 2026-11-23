@@ -42,10 +42,11 @@ var seedCreateCmd = &cobra.Command{
 	Use:   "create <vsno>",
 	Short: "Make a seed image from a vSNO",
 	Long: `create turns a ready vSNO into a seed image. It waits for the cluster to
-settle, installs the Lifecycle Agent from the vSNO's own catalog if it's
-missing, makes the vSNO trust the environment's registry, then runs LCA's seed
-generation and follows it. The vSNO's cluster is stopped while LCA builds the
-image (progress then comes from the node's journal) and comes back afterwards.
+settle, readies the vSNO the way vsno seed precheck --install does (the
+Lifecycle Agent and OADP from its own catalog, and trust in the environment's
+registry), then runs LCA's seed generation and follows it. The vSNO's cluster
+is stopped while LCA builds the image (progress then comes from the node's
+journal) and comes back afterwards.
 
 The image goes to the environment's registry as seeds/<vsno>:<version>, unless
 --image names another (the host cluster's pull secret must have credentials
@@ -64,9 +65,9 @@ Lifecycle Agent is installed (or the vSNO's catalog has it), the vSNO trusts
 the registry's CA, and the seed image can be pushed.
 
 It only reads, and exits non-zero if anything is missing. --install sets up
-the two things vsno can: it subscribes to LCA from the vSNO's own catalog and
-makes the vSNO trust the registry, then reports again. seed create runs the
-same checks first.`,
+what vsno can: the Lifecycle Agent and OADP from the vSNO's own catalog, and
+trust in the registry — the same steps vsno prepare takes — then reports
+again. seed create runs the same checks first.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSeedPrecheck,
 }
@@ -117,7 +118,7 @@ func init() {
 	f.DurationVar(&sdTimeout, "timeout", time.Hour, "how long to wait for the seed generation")
 	f = seedPrecheckCmd.Flags()
 	f.StringVar(&spImage, "image", "", "the seed image reference to check, instead of the environment's registry")
-	f.BoolVar(&spInstall, "install", false, "install LCA and set up registry trust where they're missing")
+	f.BoolVar(&spInstall, "install", false, "install LCA and OADP, and set up registry trust, where they're missing")
 	f.DurationVar(&spTimeout, "timeout", time.Hour, "how long --install may wait for each install")
 	seedDeleteCmd.Flags().BoolVar(&sdYes, "yes", false, "don't ask for confirmation")
 	seedDeleteCmd.Flags().BoolVar(&sdDryRun, "dry-run", false, "list what would be deleted and change nothing")
@@ -195,8 +196,8 @@ func runSeedPrecheck(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		renderSections(w, res.Results, nil, "", seedSections, pal)
-		for _, s := range res.Installed {
-			fmt.Fprintf(w, "%s installed %s\n", pal.Icon("✓"), s)
+		for _, s := range res.Ready {
+			fmt.Fprintf(w, "%s %s\n", pal.Icon("✓"), s)
 		}
 		for _, s := range res.Warnings {
 			fmt.Fprintf(w, "%s %s\n", pal.Yellow("!"), s)

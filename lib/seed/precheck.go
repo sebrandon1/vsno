@@ -32,8 +32,9 @@ type PrecheckOptions struct {
 	Namespace string
 	Name      string
 	Image     string // "" = Ref in the environment's registry
-	// Install sets up what it can: subscribes to LCA from the vSNO's own
-	// catalog, and makes the vSNO trust the environment's registry.
+	// Install sets up what it can, the same way `vsno prepare` does: the
+	// Lifecycle Agent and OADP from the vSNO's own catalog, and trust in the
+	// environment's registry.
 	Install bool
 	// Settle waits for the cluster to settle instead of failing on it that it
 	// hasn't. Create uses it: the checks are the same, only patient.
@@ -48,8 +49,9 @@ type PrecheckReport struct {
 	LCA     string `json:"lca,omitempty"`
 	// Results are the checks, as `vsno precheck` reports them.
 	Results []precheck.Result `json:"results"`
-	// Installed are what --install set up.
-	Installed []string `json:"installed,omitempty"`
+	// Ready are what --install set up: the operators it installed, and the
+	// registry trust it added. What was already there is in the checks.
+	Ready []string `json:"ready,omitempty"`
 	// Warnings are setup steps --install couldn't finish; the checks say why.
 	Warnings []string `json:"warnings,omitempty"`
 	// Registry is the environment's registry, for later steps.
@@ -286,43 +288,57 @@ func (in *inspector) target(ctx context.Context) {
 	in.row(GroupTarget, precheck.Pass, checkSeed, in.rep.Image+", and the credentials to push it", "")
 }
 
-// install sets up what it can, before the checks are run again.
+// install sets up what it can, before the checks are run again. It takes the
+// same steps `vsno prepare` does, so a vSNO readied here and one readied there
+// end up the same. Only what was missing before is reported: the checks name
+// everything that was already there.
 func install(ctx context.Context, e Env, in *inspector) {
-	warn := func(err error) { in.rep.Warnings = append(in.rep.Warnings, err.Error()) }
-	if status(in.rep, checkLCA) != precheck.Pass {
-		var name string
-		err := guestctl.Step(e.Progress, "Installing the Lifecycle Agent", func(ps precheck.ProgressStep) (string, error) {
-			var err error
-			name, err = ensureLCA(ctx, e, in.a, ps)
-			return name, err
-		})
-		if err != nil {
-			warn(err)
-		} else {
-			in.rep.Installed = append(in.rep.Installed, "Lifecycle Agent "+name)
+	wasLCA, wasTrust := in.passed(checkLCA), in.passed(checkTrust)
+	name, ok, _ := OADP.CSV(ctx, in.a)
+	wasOADP := ok && name != ""
+	r, err := EnsureReady(ctx, e, in.a, PrepOptions{Registry: in.reg, NoTrust: !trustsRegistry(ctx, in)})
+	// Report what is in place even when a later step failed.
+	if r.LCA != "" && !wasLCA {
+		in.rep.Ready = append(in.rep.Ready, "Lifecycle Agent "+r.LCA)
+	}
+	if r.OADP != "" && !wasOADP {
+		in.rep.Ready = append(in.rep.Ready, "OADP "+r.OADP)
+	}
+	if r.Trusted && !wasTrust {
+		in.rep.Ready = append(in.rep.Ready, "the vSNO trusting "+in.reg.Host)
+	}
+	if err != nil {
+		in.rep.Warnings = append(in.rep.Warnings, err.Error())
+	}
+}
+
+// passed is whether rep already passed check, before --install changed anything.
+func (in *inspector) passed(check string) bool {
+	for _, res := range in.rep.Results {
+		if res.Check == check {
+			return res.Status == precheck.Pass
 		}
 	}
+	return false
+}
+
+// trustsRegistry is whether --install should set up trust: only when the seed
+// image goes to the environment's registry, and only when the vSNO isn't
+// already trusting CAs from a ConfigMap that isn't ours — that one is left
+// alone, and trust() says which key to add to it.
+func trustsRegistry(ctx context.Context, in *inspector) bool {
 	if in.regErr != nil || in.rep.Image == "" || imageHost(in.rep.Image) != in.reg.Host {
-		return
+		return false
 	}
 	var img imageConfig
 	if _, err := guestctl.Get(ctx, in.a, &img, "get", "image.config.openshift.io", "cluster"); err != nil {
-		warn(err)
-		return
+		return false // trust() reports the failed read
 	}
-	switch img.Spec.AdditionalTrustedCA.Name {
+	switch img.Name() {
 	case trustConfigMap, "":
-	default:
-		return // someone else's ConfigMap: trust() says which key to add
+		return true
 	}
-	err := guestctl.Step(e.Progress, "Trusting the environment registry", func(ps precheck.ProgressStep) (string, error) {
-		return "", EnsureTrust(ctx, e, in.a, in.reg, ps)
-	})
-	if err != nil {
-		warn(err)
-		return
-	}
-	in.rep.Installed = append(in.rep.Installed, "the vSNO trusting "+in.reg.Host)
+	return false
 }
 
 // failure turns a report's failing checks into one error, with their hints.
@@ -342,16 +358,6 @@ func failure(r *PrecheckReport) error {
 		return nil
 	}
 	return errors.New(strings.Join(msgs, "; "))
-}
-
-// status is the status of rep's check, or Info when it has no row.
-func status(rep *PrecheckReport, check string) precheck.Status {
-	for _, res := range rep.Results {
-		if res.Check == check {
-			return res.Status
-		}
-	}
-	return precheck.Info
 }
 
 // certFile is where the vSNO's nodes hold r's CA.

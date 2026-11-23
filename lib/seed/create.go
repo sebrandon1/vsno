@@ -36,22 +36,25 @@ type Result struct {
 // Limits for the steps before and after the seed generation (e.Timeout).
 const (
 	stableWait = 15 * time.Minute
-	lcaWait    = 10 * time.Minute
-	trustWait  = 10 * time.Minute
+	// operatorWait is how long an operator's CSV may take to succeed.
+	operatorWait = 10 * time.Minute
+	trustWait    = 10 * time.Minute
 )
 
 // Create makes a seed image from vSNO o.Name: it checks the cluster is
-// stable, installs LCA from the vSNO's catalog if needed, makes the vSNO
-// trust the environment's registry, then runs LCA's seed generation and
-// follows it until the image is pushed and the cluster is back.
+// stable and readies the vSNO — the Lifecycle Agent and OADP from its
+// catalog, and trust in the environment's registry, which is what
+// `vsno seed precheck --install` sets up — then runs LCA's seed generation
+// and follows it until the image is pushed and the cluster is back.
 func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
 	e.Defaults(o.Namespace)
 	res := &Result{Name: o.Name, Image: o.Image}
 	var reg Registry
 	if err := guestctl.Step(e.Progress, "Checking "+o.Name, func(precheck.ProgressStep) (string, error) {
 		// Install is what makes this command do what its help says: a vSNO
-		// without the Lifecycle Agent or the registry's trust gets both here,
-		// rather than failing and sending the user to `seed precheck --install`.
+		// without the Lifecycle Agent, OADP or the registry's trust gets them
+		// here, rather than failing and sending the user to
+		// `seed precheck --install`.
 		rep, err := Precheck(ctx, e, PrecheckOptions{Namespace: o.Namespace, Name: o.Name, Image: o.Image, Settle: true, Install: true})
 		if err != nil {
 			return "", err
@@ -62,20 +65,6 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
 		return res, err
 	}
 	a := e.Access(o.Name)
-	if err := guestctl.Step(e.Progress, "Lifecycle Agent", func(ps precheck.ProgressStep) (string, error) {
-		var err error
-		res.LCA, err = ensureLCA(ctx, e, a, ps)
-		return res.LCA, err
-	}); err != nil {
-		return res, err
-	}
-	if imageHost(res.Image) == reg.Host {
-		if err := guestctl.Step(e.Progress, "Trusting the environment registry", func(ps precheck.ProgressStep) (string, error) {
-			return reg.Host, EnsureTrust(ctx, e, a, reg, ps)
-		}); err != nil {
-			return res, err
-		}
-	}
 	auth, err := seedAuth(ctx, e.Kube, reg, res.Image)
 	if err != nil {
 		return res, err
@@ -193,7 +182,7 @@ func ensureLCA(ctx context.Context, e Env, a Access, ps precheck.ProgressStep) (
 	if image, fromSource, err := SourceLCA(ctx, a); err != nil || fromSource {
 		return image, err
 	}
-	return LCA.Ensure(ctx, a, e.Clock(), lcaWait, ps)
+	return LCA.Ensure(ctx, a, e.Clock(), operatorWait, ps)
 }
 
 // imageConfig is the part of the cluster image configuration vsno reads.
@@ -204,6 +193,9 @@ type imageConfig struct {
 		} `json:"additionalTrustedCA"`
 	} `json:"spec"`
 }
+
+// Name is the ConfigMap the vSNO trusts CAs from; "" when it trusts none.
+func (c imageConfig) Name() string { return c.Spec.AdditionalTrustedCA.Name }
 
 // EnsureTrust makes the vSNO trust the registry's CA, through
 // image.config's additionalTrustedCA, and waits until the node has it.

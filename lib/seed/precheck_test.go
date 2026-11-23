@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,15 +35,16 @@ const (
 // certTest is the ssh check ensureTrust makes for the registry's CA.
 var certTest = "test -f " + certFile(testRegistry)
 
-// readyAccess answers as a vSNO that needs nothing: settled, LCA installed,
-// trusting the registry, and the node holding the CA.
+// readyAccess answers as a vSNO that needs nothing: settled, LCA and OADP
+// installed, trusting the registry, and the node holding the CA.
 func readyAccess() *fakeAccess {
 	return &fakeAccess{
 		OcReplies: map[string][]resp{
-			cosGet:  {{Out: cosStable}},
-			mcpsGet: {{Out: mcpsStable}},
-			csvGet:  {{Out: csvDone}},
-			imgGet:  {{Out: imgOurs}},
+			cosGet:     {{Out: cosStable}},
+			mcpsGet:    {{Out: mcpsStable}},
+			csvGet:     {{Out: csvDone}},
+			oadpCSVGet: {{Out: oadpDone}},
+			imgGet:     {{Out: imgOurs}},
 		},
 		SSHReplies: map[string][]resp{certTest: {{}}},
 	}
@@ -212,6 +214,8 @@ func TestInstall(t *testing.T) {
 	fa := readyAccess()
 	fa.OcReplies[csvGet] = []resp{{Out: ""}, {Out: ""}, {Out: csvDone}}
 	fa.OcReplies[pmGet] = []resp{{Out: `{"status":{"catalogSource":"redhat-operators","catalogSourceNamespace":"openshift-marketplace","defaultChannel":"stable"}}`}}
+	fa.OcReplies[oadpCSVGet] = []resp{{Out: ""}, {Out: ""}, {Out: oadpDone}}
+	fa.OcReplies[oadpPMGet] = []resp{{Out: `{"status":{"catalogSource":"redhat-operators","catalogSourceNamespace":"openshift-marketplace","defaultChannel":"stable"}}`}}
 	fa.OcReplies[imgGet] = []resp{{Out: imgNone}, {Out: imgOurs}}
 	fa.SSHReplies[certTest] = []resp{{Err: errors.New("exit 1")}, {}}
 	in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
@@ -225,16 +229,34 @@ func TestInstall(t *testing.T) {
 	if n := rep.Failed(); n != 0 {
 		t.Fatalf("%d failed after --install: %+v", n, rep.Results)
 	}
-	if len(rep.Installed) != 2 || len(rep.Warnings) != 0 {
-		t.Errorf("installed %q, warnings %q", rep.Installed, rep.Warnings)
+	// LCA, OADP and trust: the same three vsno prepare sets up for a seed.
+	want := []string{"Lifecycle Agent lifecycle-agent.v4.20.7", "OADP oadp-operator.v1.5.8", "the vSNO trusting " + testRegistry.Host}
+	if len(rep.Warnings) != 0 || !slices.Equal(rep.Ready, want) {
+		t.Errorf("ready %q, warnings %q; want %q", rep.Ready, rep.Warnings, want)
 	}
-	var subscribed, trusted bool
+	var subscribedLCA, subscribedOADP, trusted bool
 	for _, s := range fa.Stdin {
-		subscribed = subscribed || strings.Contains(s, `channel: "stable"`)
+		subscribedLCA = subscribedLCA || strings.Contains(s, `channel: "stable"`) && strings.Contains(s, "lifecycle-agent")
+		subscribedOADP = subscribedOADP || strings.Contains(s, OADP.Package)
 		trusted = trusted || strings.Contains(s, testRegistry.TrustKey())
 	}
-	if !subscribed || !trusted {
-		t.Errorf("installed %q, applied %q", rep.Installed, fa.Stdin)
+	if !subscribedLCA || !subscribedOADP || !trusted {
+		t.Errorf("ready %q, applied %q", rep.Ready, fa.Stdin)
+	}
+}
+
+// --install takes the same steps vsno prepare does, so a vSNO readied by one
+// and by the other end up the same.
+func TestInstallTakesPreparesSteps(t *testing.T) {
+	ctx := context.Background()
+	fa := readyAccess()
+	in, _ := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
+	p := &countingSteps{}
+	in.Progress = p
+	install(ctx, in.Env, in)
+	want := []string{"the Lifecycle Agent", "OADP", "trusting the environment registry"}
+	if !slices.Equal(p.titles, want) {
+		t.Errorf("steps %q, want %q", p.titles, want)
 	}
 }
 
@@ -245,6 +267,8 @@ func TestInstallFinishesItsSteps(t *testing.T) {
 	fa := readyAccess()
 	fa.OcReplies[csvGet] = []resp{{Out: ""}, {Out: ""}, {Out: csvDone}}
 	fa.OcReplies[pmGet] = []resp{{Out: `{"status":{"catalogSource":"redhat-operators","catalogSourceNamespace":"openshift-marketplace","defaultChannel":"stable"}}`}}
+	fa.OcReplies[oadpCSVGet] = []resp{{Out: ""}, {Out: ""}, {Out: oadpDone}}
+	fa.OcReplies[oadpPMGet] = []resp{{Out: `{"status":{"catalogSource":"redhat-operators","catalogSourceNamespace":"openshift-marketplace","defaultChannel":"stable"}}`}}
 	fa.OcReplies[imgGet] = []resp{{Out: imgNone}, {Out: imgOurs}}
 	fa.SSHReplies[certTest] = []resp{{Err: errors.New("exit 1")}, {}}
 	in, _ := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
@@ -257,16 +281,23 @@ func TestInstallFinishesItsSteps(t *testing.T) {
 }
 
 // countingSteps records the steps a run starts and ends.
-type countingSteps struct{ started, finished int }
+type countingSteps struct {
+	started, finished int
+	titles            []string
+}
 
 type countingStep countingSteps
 
-func (c *countingSteps) Start(string) precheck.ProgressStep { c.started++; return (*countingStep)(c) }
-func (s *countingStep) Update(string)                       {}
-func (s *countingStep) SetProgress(int, int)                {}
-func (s *countingStep) Done(string)                         { s.finished++ }
-func (s *countingStep) Warn(string)                         { s.finished++ }
-func (s *countingStep) Fail(string)                         { s.finished++ }
+func (c *countingSteps) Start(title string) precheck.ProgressStep {
+	c.started++
+	c.titles = append(c.titles, title)
+	return (*countingStep)(c)
+}
+func (s *countingStep) Update(string)        {}
+func (s *countingStep) SetProgress(int, int) {}
+func (s *countingStep) Done(string)          { s.finished++ }
+func (s *countingStep) Warn(string)          { s.finished++ }
+func (s *countingStep) Fail(string)          { s.finished++ }
 
 func TestInstallLeavesOthersAlone(t *testing.T) {
 	ctx := context.Background()
@@ -274,8 +305,10 @@ func TestInstallLeavesOthersAlone(t *testing.T) {
 	fa.OcReplies[imgGet] = []resp{{Out: imgElse}}
 	in, rep := inspect(t, fa, PrecheckOptions{Namespace: ns, Name: "a"})
 	install(ctx, in.Env, in)
-	if len(rep.Installed) != 0 || fa.Ran("oc patch image.config.openshift.io") || len(fa.Stdin) != 0 {
-		t.Errorf("installed %q, calls %q", rep.Installed, fa.Calls)
+	// Both operators are already there and the CA ConfigMap is someone else's,
+	// so --install set up nothing and leaves the ConfigMap alone.
+	if len(rep.Ready) != 0 || fa.Ran("oc patch image.config.openshift.io") || len(fa.Stdin) != 0 {
+		t.Errorf("ready %q, calls %q", rep.Ready, fa.Calls)
 	}
 	if got := rowOf(t, rep, "Registry trust"); !strings.Contains(got.Hint, "openshift-config/corp-ca") {
 		t.Errorf("hint = %q", got.Hint)

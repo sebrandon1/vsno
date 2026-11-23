@@ -189,9 +189,9 @@ stopped; `--restart` runs every stage again (a repeat test wants that), and stag
 The long way — each step on its own, which is what you want when testing something in one stage:
 
 ```bash
-vsno prepare seed --role seed           # LCA and registry trust on the seed vSNO
+vsno prepare seed --role seed           # LCA, OADP and registry trust on the seed vSNO
 vsno seed create seed --stop            # make the seed image, then stop the seed vSNO
-vsno prepare target                     # LCA, registry trust and an OADP backup location
+vsno prepare target                     # those, plus an OADP backup location and the seed pull secret
 vsno upgrade target --seed seed         # IBU the target with the seed's newest image
 ```
 
@@ -308,7 +308,7 @@ vsno screenshot <name> --file console.png
 | `start`, `stop` | power a vSNO while keeping its disk |
 | `delete` | removes vSNOs |
 | `oc`, `ssh`, `kubeconfig`, `screenshot` | reach into a vSNO |
-| `prepare` | installs LCA (and OADP, registry trust) for an IBU |
+| `prepare` | installs LCA, OADP and registry trust for an IBU (a target also gets the backup location and seed pull secret) |
 | `seed` | makes, lists and deletes seed images |
 | `upgrade` | runs, finalizes, rolls back or aborts an IBU on a target |
 | `run` | the whole IBU from a kubeconfig, resumable, with `--restart` |
