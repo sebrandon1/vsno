@@ -13,19 +13,39 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// Env is what reading the registry's volume needs: the cluster, and a way to
+// run a command in its pod. Exec nil means builder.ExecPod, so tests can supply
+// an answer without a rest.Config.
+type Env struct {
+	Kube   kubernetes.Interface
+	Config *rest.Config
+	Exec   func(ctx context.Context, ns, pod, container string, command []string, s builder.IO) error
+}
+
 // Usage is the registry volume's used and total size in bytes. It reads df
 // inside the registry pod, which is the only place the volume is mounted.
-func Usage(ctx context.Context, cfg *rest.Config, kube kubernetes.Interface, ns string) (used, total int64, err error) {
-	pod, err := Pod(ctx, kube, ns)
+func (e Env) Usage(ctx context.Context, ns string) (used, total int64, err error) {
+	pod, err := Pod(ctx, e.Kube, ns)
 	if err != nil {
 		return 0, 0, err
 	}
+	exec := e.Exec
+	if exec == nil {
+		exec = func(ctx context.Context, ns, pod, container string, command []string, s builder.IO) error {
+			return builder.ExecPod(ctx, e.Config, e.Kube, ns, pod, container, command, s)
+		}
+	}
 	var out, stderr bytes.Buffer
-	err = builder.ExecPod(ctx, cfg, kube, ns, pod, Service, []string{"df", "-Pk", mount}, builder.IO{Stdout: &out, Stderr: &stderr})
+	err = exec(ctx, ns, pod, Service, []string{"df", "-Pk", mount}, builder.IO{Stdout: &out, Stderr: &stderr})
 	if err != nil {
 		return 0, 0, fmt.Errorf("reading the registry volume: %w%s", err, builder.Tail(stderr.String()))
 	}
 	return parseDF(out.String())
+}
+
+// Usage is Env.Usage for the common case: read it from the cluster.
+func Usage(ctx context.Context, cfg *rest.Config, kube kubernetes.Interface, ns string) (used, total int64, err error) {
+	return Env{Kube: kube, Config: cfg}.Usage(ctx, ns)
 }
 
 // mount is where the registry Deployment mounts its volume.

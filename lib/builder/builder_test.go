@@ -118,3 +118,37 @@ func TestIsShellScript(t *testing.T) {
 		}
 	}
 }
+
+// The exec request carries the container, the command and the attached streams;
+// a TTY merges stderr into stdout, so stderr is not attached with one.
+func TestExecOptions(t *testing.T) {
+	var buf bytes.Buffer
+	plain := execOptions("builder", []string{"bash", "-c", "true"},
+		IO{Stdin: strings.NewReader("in"), Stdout: &buf, Stderr: &buf})
+	if plain.Container != "builder" || len(plain.Command) != 3 || plain.Command[2] != "true" {
+		t.Errorf("container/command = %q %q", plain.Container, plain.Command)
+	}
+	if !plain.Stdin || !plain.Stdout || !plain.Stderr || plain.TTY {
+		t.Errorf("streams = stdin %v, stdout %v, stderr %v, tty %v", plain.Stdin, plain.Stdout, plain.Stderr, plain.TTY)
+	}
+	tty := execOptions("c", nil, IO{Stdout: &buf, Stderr: &buf, TTY: true})
+	if !tty.TTY || tty.Stderr || tty.Stdin {
+		t.Errorf("tty = stdin %v, stderr %v, tty %v", tty.Stdin, tty.Stderr, tty.TTY)
+	}
+	bare := execOptions("c", nil, IO{})
+	if bare.Stdin || bare.Stdout || bare.Stderr || bare.TTY {
+		t.Errorf("no streams attached: %+v", bare)
+	}
+}
+
+func TestStreamOptions(t *testing.T) {
+	var buf bytes.Buffer
+	plain := streamOptions(IO{Stdin: strings.NewReader("in"), Stdout: &buf, Stderr: &buf})
+	if plain.Stdin == nil || plain.Stdout == nil || plain.Stderr == nil || plain.Tty {
+		t.Errorf("streams = %+v", plain)
+	}
+	tty := streamOptions(IO{Stdout: &buf, Stderr: &buf, TTY: true})
+	if !tty.Tty || tty.Stderr != nil {
+		t.Errorf("tty streams = %+v", tty)
+	}
+}

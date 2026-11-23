@@ -116,14 +116,7 @@ func (e Exec) run(ctx context.Context, script string, args []string, s IO) error
 func ExecPod(ctx context.Context, cfg *rest.Config, kube kubernetes.Interface, ns, pod, container string, command []string, s IO) error {
 	tracePodCommand(container, command)
 	req := kube.CoreV1().RESTClient().Post().Resource("pods").Namespace(ns).Name(pod).SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Container: container,
-			Command:   command,
-			Stdin:     s.Stdin != nil,
-			Stdout:    s.Stdout != nil,
-			Stderr:    s.Stderr != nil && !s.TTY, // a TTY merges stderr into stdout
-			TTY:       s.TTY,
-		}, scheme.ParameterCodec)
+		VersionedParams(execOptions(container, command, s), scheme.ParameterCodec)
 	ws, err := remotecommand.NewWebSocketExecutor(cfg, "GET", req.URL().String())
 	if err != nil {
 		return err
@@ -136,11 +129,30 @@ func ExecPod(ctx context.Context, cfg *rest.Config, kube kubernetes.Interface, n
 	if err != nil {
 		return err
 	}
+	return ex.StreamWithContext(ctx, streamOptions(s))
+}
+
+// execOptions is what the exec request carries: the container, the command, and
+// which streams are attached. A TTY merges stderr into stdout, so stderr is
+// attached only without one.
+func execOptions(container string, command []string, s IO) *corev1.PodExecOptions {
+	return &corev1.PodExecOptions{
+		Container: container,
+		Command:   command,
+		Stdin:     s.Stdin != nil,
+		Stdout:    s.Stdout != nil,
+		Stderr:    s.Stderr != nil && !s.TTY,
+		TTY:       s.TTY,
+	}
+}
+
+// streamOptions is the other half: what the executor reads and writes.
+func streamOptions(s IO) remotecommand.StreamOptions {
 	opts := remotecommand.StreamOptions{Stdin: s.Stdin, Stdout: s.Stdout, Tty: s.TTY, TerminalSizeQueue: s.Resize}
 	if !s.TTY {
 		opts.Stderr = s.Stderr
 	}
-	return ex.StreamWithContext(ctx, opts)
+	return opts
 }
 
 // traceCommands reports what is about to run in a pod, then flushes: the line
