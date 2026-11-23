@@ -122,7 +122,7 @@ func prepareOne(ctx context.Context, e Env, ns, name string, role Role, reg seed
 	}
 	p.OADP = r.OADP
 	if err != nil {
-		return p, err
+		return p, fmt.Errorf("%w; `vsno seed precheck %s --install` sets up what the vSNO is missing", err, name)
 	}
 	if role != RoleTarget {
 		return p, nil

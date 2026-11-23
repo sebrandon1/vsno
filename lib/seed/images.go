@@ -66,11 +66,11 @@ func parseImages(host string, out []byte) ([]Image, error) {
 func List(ctx context.Context, e Env, ns string) ([]Image, error) {
 	reg, err := LoadRegistry(ctx, e.Kube, ns)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w; `vsno status` says whether the environment's registry is up", err)
 	}
 	out, err := reg.Run(ctx, e.Builder, reg.Host, "list", RepoPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("listing the registry through the builder: %w", err)
+		return nil, fmt.Errorf("listing the registry through the builder: %w; `vsno status` says whether the registry and the builder are up", err)
 	}
 	return parseImages(reg.Host, out)
 }

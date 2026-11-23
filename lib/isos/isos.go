@@ -179,7 +179,7 @@ func list(ctx context.Context, e Env) ([]line, error) {
 	}
 	var out, stderr bytes.Buffer
 	if err := e.Builder.Run(ctx, script("isos.sh"), nil, builder.IO{Stdout: &out, Stderr: &stderr}); err != nil {
-		return nil, fmt.Errorf("listing the builder's files: %w%s", err, builder.Tail(stderr.String()))
+		return nil, fmt.Errorf("listing the builder's files: %w%s; is the environment up? `vsno status`", err, builder.Tail(stderr.String()))
 	}
 	var lines []line
 	sc := bufio.NewScanner(&out)
