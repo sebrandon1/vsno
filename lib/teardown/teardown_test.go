@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -543,5 +544,59 @@ func TestRunRestoresDensity(t *testing.T) {
 	_ = state.Save(ctx, k, ns, &state.State{Node: "worker-1", PreviousDensity: prev})
 	if res, _ := Run(ctx, (&confirmer{}).env(k, newDyn(host()...)), Options{Namespace: ns, Host: true, DryRun: true}); res.RestoreDensity != nil {
 		t.Errorf("--host: restore = %+v", res.RestoreDensity)
+	}
+}
+
+func pv(name, claimNS, claimName, phase, size string) *corev1.PersistentVolume {
+	return &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: corev1.PersistentVolumeSpec{
+			StorageClassName: manifests.DefaultStorageClass,
+			ClaimRef:         &corev1.ObjectReference{Namespace: claimNS, Name: claimName},
+			Capacity:         corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(size)},
+		},
+		Status: corev1.PersistentVolumeStatus{Phase: corev1.PersistentVolumePhase(phase)},
+	}
+}
+
+// A namespace delete leaves the vSNO's volumes Released, still holding their
+// capacity. Teardown must not report success while that is true.
+func TestRunReportsAllocatedStorage(t *testing.T) {
+	var c confirmer
+	d := newDyn(namespace(ns, true), vm(ns, "seed"))
+	k := newKube(pv("pvc-3fb1221b", ns, "target-root", "Released", "200Gi"))
+	res, err := Run(context.Background(), c.env(k, d), Options{Namespace: ns, Yes: true})
+	if err == nil || !strings.Contains(err.Error(), "still allocated") {
+		t.Fatalf("err = %v, want the allocated-storage failure", err)
+	}
+	for _, want := range []string{"pvc-3fb1221b", "200Gi", "Released", ns + "/target-root", "oc debug node/", "vg-vsno/3fb1221b"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to name %q", err, want)
+		}
+	}
+	if len(res.Allocated) != 1 || res.Allocated[0].Claim != ns+"/target-root" {
+		t.Errorf("allocated = %+v", res.Allocated)
+	}
+}
+
+// The boot-source image volumes belong to CNV's own namespace, so they never
+// trip the check, whatever their phase.
+func TestRunIgnoresBootSourceVolumes(t *testing.T) {
+	var c confirmer
+	d := newDyn(namespace(ns, true), vm(ns, "seed"))
+	k := newKube(pv("pvc-os", cluster.OSImagesNamespace, "rhel9", "Bound", "10Gi"),
+		pv("pvc-os2", cluster.OSImagesNamespace, "rhel8", "Released", "10Gi"))
+	res, err := Run(context.Background(), c.env(k, d), Options{Namespace: ns, Yes: true})
+	if err != nil || len(res.Allocated) != 0 {
+		t.Errorf("err = %v, allocated = %+v; want a clean teardown", err, res.Allocated)
+	}
+}
+
+func TestRunCleanStorageStaysSilent(t *testing.T) {
+	var c confirmer
+	d := newDyn(namespace(ns, true), vm(ns, "seed"))
+	res, err := Run(context.Background(), c.env(newKube(), d), Options{Namespace: ns, Yes: true})
+	if err != nil || len(res.Allocated) != 0 {
+		t.Errorf("err = %v, allocated = %+v", err, res.Allocated)
 	}
 }

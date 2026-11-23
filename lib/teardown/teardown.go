@@ -17,7 +17,9 @@ import (
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/state"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -96,6 +98,9 @@ type Result struct {
 	// Unmanaged are VMs and PVCs in the namespace that setup didn't create;
 	// deleting the namespace deletes them too.
 	Unmanaged []string `json:"unmanaged,omitempty"`
+	// Allocated is storage the environment still holds after a teardown that
+	// otherwise finished: volumes whose claim is gone but whose disk isn't.
+	Allocated []allocatedPV `json:"allocated,omitempty"`
 	// Targets are what teardown deletes itself, in order.
 	Targets []Target `json:"targets"`
 }
@@ -169,7 +174,87 @@ func (p *planner) execute(ctx context.Context, res *Result) error {
 			return err
 		}
 	}
-	return nil
+	return p.awaitStorageReleased(ctx, res)
+}
+
+// volumeGroup is the LVM volume group LVMS made for the environment; its
+// LogicalVolumes are where a stuck PV's capacity actually sits.
+const volumeGroup = "vg-vsno"
+
+// allocatedPV is a PersistentVolume the environment still holds: its claim is
+// gone, but the volume — and the capacity behind it — is not.
+type allocatedPV struct {
+	Name  string            `json:"name"`
+	Claim string            `json:"claim"` // namespace/name it was made for
+	Phase string            `json:"phase"`
+	Size  resource.Quantity `json:"size"`
+}
+
+// allocated lists the PersistentVolumes made for claims in the environment's
+// namespace. Deleting the namespace leaves them Released rather than deleted:
+// the PVC is gone, the PV stays, and nothing else in vsno looks at them. The
+// boot-source images belong to another namespace and are not counted.
+func (p *planner) allocated(ctx context.Context) ([]allocatedPV, error) {
+	pvs, err := p.Kube.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing PersistentVolumes: %w", err)
+	}
+	var out []allocatedPV
+	for _, pv := range pvs.Items {
+		ref := pv.Spec.ClaimRef
+		if ref == nil || ref.Namespace != p.o.Namespace {
+			continue
+		}
+		out = append(out, allocatedPV{Name: pv.Name, Claim: ref.Namespace + "/" + ref.Name,
+			Phase: string(pv.Status.Phase), Size: pv.Spec.Capacity[corev1.ResourceStorage]})
+	}
+	return out, nil
+}
+
+// awaitStorageReleased waits for the volumes the environment's claims left
+// behind to go, and fails naming them when they don't: a teardown that only
+// looks at the namespace can succeed while the disk is still allocated.
+func (p *planner) awaitStorageReleased(ctx context.Context, res *Result) error {
+	ps := p.Progress.Start("Checking the storage was released")
+	var last []allocatedPV
+	err := wait.PollUntilContextTimeout(ctx, p.Poll, p.Timeout, true, func(ctx context.Context) (bool, error) {
+		var err error
+		last, err = p.allocated(ctx)
+		return len(last) == 0, err
+	})
+	switch {
+	case err == nil:
+		ps.Done("nothing is still allocated")
+		return nil
+	case !wait.Interrupted(err):
+		ps.Fail(err.Error())
+		return fmt.Errorf("checking the storage teardown released: %w", err)
+	}
+	res.Allocated = last
+	failure := allocatedError(last)
+	ps.Fail(failure.Error())
+	return failure
+}
+
+// allocatedError says what is still allocated and how to find the holder.
+func allocatedError(pvs []allocatedPV) error {
+	var total resource.Quantity
+	for _, pv := range pvs {
+		total.Add(pv.Size)
+	}
+	first := pvs[0]
+	more := ""
+	if len(pvs) > 1 {
+		more = fmt.Sprintf(" (and %d more, listed in --output json)", len(pvs)-1)
+	}
+	// The volume's name carries the PVC's UUID, which is what the
+	// LogicalVolume and the device are named after.
+	uuid := strings.TrimPrefix(first.Name, "pvc-")
+	return fmt.Errorf("teardown finished but %s is still allocated: PV %s%s (%s, %s, was %s). "+
+		"The volume's LogicalVolume is stuck deleting, usually because the device is still mounted or held open on the node:\n\n"+
+		"  oc debug node/<node> -- chroot /host sh -c 'grep %s /proc/mounts; lsof /dev/%s/%s'\n\n"+
+		"Release the holder and vg-manager removes the volume within a minute",
+		total.String(), first.Name, more, first.Phase, first.Size.String(), first.Claim, uuid, volumeGroup, uuid)
 }
 
 func (e *Env) defaults() {
