@@ -177,6 +177,10 @@ func reportCacheAdd(cmd *cobra.Command, p *cache.Prepared, asked string, ps *ui.
 	case p.Hit:
 		done("already cached")
 		fmt.Fprintf(w, "%s %s is already in %s.\n", pal.Icon("✓"), p.Image, p.Repo)
+	case p.Running && ps == nil && p.Followed:
+		fmt.Fprintf(w, "%s %s is already being mirrored into %s as Job %s.\n", pal.Icon("→"), p.Image, p.Repo, p.Job)
+		fmt.Fprintf(w, "  %s\n", pal.Dim("vsno cache list                    how far it has got"))
+		fmt.Fprintf(w, "  %s\n", pal.Dim("vsno cache add "+asked+" --watch   follow it here"))
 	case p.Running && ps == nil:
 		fmt.Fprintf(w, "%s Mirroring %s into %s as Job %s, in the background.\n", pal.Icon("→"), p.Image, p.Repo, p.Job)
 		fmt.Fprintf(w, "  %s\n", pal.Dim("vsno cache list                    how far it has got"))

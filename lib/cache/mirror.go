@@ -48,6 +48,8 @@ type Prepared struct {
 	// Running is true while a mirror is in flight, whether this command
 	// started it or found it started.
 	Running bool `json:"running,omitempty"`
+	// Followed is true when Running is: a mirror this call did not start.
+	Followed bool `json:"followed,omitempty"`
 	// EstimatedBytes is what mirroring is expected to take, for progress.
 	EstimatedBytes int64 `json:"estimatedBytes,omitempty"`
 }
@@ -112,7 +114,7 @@ func Start(ctx context.Context, e Env, o EnsureOptions) (*Prepared, error) {
 		}
 		p.Entry = ent
 	case running:
-		p.Entry, p.Running = prev, true
+		p.Entry, p.Running, p.Followed = prev, true, true
 	default:
 		ent, err := startMirror(ctx, e, o, t, oldRequested(cur), m)
 		if err != nil {
