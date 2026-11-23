@@ -78,6 +78,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 			r.ReleaseCache = rep
 		}
 	}
+	r.Next = status.Next(r)
 	if err := renderStatus(cmd.OutOrStdout(), r, palette(cmd.OutOrStdout())); err != nil {
 		return err
 	}
@@ -130,6 +131,9 @@ func renderStatus(w io.Writer, r *status.Report, pal ui.Palette) error {
 	renderVSNOs(w, r.VSNOs, pal)
 	renderVMs(w, r.VMs, pal)
 	renderReleaseCache(w, r.ReleaseCache, pal)
+	if r.Next != "" {
+		fmt.Fprintf(w, "\n%s %s\n", pal.Bold("Next:"), r.Next)
+	}
 	if n := len(r.Stages); n > 0 {
 		fmt.Fprintf(w, "\n%s\n", pal.Bold("Recent stages"))
 		var t ui.Table

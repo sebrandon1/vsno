@@ -14,6 +14,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/release"
+	"github.com/sebrandon1/vsno/lib/status"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -172,6 +173,12 @@ func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 	for _, c := range l.Capacity {
 		fmt.Fprintf(w, "\nnode %s: %d GiB memory free, room for %d more default-size vSNO(s) (%d GiB each)\n",
 			c.Node, c.FreeMemoryGiB, c.FitDefault, guest.DefaultMemoryGiB)
+	}
+	// What the vSNOs are ready for, from the part of the report list has.
+	if len(l.VSNOs) > 0 {
+		if next := status.Next(&status.Report{Exists: true, VSNOs: l.VSNOs}); next != "" {
+			fmt.Fprintf(w, "\n%s %s\n", pal.Bold("Next:"), next)
+		}
 	}
 	return nil
 }
