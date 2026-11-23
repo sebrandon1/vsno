@@ -13,6 +13,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/guestctl"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/release"
 	"github.com/sebrandon1/vsno/lib/seed"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -269,6 +270,19 @@ func resumeFrom(u IBU, image string) (Stage, error) {
 	return "", fmt.Errorf("the target is in %s; wait for it to finish", u.Spec.Stage)
 }
 
+// crossMinorHint is how to give the target the LCA the seed was made with,
+// which is what a cross-minor upgrade needs: the operator from the release the
+// seed came from, not the one the target's older catalog offers.
+func crossMinorHint(seedVersion, target, image string) string {
+	ref := "--lca-image " + image
+	if m := release.Minor(seedVersion); m != "" {
+		ref = "--lca-ref release-" + m + " " + ref
+	}
+	return "\n\nFor a cross-minor upgrade the target needs the LCA from the seed's release:\n\n" +
+		"  vsno prepare " + target + " " + ref +
+		"\n\n(running the upgrade with the seed vSNO stopped skips this comparison)"
+}
+
 // checkSeed requires the vSNO the seed was made from, when it's here and
 // answers, to match the target where LCA requires it: the same LCA version,
 // and openshift-config/user-ca-bundle on both or neither. A vSNO installed
@@ -290,7 +304,8 @@ func checkSeed(ctx context.Context, e Env, from, targetName string, target guest
 		return err
 	}
 	if ours != theirs {
-		return fmt.Errorf("the seed was made with %s and the target runs %s; LCA must be the same version on both", theirs, ours)
+		return fmt.Errorf("the seed was made with LCA %s and the target runs %s.%s",
+			theirs, ours, crossMinorHint(res.SeedVersion, targetName, theirs))
 	}
 	seedHas, err := hasUserCABundle(ctx, sa)
 	if err != nil {

@@ -109,6 +109,46 @@ vSNO and shown in the `LCA` column of `vsno list -o wide`. Later `prepare`, `upg
 `seed create` runs keep an LCA deployed from a ref rather than replacing it with the catalog's.
 Prepare seed and target from the same ref: `upgrade` refuses a seed made with a different LCA.
 
+## Cross-minor upgrades
+
+An IBU can cross a minor — seed from a 4.22 vSNO, upgrade a 4.21 target with it. LCA asks
+only that its operator be compatible with the seed, and for a cross-minor upgrade that means
+the LCA from the release the seed was made from. The target's own catalog offers only its
+older one, so vsno refuses the pair and says what to do:
+
+```console
+$ vsno upgrade target-cluster --seed seed-cluster
+Error: the seed was made with LCA registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:e756…
+and the target runs lifecycle-agent.v4.21.5.
+
+For a cross-minor upgrade the target needs the LCA from the seed's release:
+
+  vsno prepare target-cluster --lca-ref release-4.22 --lca-image registry.redhat.io/…
+
+(running the upgrade with the seed vSNO stopped skips this comparison)
+```
+
+Run that `prepare`: it renders LCA's manifests from the seed's release branch, replaces the
+target's OLM-managed operator with them, and records the source, so later `prepare` and
+`upgrade` runs keep it. The seed vSNO names the image it ran:
+
+```bash
+vsno oc <seed> get csv -n openshift-lifecycle-agent \
+  -o jsonpath='{.items[0].spec.install.spec.deployments[0].spec.template.spec.containers[0].image}{"\n"}'
+```
+
+The comparison is by the image the controller runs, not by how it got there, so a catalog
+install and an image install of the same operator match. Different images are refused —
+deploying the newer operator on the older cluster is your call, not vsno's guess.
+
+`vsno run` hands `--lca-ref`, `--lca-repo` and `--lca-image` to both preparations, so a
+cross-minor run names the seed's release once:
+
+```bash
+vsno run --target-version 4.21.42 --seed-version 4.22.22 \
+  --lca-ref release-4.22 --lca-image registry.redhat.io/openshift4/lifecycle-agent-rhel9-operator@sha256:…
+```
+
 ## run: the whole IBU from a kubeconfig
 
 ```bash
