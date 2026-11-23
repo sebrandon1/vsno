@@ -49,7 +49,10 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
 	res := &Result{Name: o.Name, Image: o.Image}
 	var reg Registry
 	if err := guestctl.Step(e.Progress, "Checking "+o.Name, func(precheck.ProgressStep) (string, error) {
-		rep, err := Precheck(ctx, e, PrecheckOptions{Namespace: o.Namespace, Name: o.Name, Image: o.Image, Settle: true})
+		// Install is what makes this command do what its help says: a vSNO
+		// without the Lifecycle Agent or the registry's trust gets both here,
+		// rather than failing and sending the user to `seed precheck --install`.
+		rep, err := Precheck(ctx, e, PrecheckOptions{Namespace: o.Namespace, Name: o.Name, Image: o.Image, Settle: true, Install: true})
 		if err != nil {
 			return "", err
 		}

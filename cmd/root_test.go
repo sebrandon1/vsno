@@ -102,3 +102,42 @@ func TestVerboseEnablesTrace(t *testing.T) {
 		t.Error("the trace stayed on without --verbose")
 	}
 }
+
+// Commands that hand over a stream or only say they are done have nothing to
+// put in -o json, so they refuse it rather than printing human text anyway.
+func TestCheckJSON(t *testing.T) {
+	old := outputFormat
+	t.Cleanup(func() { outputFormat = old })
+
+	for _, c := range []struct {
+		args    []string
+		format  string
+		wantErr bool
+	}{
+		{[]string{"oc"}, formatJSON, true},
+		{[]string{"ssh"}, formatJSON, true},
+		{[]string{"kubeconfig"}, formatJSON, true},
+		{[]string{"screenshot"}, formatJSON, true},
+		{[]string{"iso", "eject"}, formatJSON, true},
+		{[]string{"cache", "gc"}, formatJSON, true},
+		{[]string{"list"}, formatJSON, false},
+		{[]string{"version"}, formatJSON, false},
+		{[]string{"oc"}, formatTable, false},
+	} {
+		var cmd *cobra.Command
+		var err error
+		if cmd, _, err = rootCmd.Find(c.args); err != nil {
+			t.Fatalf("%v: %v", c.args, err)
+		}
+		outputFormat = c.format
+		err = checkJSON(cmd)
+		switch {
+		case c.wantErr && err == nil:
+			t.Errorf("%v -o %s: want an error", c.args, c.format)
+		case c.wantErr && !strings.Contains(err.Error(), cmd.CommandPath()):
+			t.Errorf("%v -o %s: error = %v, want it to name the command", c.args, c.format, err)
+		case !c.wantErr && err != nil:
+			t.Errorf("%v -o %s: %v, want nil", c.args, c.format, err)
+		}
+	}
+}

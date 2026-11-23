@@ -9,8 +9,13 @@ import (
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the vsno version",
-	Run: func(cmd *cobra.Command, _ []string) {
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		if outputFormat == formatJSON {
+			return writeJSON(cmd.OutOrStdout(), map[string]string{"version": cliVersion})
+		}
 		fmt.Fprintln(cmd.OutOrStdout(), cliVersion)
+		return nil
 	},
 }
 

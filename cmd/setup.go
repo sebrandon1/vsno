@@ -79,6 +79,7 @@ it, so only --force takes it over.
 object it would create, reapply (vsno applied it before) or take over (it
 exists but vsno didn't create it, so setup would overwrite it). Add
 --manifests to also print the manifests, with Secret values redacted.`,
+	Args: cobra.NoArgs,
 	RunE: runSetup,
 }
 

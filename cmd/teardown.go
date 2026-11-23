@@ -39,6 +39,7 @@ didn't create, unless --force.
 
 It lists what it will delete and asks you to type the namespace (or "host"
 with --host), unless --yes. --dry-run only lists.`,
+	Args: cobra.NoArgs,
 	RunE: runTeardown,
 }
 

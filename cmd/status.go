@@ -36,6 +36,7 @@ var statusCmd = &cobra.Command{
 
 It exits non-zero when the namespace is missing or a component is missing or
 failing.`,
+	Args: cobra.NoArgs,
 	RunE: runStatus,
 }
 
