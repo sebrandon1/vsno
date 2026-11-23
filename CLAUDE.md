@@ -141,8 +141,10 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `lib/registry`: the environment's in-cluster OCI registry. `Registry{Host,User,Password,CA}`,
   `Load` (from `registry-auth` and `registry-ca`), `Address` (the ClusterIP form guests use, because
   their `cluster.local` hides the host's Services), `AddAuth` (merging credentials into a pull
-  secret), `Usage` (df in the registry pod), and `scripts/registry.sh` (list/delete/delete-manifests
-  via curl and skopeo, credentials on stdin). `lib/seed` re-exports it.
+  secret), `Usage` (df in the registry pod), `scripts/registry.sh` (list/delete/delete-manifests via
+  curl and skopeo, credentials on stdin) and `scripts/sync.sh` (one image to or from another
+  registry: `skopeo copy --all` with each side's own auth file and cert dir, from a tar on stdin).
+  `lib/seed` re-exports it.
 - `lib/cache`: mirrored OpenShift releases. `Ensure` looks a payload's digest up in ConfigMap
   `vsno-cache`, mirrors on a miss with `oc adm release mirror` in the builder (`scripts/mirror.sh`,
   one repository per payload under `ocp/release/<sha16>`), and returns the install-config's
