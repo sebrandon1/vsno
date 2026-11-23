@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 
 	"github.com/sebrandon1/vsno/lib/cache"
 	"github.com/sebrandon1/vsno/lib/cluster"
@@ -78,6 +79,13 @@ func Next(r *Report) string {
 		return "create a vSNO with `vsno create <name> --version <minor>`"
 	case len(ready) < len(r.VSNOs):
 		return "`vsno list` shows which vSNOs are not ready yet"
+	}
+	// An upgrade that has finished is the thing left undone: finalizing it is
+	// what frees the old stateroot, and it stays possible until someone does.
+	for _, g := range ready {
+		if strings.Contains(g.IBU, "done") {
+			return fmt.Sprintf("finalize the upgrade with `vsno upgrade %s --finalize`", g.Name)
+		}
 	}
 	if target, seed, ok := ibuPair(ready); ok {
 		return fmt.Sprintf("upgrade with `vsno upgrade %s --seed %s`", target.Name, seed.Name)
