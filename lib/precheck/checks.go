@@ -77,6 +77,17 @@ func (e *Env) checkClusterAdmin(ctx context.Context, r *Report) bool {
 	return true
 }
 
+// HostMinor is the host cluster's OpenShift minor ("4.22"), or "" when it can't
+// be read.
+func HostMinor(ctx context.Context, dyn dynamic.Interface) string {
+	cv, err := dyn.Resource(GVRClusterVersion).Get(ctx, "version", metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+	v, _, _ := unstructured.NestedString(cv.Object, "status", "desired", "version")
+	return release.Minor(v)
+}
+
 func (e *Env) checkHostVersion(ctx context.Context, r *Report) {
 	cv, err := e.Dyn.Resource(GVRClusterVersion).Get(ctx, "version", metav1.GetOptions{})
 	if err != nil {
@@ -165,11 +176,7 @@ func pickChannel(ctx context.Context, dyn dynamic.Interface, pkg, minor string) 
 // version. Either is "" when it can't be read, so a caller falls back to the
 // operator's current channel.
 func Channels(ctx context.Context, dyn dynamic.Interface) (cnv, lvms string) {
-	minor := ""
-	if cv, err := dyn.Resource(GVRClusterVersion).Get(ctx, "version", metav1.GetOptions{}); err == nil {
-		v, _, _ := unstructured.NestedString(cv.Object, "status", "desired", "version")
-		minor = release.Minor(v)
-	}
+	minor := HostMinor(ctx, dyn)
 	cnv, _, _, _ = pickChannel(ctx, dyn, cluster.CNV.Package, "")
 	lvms, _, _, _ = pickChannel(ctx, dyn, cluster.LVMS.Package, minor)
 	return cnv, lvms

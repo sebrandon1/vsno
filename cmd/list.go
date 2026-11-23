@@ -13,13 +13,9 @@ import (
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
-	"github.com/sebrandon1/vsno/lib/release"
 	"github.com/sebrandon1/vsno/lib/status"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/client-go/dynamic"
 )
 
 var (
@@ -108,7 +104,7 @@ func collect(ctx context.Context, c *kube.Clients, env guest.Env, single bool) (
 		}
 	}
 	d, _ := cluster.ReadDensity(ctx, c.Dyn) // unreadable: count without overcommit
-	l.HostMinor = hostMinor(ctx, c.Dyn)
+	l.HostMinor = precheck.HostMinor(ctx, c.Dyn)
 	for _, n := range slices.Sorted(maps.Keys(nodes)) {
 		if capa, cerr := guest.NodeCapacity(ctx, c.Kube, n, d.Percent()); cerr == nil {
 			l.Capacity = append(l.Capacity, capa)
@@ -126,16 +122,6 @@ func emptyHint(l *listing) string {
 		v = l.HostMinor
 	}
 	return "Create one with `vsno create <name> --version " + v + "`."
-}
-
-// hostMinor reads the host's OpenShift minor, or "" when it can't be read.
-func hostMinor(ctx context.Context, dyn dynamic.Interface) string {
-	cv, err := dyn.Resource(precheck.GVRClusterVersion).Get(ctx, "version", metav1.GetOptions{})
-	if err != nil {
-		return ""
-	}
-	v, _, _ := unstructured.NestedString(cv.Object, "status", "desired", "version")
-	return release.Minor(v)
 }
 
 func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {

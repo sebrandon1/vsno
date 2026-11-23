@@ -313,16 +313,12 @@ type gcReport struct {
 // the bytes the images vsno still has tagged take. Both are read while the
 // registry stays up, so nothing is changed and nothing is stopped.
 func gcPlanFor(ctx context.Context, env cache.Env, genv guest.Env) (gcReport, error) {
-	var rep gcReport
-	used, total, err := env.Volume(ctx, namespace)
-	if err != nil {
-		return rep, err
-	}
-	rep = gcReport{Used: used, Total: total, DryRun: true}
+	// cache.List reads the volume too, so this is one df, not two.
 	rel, err := cache.List(ctx, env, namespace, nil)
 	if err != nil {
-		return rep, err
+		return gcReport{}, err
 	}
+	rep := gcReport{Used: rel.Used, Total: rel.Total, DryRun: true}
 	for _, e := range rel.Entries {
 		rep.Tagged += e.SizeBytes
 	}
@@ -345,11 +341,18 @@ func renderGCDryRun(w io.Writer, r gcReport, pal ui.Palette) error {
 		return cliout.PrintJSON(w, r)
 	}
 	fmt.Fprintf(w, "The registry's volume holds %s of %s.\n", bytesText(r.Used), bytesText(r.Total))
-	if r.Freeable == 0 {
-		fmt.Fprintln(w, "The releases and seed images vsno has tagged account for it, so there is nothing to collect.")
-	} else {
+	switch {
+	case r.Freeable > 0:
 		fmt.Fprintf(w, "Tagged releases and seed images take %s, so the collector would free about %s.\n",
 			bytesText(r.Tagged), bytesText(r.Freeable))
+	case r.Tagged <= r.Used:
+		fmt.Fprintln(w, "The releases and seed images vsno has tagged account for it, so there is nothing to collect.")
+	default:
+		// Images share layers, and each image's size counts them, so the sum
+		// can exceed the volume. Saying "nothing to free" would be a guess.
+		fmt.Fprintf(w, "The tagged images add up to %s, more than the volume: they share layers, so this "+
+			"measurement cannot say what a collection would free. The collector frees whatever no tag "+
+			"references, which is usually little.\n", bytesText(r.Tagged))
 	}
 	fmt.Fprintln(w, pal.Dim("\nDry run: the registry was not stopped and nothing was changed."))
 	return nil

@@ -302,18 +302,16 @@ func runSeedSync(cmd *cobra.Command, args []string) error {
 // environment, then the settings file. A configured destination applies only
 // when neither --to nor --from was given, so a pull never inherits a --to and
 // fail its direction check.
-func syncDefaults() (to, auth, ca string) {
+func syncDefaults() (string, string, string) {
 	file := configFor()
 	toSet, _ := config.SettingFor(config.SeedSyncTo)
 	authSet, _ := config.SettingFor(config.SeedSyncAuthFile)
 	caSet, _ := config.SettingFor(config.SeedSyncCA)
-	to, auth, ca = ssTo, ssAuth, ssCA
+	to := ssTo
 	if ssTo == "" && ssFrom == "" {
 		to = config.Resolve(toSet, "", file, false)
 	}
-	auth = config.Resolve(authSet, auth, file, true)
-	ca = config.Resolve(caSet, ca, file, true)
-	return to, auth, ca
+	return to, config.Resolve(authSet, ssAuth, file, true), config.Resolve(caSet, ssCA, file, true)
 }
 
 // renderSeedSync prints where one seed image went and what the far side holds.
