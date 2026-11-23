@@ -20,7 +20,7 @@ const (
 	// It is per release because mirrors queue on the builder's lock, so a
 	// second mirror's pod may exist while the first still runs: one shared
 	// Secret would hand the queued mirror the wrong credentials.
-	mirrorSecretPrefix = "cache-mirror-auth-"
+	mirrorSecretPrefix = "cache-mirror-auth-" // #nosec G101 -- the name of a Secret, not a credential
 	// mirrorWork is where the builder's volume is mounted, as in the builder.
 	mirrorWork = "/work"
 	// mirrorAuth is where the credentials Secret is mounted.
