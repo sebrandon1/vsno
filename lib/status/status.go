@@ -57,6 +57,65 @@ type Report struct {
 	// ReleaseCache is what the registry holds for vSNO installs; nil when it
 	// couldn't be read.
 	ReleaseCache *cache.Report `json:"releaseCache,omitempty"`
+	// Next is the one line of what the environment is ready for, filled by the
+	// caller once VSNOs are listed.
+	Next string `json:"next,omitempty"`
+}
+
+// Next says what the environment is ready for: the command worth running next,
+// from what the report already knows. It reads only the report, so it costs
+// nothing and can be shown by anything that has one.
+func Next(r *Report) string {
+	switch {
+	case !r.Exists:
+		return "run `vsno precheck`, then `vsno setup`"
+	case !r.Healthy():
+		return "run `vsno setup` to finish what is not ready"
+	}
+	ready := readyVSNOs(r.VSNOs)
+	switch {
+	case len(ready) == 0:
+		return "create a vSNO with `vsno create <name> --version <minor>`"
+	case len(ready) < len(r.VSNOs):
+		return "`vsno list` shows which vSNOs are not ready yet"
+	}
+	if target, seed, ok := ibuPair(ready); ok {
+		return fmt.Sprintf("upgrade with `vsno upgrade %s --seed %s`", target.Name, seed.Name)
+	}
+	return fmt.Sprintf("make a seed with `vsno seed precheck %s --install`, then `vsno seed create %s`",
+		ready[0].Name, ready[0].Name)
+}
+
+// readyVSNOs are the ones an upgrade or a seed can be made from now.
+func readyVSNOs(vsnos []guest.Guest) []guest.Guest {
+	var out []guest.Guest
+	for _, g := range vsnos {
+		if g.State == guest.Ready {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// ibuPair picks the older and newer of the ready vSNOs, when their versions
+// differ: that is the target and the seed an Image Based Upgrade needs.
+func ibuPair(ready []guest.Guest) (target, seed guest.Guest, ok bool) {
+	if len(ready) < 2 {
+		return guest.Guest{}, guest.Guest{}, false
+	}
+	lo, hi := ready[0], ready[0]
+	for _, g := range ready[1:] {
+		if g.ShownVersion() < lo.ShownVersion() {
+			lo = g
+		}
+		if g.ShownVersion() > hi.ShownVersion() {
+			hi = g
+		}
+	}
+	if lo.ShownVersion() == "" || lo.ShownVersion() == hi.ShownVersion() {
+		return guest.Guest{}, guest.Guest{}, false
+	}
+	return lo, hi, true
 }
 
 // Healthy reports whether no component failed.

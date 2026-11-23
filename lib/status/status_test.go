@@ -317,3 +317,29 @@ func TestCollectDensityDefault(t *testing.T) {
 		t.Errorf("density = %+v", c)
 	}
 }
+
+// Next names the command the environment is ready for, from the report alone.
+func TestNext(t *testing.T) {
+	ready := func(name, version string) guest.Guest {
+		return guest.Guest{Name: name, State: guest.Ready, Version: version}
+	}
+	for _, c := range []struct {
+		name string
+		rep  *Report
+		want string
+	}{
+		{"nothing set up", &Report{}, "vsno precheck"},
+		{"unhealthy", &Report{Exists: true, Host: []Component{{Name: "CNV", Status: precheck.Fail}}}, "vsno setup"},
+		{"no vSNOs", &Report{Exists: true}, "vsno create <name>"},
+		{"one ready", &Report{Exists: true, VSNOs: []guest.Guest{ready("a", "4.22.22")}}, "vsno seed create a"},
+		{"one not ready", &Report{Exists: true, VSNOs: []guest.Guest{{Name: "a", State: guest.Starting}}}, "vsno create <name>"},
+		{"some not ready", &Report{Exists: true, VSNOs: []guest.Guest{ready("a", "4.22.22"), {Name: "b", State: guest.Installing}}}, "vsno list"},
+		{"two versions", &Report{Exists: true, VSNOs: []guest.Guest{ready("seed-cluster", "4.22.22"), ready("target-cluster", "4.21.42")}},
+			"vsno upgrade target-cluster --seed seed-cluster"},
+		{"same version", &Report{Exists: true, VSNOs: []guest.Guest{ready("a", "4.22.22"), ready("b", "4.22.22")}}, "vsno seed create a"},
+	} {
+		if got := Next(c.rep); !strings.Contains(got, c.want) {
+			t.Errorf("%s: Next = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

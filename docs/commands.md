@@ -113,6 +113,11 @@ Reports, without changing anything: the host components, the support services an
 endpoint, the vSNOs with their state, other VMs in the namespace, and the most recent stages in
 `<namespace>/vsno-state`. Exits non-zero when the namespace or a component is missing or failing.
 
+It ends with one `Next:` line saying what the environment is ready for — `vsno setup` when something
+is not ready, `vsno create` with no vSNOs, the seed commands with one ready vSNO, and
+`vsno upgrade <target> --seed <seed>` when two ready vSNOs are at different versions. `-o json` has
+the same line as `next`.
+
 Takes only the global flags (`-o json` for the machine-readable report).
 
 ## `vsno create`
@@ -142,7 +147,8 @@ in the cluster pull secret.
 
 Shows each vSNO's state (`importing-iso`, `starting`, `installing`, `finishing`, `making-seed`,
 `ready`, `stopped`, `failed`), version, size, age and API, plus a footer with the memory left on the
-node and how many more default-size vSNOs fit. Alias: `ls`.
+node and how many more default-size vSNOs fit, and one `Next:` line with what they are ready for, as
+`vsno status` reports it. Alias: `ls`.
 
 | Flag | Meaning |
 |---|---|
