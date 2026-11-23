@@ -537,7 +537,13 @@ are several.
 | `--force` | Ignore the safety checks (VMs or volumes elsewhere, a namespace vsno didn't create) |
 | `--dry-run` | List what would be deleted and change nothing |
 | `--yes` | Don't ask for confirmation |
-| `--timeout <duration>` | How long to wait for each deletion (default `10m`) |
+| `--timeout <duration>` | How long to wait for each deletion, and for the volumes to be released (default `10m`) |
+
+A namespace-only teardown deletes the namespace but not the volumes behind its claims: LVMS keeps a
+PV `Released` until its `LogicalVolume` is gone, which it can't be while the device is still mounted.
+Teardown therefore re-reads the PersistentVolumes afterwards and fails, naming the volume, its size
+and the host-side command that finds the holder, rather than reporting success while the disk is
+still allocated. `-o json` lists them under `allocated`.
 
 ## `vsno version`
 
