@@ -121,8 +121,10 @@ type Requirements struct {
 // DefaultRequirements matches the layout verified end to end on 2026-11-18.
 func DefaultRequirements() Requirements {
 	return Requirements{
-		VMs:              2,
-		VMCores:          16,
+		VMs:     2,
+		VMCores: 16,
+		// Twice create's 16 GiB default on purpose: seed generation and the
+		// IBU's precache want the headroom on a busy node (docs/howto.md).
 		VMMemGiB:         32,
 		MinDiskGB:        600,
 		GuestMachineCIDR: "10.0.2.0/24",

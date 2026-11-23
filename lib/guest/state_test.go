@@ -46,6 +46,14 @@ func TestClassify(t *testing.T) {
 			o.Now = time.Now()
 			return o
 		}(), Finishing, "Unable to apply 4.20.46: MultipleErrors"},
+		// ...unless every operator reports Available: then the CVO is naming an
+		// operator that has since come back (authentication after an IBU), and
+		// the raw message stays in CVMessage for `-o json` instead.
+		{"a message the operators contradict is stale", func() Observed {
+			o := running(&Probe{CV: &CV{Message: "Error while reconciling 4.22.23: the cluster operator authentication is not available", Since: time.Now().Add(-time.Hour)}, Unhealthy: intp(0)})
+			o.Now = time.Now()
+			return o
+		}(), Finishing, "control plane rolling out"},
 		// Seed generation stops the guest's services: no probe answer is progress.
 		{"making the seed image", Observed{VMStatus: "Running", ISOPhase: "Succeeded", Probe: &Probe{}, Seeding: true}, MakingSeed, ""},
 		{"a stale seeding mark does not hide a silent guest", Observed{VMStatus: "Running", ISOPhase: "Succeeded", Probe: &Probe{}, Seeding: false}, Unknown, "no answer from the installer or API"},

@@ -62,7 +62,9 @@ It lists what it will delete and asks you to type "yes", unless --yes.`,
 }
 
 func init() {
-	snapshotCmd.PersistentFlags().DurationVar(&snTimeout, "timeout", 30*time.Minute, "how long to wait for the storage driver")
+	// On create only: the storage driver is waited for while a snapshot is taken.
+	// list and delete work on what is already there.
+	snapshotCreateCmd.Flags().DurationVar(&snTimeout, "timeout", 30*time.Minute, "how long to wait for the storage driver")
 	f := snapshotDeleteCmd.Flags()
 	f.BoolVar(&snYes, "yes", false, "don't ask for confirmation")
 	f.BoolVar(&snDryRun, "dry-run", false, "list what would be deleted and change nothing")
@@ -75,7 +77,11 @@ func snapshotEnv(cmd *cobra.Command) (snapshot.Env, error) {
 	if err != nil {
 		return snapshot.Env{}, err
 	}
-	ge, err := guestEnv(cmd.Context(), c, snTimeout)
+	t := snTimeout
+	if t == 0 {
+		t = 30 * time.Minute // list and delete carry no --timeout of their own
+	}
+	ge, err := guestEnv(cmd.Context(), c, t)
 	return snapshot.Env{Env: ge}, err
 }
 

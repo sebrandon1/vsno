@@ -51,7 +51,7 @@ func init() {
 	f.StringVar(&pcReq.SeedRepo, "seed-repo", "", "registry repo for the seed image (e.g. quay.io/me/ibu-seed); checks local push credentials")
 	f.IntVar(&pcReq.VMs, "vms", pcReq.VMs, "VMs that must run at the same time (seed + target)")
 	f.IntVar(&pcReq.VMCores, "vm-cores", pcReq.VMCores, "vCPUs per VM")
-	f.Int64Var(&pcReq.VMMemGiB, "vm-memory", pcReq.VMMemGiB, "guest memory per VM, GiB")
+	f.Int64Var(&pcReq.VMMemGiB, "vm-memory", pcReq.VMMemGiB, "guest memory per VM, GiB (sizes for seed generation; `vsno create` makes 16 GiB VMs by default)")
 	f.Int64Var(&pcReq.MinDiskGB, "min-disk", pcReq.MinDiskGB, "minimum size of the LVMS disk, GB")
 	f.StringVar(&pcNode, "node", "", "only probe this worker node")
 	f.BoolVar(&pcNoProbe, "no-probe", false, "skip the on-node hardware probe")

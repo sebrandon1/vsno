@@ -166,7 +166,7 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 
 | File | Role |
 |---|---|
-| `types.go` | `Status`, `Group`, `Result` (per-node rows set `Node`; `Name()` is `<node>: <check>`), `Report` (with `Nodes` verdicts), `Suggested`, and `Requirements` (defaults: 2 VMs × 16 cores / 32 GiB, a 600 GB disk, guest CIDRs). Also the `Progress`/`ProgressStep` interfaces, with no-op defaults. |
+| `types.go` | `Status`, `Group`, `Result` (per-node rows set `Node`; `Name()` is `<node>: <check>`), `Report` (with `Nodes` verdicts), `Suggested`, and `Requirements` (defaults: 2 VMs × 16 cores / 32 GiB — twice `guest.DefaultMemoryGiB`, for seed generation's headroom — a 600 GB disk, guest CIDRs). Also the `Progress`/`ProgressStep` interfaces, with no-op defaults. |
 | `probe.sh` | Embedded node probe script. It runs via `chroot /host` and prints `KEY=VALUE` lines (`VIRT`, `KVM`, `NPROC`, `MEM_*`, `LSBLK`, `BYID`). It must stay read-only. |
 | `probe.go` | `ParseProbe` turns that output into `NodeHardware`/`Disk`. `Disk.PreferredByID` prefers `wwn-*`. |
 | `prober.go` | `PodProber` creates a temporary privileged namespace, one pod per node, reads the logs, then deletes the namespace. It reports each node as it finishes (`onDone`). |
