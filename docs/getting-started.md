@@ -126,7 +126,7 @@ vsno setup --dry-run                     # list what setup would do, change noth
    once and stored as Secrets in the namespace.
 
 It runs `precheck` first. Cluster-level failures stop it, while CPU or memory shortfalls on the
-node are only warnings. Settings come from `--node`/`--disk`, then `--config`, then the
+node are only warnings. Settings come from `--node`/`--device`, then `--config`, then the
 precheck's suggestion. If `--node` names a different node than `--config`, the config's disk is
 dropped, since it belongs to the other node. A rerun reuses everything and reports each object as `unchanged`.
 Progress and the result are recorded in ConfigMap `<namespace>/vsno-state`.

@@ -51,7 +51,7 @@ vsno precheck --write-config vsno.yaml
 ```
 
 `vsno.yaml` holds the node, the LVMS disk and the sizes precheck suggests. `setup` reads it with
-`--config`; `run` takes the same choices from its own flags (`--node`, `--disk`, `--cores`,
+`--config`; `run` takes the same choices from its own flags (`--node`, `--device`, `--cores`,
 `--memory`).
 
 ## 2. Set up the environment
@@ -77,7 +77,7 @@ Useful options:
 
 ```bash
 vsno setup --node <worker>                  # pick the node explicitly
-vsno setup --disk /dev/disk/by-id/<id>      # fresh disk for LVMS
+vsno setup --device /dev/disk/by-id/<id>    # fresh disk for LVMS
 vsno setup --registry-size 200Gi            # room for more mirrored releases
 vsno setup --memory-overcommit 150          # fit more vSNOs (changes every VM on the host)
 ```
