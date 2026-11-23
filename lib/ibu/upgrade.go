@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -109,6 +110,24 @@ func begin(ctx context.Context, e Env, o UpgradeOptions, res *UpgradeResult) (a 
 		if res.Before, err = identity(ctx, a); err != nil {
 			return a, "", "", err
 		}
+		// An IBU only moves forward, and LCA enforces it only after Prep is
+		// set: a seed that is not newer leaves the target wedged in Prep with a
+		// failed condition, which needs a manual abort. Say so before starting.
+		if c, ok := compareVersions(res.Before.Version, res.SeedVersion); ok && c >= 0 {
+			what := ""
+			switch {
+			case o.Finalize:
+				what = " to end with --finalize"
+			case o.Rollback:
+				what = " to end with --rollback"
+			}
+			if c == 0 {
+				return a, u.Spec.Stage, "", fmt.Errorf("the target already runs %s, the seed's version, so there is no upgrade%s",
+					res.Before.Version, what)
+			}
+			return a, u.Spec.Stage, "", fmt.Errorf("the target runs %s and the seed supplies %s: an IBU only moves forward%s",
+				res.Before.Version, res.SeedVersion, what)
+		}
 		if err := checkSeed(ctx, e, madeFrom, o.Target, a, res); err != nil {
 			return a, "", "", err
 		}
@@ -193,6 +212,29 @@ func abort(ctx context.Context, e Env, o UpgradeOptions, res *UpgradeResult) (*U
 		return moveTo(ctx, a, e.Clock(), StagePrep, StageIdle, finalizeWait, res, ps)
 	})
 	return finish(ctx, a, res, err)
+}
+
+// compareVersions compares two OpenShift versions, reporting false when either
+// is not a plain release version (a nightly's "4.22.0-0.nightly-..." is not
+// ordered by release.Compare).
+func compareVersions(target, seed string) (int, bool) {
+	if !plainVersion(target) || !plainVersion(seed) {
+		return 0, false
+	}
+	return release.Compare(target, seed), true
+}
+
+// plainVersion reports whether v is dotted numbers only.
+func plainVersion(v string) bool {
+	if v == "" {
+		return false
+	}
+	for _, part := range strings.Split(v, ".") {
+		if _, err := strconv.Atoi(part); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // orIdle names a stage, the unset one being Idle.

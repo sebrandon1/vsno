@@ -162,7 +162,12 @@ func TestUpgradeSeed(t *testing.T) {
 		}
 	})
 	t.Run("a tag of the vSNO", func(t *testing.T) {
-		res, err := upgrade(t, &lca{Fake: targetFake()}, UpgradeOptions{Seed: "shiny-crane:4.21.1"}, nil)
+		// The target must be behind the seed the tag names, or the upgrade is
+		// refused before the seed is looked at.
+		f := targetFake()
+		f.OcReplies["get clusterversion version"] = []guestctltest.Reply{
+			{Out: `{"spec":{"clusterID":"c1"},"status":{"desired":{"version":"4.20.46"}}}`}}
+		res, err := upgrade(t, &lca{Fake: f}, UpgradeOptions{Seed: "shiny-crane:4.21.1"}, nil)
 		if err != nil || res.SeedVersion != "4.21.1" {
 			t.Errorf("err = %v, version = %s", err, res.SeedVersion)
 		}
@@ -379,9 +384,12 @@ func TestUpgradeRefusesAMismatchedTrustBundle(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "the target has openshift-config/user-ca-bundle and the seed vSNO shiny-crane doesn't have") || len(target.patches) != 0 {
 		t.Errorf("err = %v, patches = %q", err, target.patches)
 	}
-	// Both with it: fine.
+	// Both with it: fine. A fresh target, whose identity reply is still the
+	// version behind the seed.
 	seedVSNO.OcReplies[bundle] = []guestctltest.Reply{{Out: `{"metadata":{"name":"user-ca-bundle"}}`}}
-	if _, err := upgrade(t, &lca{Fake: target.Fake}, UpgradeOptions{To: StagePrep}, map[string]guestctl.Access{"shiny-crane": seedVSNO}); err != nil {
+	both := targetFake()
+	both.OcReplies[bundle] = []guestctltest.Reply{{Out: `{"metadata":{"name":"user-ca-bundle"}}`}}
+	if _, err := upgrade(t, &lca{Fake: both}, UpgradeOptions{To: StagePrep}, map[string]guestctl.Access{"shiny-crane": seedVSNO}); err != nil {
 		t.Errorf("both have it: err = %v", err)
 	}
 }
@@ -411,5 +419,53 @@ func TestPrepareNamesSeedPrecheck(t *testing.T) {
 	_, err := Prepare(context.Background(), e, PrepareOptions{Namespace: ns, Names: []string{"s"}, Role: RoleSeed})
 	if err == nil || !strings.Contains(err.Error(), "vsno seed precheck s --install") {
 		t.Errorf("err = %v, want the seed precheck hint", err)
+	}
+}
+
+// Finalize and rollback end an upgrade that ran. On a target back at Idle they
+// must refuse rather than start one: LCA would reject the Prep anyway, and the
+// target would be left in Prep.
+func TestUpgradeRefusesAnEndStageAtIdle(t *testing.T) {
+	for _, c := range []struct {
+		o    UpgradeOptions
+		want string
+	}{
+		{UpgradeOptions{Finalize: true}, "there is no upgrade to end with --finalize"},
+		{UpgradeOptions{Rollback: true}, "there is no upgrade to end with --rollback"},
+	} {
+		f := targetFake()
+		// The target already runs what the seed supplies.
+		f.OcReplies["get clusterversion version"] = []guestctltest.Reply{
+			{Out: `{"spec":{"clusterID":"c1"},"status":{"desired":{"version":"4.21.42"}}}`}}
+		target := &lca{Fake: f}
+		_, err := upgrade(t, target, c.o, nil)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%+v: err = %v, want %q", c.o, err, c.want)
+		}
+		if len(target.patches) != 0 {
+			t.Errorf("%+v: it changed the IBU anyway: %q", c.o, target.patches)
+		}
+	}
+}
+
+// A plain upgrade refuses a seed that is not newer, rather than setting Prep
+// and leaving the target there when LCA rejects it.
+func TestUpgradeRefusesAnOlderSeed(t *testing.T) {
+	for _, c := range []struct {
+		name, version, want string
+	}{
+		{"same version", "4.21.42", "there is no upgrade"},
+		{"older seed", "4.21.50", "an IBU only moves forward"},
+	} {
+		f := targetFake()
+		f.OcReplies["get clusterversion version"] = []guestctltest.Reply{
+			{Out: `{"spec":{"clusterID":"c1"},"status":{"desired":{"version":"` + c.version + `"}}}`}}
+		target := &lca{Fake: f}
+		if _, err := upgrade(t, target, UpgradeOptions{}, nil); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want %q", c.name, err, c.want)
+		}
+		if len(target.patches) != 0 {
+			t.Errorf("%s: it changed the IBU anyway: %q", c.name, target.patches)
+		}
 	}
 }

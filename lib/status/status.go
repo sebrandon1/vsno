@@ -79,8 +79,10 @@ func Next(r *Report) string {
 	case len(ready) < len(r.VSNOs):
 		return "`vsno list` shows which vSNOs are not ready yet"
 	}
-	// An upgrade that has finished is the thing left undone: finalizing it is
-	// what frees the old stateroot, and it stays possible until someone does.
+	// An upgrade that finished but is still at Upgrade (vsno's upgrade leaves
+	// it there; `vsno run` says so in its plan) is waiting for its finalize,
+	// which frees the old stateroot. Once finalized the stage is Idle and
+	// guest.IBU is empty, so this only fires while there is something to do.
 	for _, g := range ready {
 		if g.IBUDone() {
 			return fmt.Sprintf("finalize the upgrade with `vsno upgrade %s --finalize`", g.Name)
