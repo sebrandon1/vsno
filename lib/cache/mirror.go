@@ -260,7 +260,7 @@ func startMirror(ctx context.Context, e Env, o EnsureOptions, t target, requeste
 	if err := saveEntry(ctx, e, o.Namespace, t.digest, ent); err != nil {
 		return ent, err
 	}
-	if err := startMirrorJob(ctx, e, o.Namespace, t.digest, files, o.Release.Image, t.reg.Host, t.repo, short(t.digest), t.addr); err != nil {
+	if err := startMirrorJob(ctx, e, o.Namespace, t.digest, files, o.Release.Image, t.addr, t.repo, short(t.digest)); err != nil {
 		ent.State, ent.Started, ent.BaselineBytes = StateFailed, time.Time{}, 0
 		_ = saveEntry(context.WithoutCancel(ctx), e, o.Namespace, t.digest, ent) // best effort: the release is not usable
 		return ent, err

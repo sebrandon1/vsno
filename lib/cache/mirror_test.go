@@ -206,7 +206,9 @@ func checkMirrorJob(t *testing.T, job *batchv1.Job) {
 		t.Errorf("image = %q, want the builder's", c.Image)
 	}
 	args := c.Command
-	for _, want := range []string{script("mirror.sh"), script("signature.sh"), rel.Image, "registry.vsno-test.svc.cluster.local:5000", testRepo, testTag, "172.30.0.5:5000"} {
+	// The mirror and its signature copy target the address the credentials
+	// name (the ClusterIP), which is also what guests pull from.
+	for _, want := range []string{script("mirror.sh"), script("signature.sh"), rel.Image, "172.30.0.5:5000", testRepo, testTag} {
 		if !slices.Contains(args, want) {
 			t.Errorf("Job arguments lack %q", want)
 		}
@@ -601,6 +603,16 @@ func TestProgressAt(t *testing.T) {
 	q := Entry{State: StateMirroring, Started: now.Add(-2 * time.Minute)}.ProgressAt(now, 40<<30, 20<<30)
 	if q.BytesComplete != 0 || q.Text() != "2m0s" {
 		t.Errorf("progress = %+v, text = %q", q, q.Text())
+	}
+}
+
+// The credentials are a Secret volume, so their files are symlinks into
+// ..data; copying them as links leaves the scripts reading dangling ones.
+func TestMirrorWrapperDereferencesTheCredentials(t *testing.T) {
+	for _, want := range []string{"tar -chf - auth.json ca.crt |", "tar -chf - auth.json ca.crt images.txt |"} {
+		if !strings.Contains(mirrorWrapper, want) {
+			t.Errorf("the wrapper does not dereference the Secret's links: %q missing", want)
+		}
 	}
 }
 

@@ -39,19 +39,25 @@ func mirrorSecret(digest string) string { return mirrorSecretPrefix + short(dige
 // mirrorWrapper runs the two scripts the Job is given, each with the
 // credentials it reads on stdin. mirror.sh runs first and signature.sh after
 // it: a signature copied before its image would have nothing to sit beside.
+//
+// Both tars dereference (-h): /auth is a Secret volume, so its keys are
+// symlinks into ..data, and a plain tar would copy the links — which dangle
+// once they are in the scripts' own work directory.
 const mirrorWrapper = `set -euo pipefail
 printf '%s\n' "$1" > /tmp/mirror.sh
 printf '%s\n' "$2" > /tmp/signature.sh
 cd /auth
-tar -cf - auth.json ca.crt | bash /tmp/mirror.sh "$3" "$4" "$5" "$6"
-tar -cf - auth.json ca.crt images.txt | bash /tmp/signature.sh "$7" "$5"
+tar -chf - auth.json ca.crt | bash /tmp/mirror.sh "$3" "$4" "$5" "$6"
+tar -chf - auth.json ca.crt images.txt | bash /tmp/signature.sh "$4" "$5"
 `
 
 // startMirrorJob runs mirror.sh and signature.sh in a pod beside the builder.
+// host is the address the credentials name -- the registry's ClusterIP, which
+// is also what guests pull from -- not its Service name.
 // The pod mounts the builder's ReadWriteOnce volume, so it runs on the
 // builder's node at its SELinux level: a pod at another level would get the
 // volume relabeled to its own, locking the builder out.
-func startMirrorJob(ctx context.Context, e Env, ns, digest string, files map[string]string, image, host, repo, tag, addr string) error {
+func startMirrorJob(ctx context.Context, e Env, ns, digest string, files map[string]string, image, host, repo, tag string) error {
 	bp, err := builder.ReadyPod(ctx, e.Kube, ns)
 	if err != nil {
 		return err
@@ -78,7 +84,7 @@ func startMirrorJob(ctx context.Context, e Env, ns, digest string, files map[str
 					Image:      builderImage(bp),
 					WorkingDir: mirrorWork,
 					Command: []string{"bash", "-c", mirrorWrapper, "mirror",
-						script("mirror.sh"), script("signature.sh"), image, host, repo, tag, addr},
+						script("mirror.sh"), script("signature.sh"), image, host, repo, tag},
 					Env:             []corev1.EnvVar{{Name: "PATH", Value: "/work/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"}},
 					SecurityContext: &corev1.SecurityContext{RunAsUser: int64Ptr(0)},
 					VolumeMounts: []corev1.VolumeMount{
