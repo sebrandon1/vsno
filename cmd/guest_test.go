@@ -60,6 +60,18 @@ func TestRenderList(t *testing.T) {
 	}
 }
 
+func TestEmptyHintNamesTheHostMinor(t *testing.T) {
+	for _, c := range []struct{ minor, want string }{
+		{"4.22", "`vsno create <name> --version 4.22`"},
+		{"", "`vsno create <name> --version <minor>`"},
+	} {
+		got := emptyHint(&listing{HostMinor: c.minor})
+		if !strings.Contains(got, c.want) {
+			t.Errorf("emptyHint(%q) = %q, want %q", c.minor, got, c.want)
+		}
+	}
+}
+
 func TestRenderListJSON(t *testing.T) {
 	outputFormat = formatJSON
 	t.Cleanup(func() { outputFormat = formatTable })
