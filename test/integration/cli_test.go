@@ -507,3 +507,22 @@ func TestSetupPicksTheEnvironment(t *testing.T) {
 		t.Errorf("stderr does not name vsno-dev: %q", r.stderr)
 	}
 }
+
+// config needs no cluster at all: set, get, path and unset are one file.
+func TestConfigRoundTrip(t *testing.T) {
+	if r := run(t, "", "config", "set", "seed.sync.to", "quay.io/me/seeds"); r.code != 0 {
+		t.Fatalf("set: exit %d, stderr %q", r.code, r.stderr)
+	}
+	if r := run(t, "", "config", "get", "seed.sync.to"); r.code != 0 || strings.TrimSpace(r.stdout) != "quay.io/me/seeds" {
+		t.Errorf("get: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+	if r := run(t, "", "config", "path"); r.code != 0 || !strings.HasSuffix(strings.TrimSpace(r.stdout), filepath.Join("vsno", "config")) {
+		t.Errorf("path: exit %d, stdout %q", r.code, r.stdout)
+	}
+	if r := run(t, "", "config", "unset", "seed.sync.to"); r.code != 0 {
+		t.Fatalf("unset: exit %d, stderr %q", r.code, r.stderr)
+	}
+	if r := run(t, "", "config", "get", "seed.sync.to"); r.code == 0 {
+		t.Errorf("get after unset: exit 0, stdout %q", r.stdout)
+	}
+}

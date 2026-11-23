@@ -45,6 +45,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   - `progress.go`: `newProgress()` returns a `ui.Progress` on stderr, disabled for `-o json`,
     plus the adapter to the `precheck.Progress` interface.
   - `version.go`: `vsno version`.
+  - `config.go`: `vsno config` (list, `path`, `get`, `set`, `unset`) over `lib/config`; nothing
+    secret is ever stored, only paths to credentials files.
 - `lib/kube`: builds client-go typed and dynamic clients from a kubeconfig (explicit path, then
   `$KUBECONFIG`, then `~/.kube/config`), and wraps the config's `WrapTransport` so `lib/trace` sees
   every request.
@@ -54,6 +56,10 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   reports instead; `ScriptCommands` pulls the `oc`/`ssh` lines out of an embedded script for display,
   following its `case` dispatch so only the branch that runs is shown. It writes to stderr only and
   reads no body, header, stdin or auth file.
+- `lib/config`: the settings file, `$XDG_CONFIG_HOME/vsno/config` (`~/.config/vsno/config`), over
+  `go-toolbox/confkit`. `Settings` lists the keys with what each means and the environment variable
+  that overrides it; `Resolve` is the one precedence rule (flag, then environment, then file), and
+  `cmd` reads `seed.sync.*` through it. A missing file is empty, never an error.
 - `lib/precheck`: the cluster checks.
 - `lib/manifests`: embedded `templates/*.yaml.tmpl` rendered with `text/template` (`quote` for every
   value). Golden files are in `testdata/`; regenerate them with `go test ./lib/manifests -update` and

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sebrandon1/go-toolbox/cliout"
+	"github.com/sebrandon1/vsno/lib/config"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/seed"
@@ -51,7 +52,7 @@ journal) and comes back afterwards.
 The image goes to the environment's registry as seeds/<vsno>:<version>, unless
 --image names another (the host cluster's pull secret must have credentials
 for its registry). It takes about 15-30 minutes.`,
-	Args: cobra.ExactArgs(1),
+	Args: oneArg("the vSNO to make the seed image from, as `vsno list` shows it"),
 	RunE: runSeedCreate,
 }
 
@@ -68,7 +69,7 @@ It only reads, and exits non-zero if anything is missing. --install sets up
 what vsno can: the Lifecycle Agent and OADP from the vSNO's own catalog, and
 trust in the registry — the same steps vsno prepare takes — then reports
 again. seed create runs the same checks first.`,
-	Args: cobra.ExactArgs(1),
+	Args: oneArg("the vSNO to check, as `vsno list` shows it"),
 	RunE: runSeedPrecheck,
 }
 
@@ -87,7 +88,7 @@ var seedDeleteCmd = &cobra.Command{
 by <vsno>:<version>, or all of a vSNO's seeds by its name. It lists them and
 asks you to type the arguments, unless --yes. --dry-run only lists. The
 registry frees their space only when it is garbage collected.`,
-	Args: cobra.MinimumNArgs(1),
+	Args: someArgs("the seed images to delete, as `vsno seed list` shows them"),
 	RunE: runSeedDelete,
 }
 
@@ -107,7 +108,7 @@ container auth file, the first one that covers it, or --authfile; nothing is
 written to the cluster. An existing tag on the far side is left alone unless
 --overwrite. The copy runs in the builder pod, so the image never passes
 through your machine.`,
-	Args: cobra.ExactArgs(1),
+	Args: oneArg("the seed as <vsno>[:<version>], as `vsno seed list` shows it"),
 	RunE: runSeedSync,
 }
 
@@ -278,12 +279,13 @@ func runSeedSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	to, auth, ca := syncDefaults()
 	if outputFormat != formatJSON {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Copying seed image %s...\n\n", args[0])
 	}
 	res, err := seed.Sync(cmd.Context(), env, seed.SyncOptions{
-		Namespace: namespace, Seed: args[0], To: ssTo, From: ssFrom,
-		AuthFile: ssAuth, CAPath: ssCA, Insecure: ssTLS, Overwrite: ssForce,
+		Namespace: namespace, Seed: args[0], To: to, From: ssFrom,
+		AuthFile: auth, CAPath: ca, Insecure: ssTLS, Overwrite: ssForce,
 	})
 	if err != nil {
 		return err
@@ -294,6 +296,24 @@ func runSeedSync(cmd *cobra.Command, args []string) error {
 	}
 	renderSeedSync(w, res, pal)
 	return nil
+}
+
+// syncDefaults is where the copy goes and how to reach it: the flag, then the
+// environment, then the settings file. A configured destination applies only
+// when neither --to nor --from was given, so a pull never inherits a --to and
+// fail its direction check.
+func syncDefaults() (to, auth, ca string) {
+	file := configFor()
+	toSet, _ := config.SettingFor(config.SeedSyncTo)
+	authSet, _ := config.SettingFor(config.SeedSyncAuthFile)
+	caSet, _ := config.SettingFor(config.SeedSyncCA)
+	to, auth, ca = ssTo, ssAuth, ssCA
+	if ssTo == "" && ssFrom == "" {
+		to = config.Resolve(toSet, "", file, false)
+	}
+	auth = config.Resolve(authSet, auth, file, true)
+	ca = config.Resolve(caSet, ca, file, true)
+	return to, auth, ca
 }
 
 // renderSeedSync prints where one seed image went and what the far side holds.

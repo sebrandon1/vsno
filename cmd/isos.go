@@ -47,7 +47,7 @@ builder volume's usage. A vSNO brings its served ISO, its build directory and
 its DataVolume; an installer or a DataVolume brings itself.
 
 It only reads. ` + "`vsno iso list`" + ` shows everything at once.`,
-	Args: cobra.ExactArgs(1),
+	Args: oneArg("a vSNO, installer or ISO DataVolume, as `vsno iso list` shows it"),
 	RunE: runIsoInfo,
 }
 
@@ -66,7 +66,7 @@ var isoDeleteCmd = &cobra.Command{
 cached openshift-install binary, or an ISO DataVolume. Anything a vSNO still
 uses is refused — ` + "`vsno iso eject`" + ` takes an install ISO off the VM first —
 and it asks "are you sure?" unless --yes. --dry-run only lists.`,
-	Args: cobra.MinimumNArgs(1),
+	Args: someArgs("the ISOs, installers or ISO DataVolumes to delete, as `vsno iso list` shows them"),
 	RunE: runIsoDelete,
 }
 
@@ -89,7 +89,7 @@ var isoEjectCmd = &cobra.Command{
 CD-ROM and its volume from the VM, the ISO DataVolume, and the builder's copy.
 create does this itself when the install finishes; eject is for vSNOs it
 didn't, such as ones from an older vsno.`,
-	Args: cobra.ExactArgs(1),
+	Args: oneArg("the vSNO whose install ISO to eject"),
 	RunE: runIsoEject,
 }
 

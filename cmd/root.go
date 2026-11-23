@@ -126,6 +126,28 @@ func palette(w io.Writer) ui.Palette {
 	return ui.Palette{On: outputFormat != formatJSON && ui.ColorEnabled(w)}
 }
 
+// oneArg validates a command that takes exactly one positional, naming what it
+// wants: rootCmd sets SilenceUsage, so cobra's own "accepts 1 arg(s), received
+// 0" arrives without the Usage line that would say which.
+func oneArg(what string) cobra.PositionalArgs {
+	return func(_ *cobra.Command, args []string) error {
+		if len(args) != 1 {
+			return fmt.Errorf("name %s", what)
+		}
+		return nil
+	}
+}
+
+// someArgs validates a command that takes one or more positionals.
+func someArgs(what string) cobra.PositionalArgs {
+	return func(_ *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return fmt.Errorf("name %s", what)
+		}
+		return nil
+	}
+}
+
 // SetVersion is called from main with the build-time version.
 func SetVersion(v string) {
 	cliVersion = v

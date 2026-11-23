@@ -291,7 +291,9 @@ vsno seed sync seed-a:4.20.46 --from registry.example.com/seeds/seed-a:4.20.46
 ```
 
 Credentials for the registry that is not the environment's come from your container auth file (the
-one `podman login` and `docker login` write), the first one that covers it, or `--authfile`;
+one `podman login` and `docker login` write), the first one that covers it, or `--authfile`; all
+three flags fall back to `vsno config` (`seed.sync.to`, `seed.sync.authfile`, `seed.sync.ca`) when
+they are not given;
 nothing is written to the cluster. A peer registry on a private CA also needs `--ca`. An existing
 tag on the far side is left alone unless `--overwrite`. The copy runs in the builder pod, so the
 image never passes through your machine.
@@ -528,6 +530,37 @@ newest), and their ISO DataVolumes. Lists them and asks you to type `prune` unle
 | `--keep <n>` | Keep the N newest unused installers |
 | `--dry-run` | List what would be removed and change nothing |
 | `--yes` | Don't ask for confirmation |
+
+## `vsno config`
+
+Reads and writes the settings that do not change between runs, so they need not be retyped as
+flags. They live in `$XDG_CONFIG_HOME/vsno/config` (`~/.config/vsno/config`), one `KEY=VALUE` per
+line, mode `0600`. Nothing secret is stored there: a setting names the path to a credentials file,
+never its contents.
+
+A flag beats the environment, which beats the file:
+
+| Setting | Flag | Environment |
+|---|---|---|
+| `seed.sync.to` | `--to` | `VSNO_SEED_SYNC_TO` |
+| `seed.sync.authfile` | `--authfile` | `VSNO_SEED_SYNC_AUTHFILE` |
+| `seed.sync.ca` | `--ca` | `VSNO_SEED_SYNC_CA` |
+
+A configured `seed.sync.to` applies only when neither `--to` nor `--from` is given, so a pull never
+inherits a destination.
+
+| Subcommand | What it does |
+|---|---|
+| [`config`](#vsno-config) | List the settings, their values and where each came from |
+| [`config path`](#vsno-config) | Print the file's path |
+| `config get <key>` | Print one setting; exits non-zero when it is not set |
+| `config set <key> <value>` | Set one setting, keeping the file's comments and order |
+| `config unset <key>` | Forget one setting |
+
+```bash
+vsno config set seed.sync.to quay.io/me/seeds
+vsno seed sync seed-a:4.22.22
+```
 
 ## `vsno teardown`
 
