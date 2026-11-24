@@ -577,6 +577,23 @@ vsno config set seed.sync.to quay.io/me/seeds
 vsno seed sync seed-a:4.22.22
 ```
 
+## `vsno report`
+
+Reads the environment once and writes everything a bug report or a demo wants as one document: the
+status (with its `next` line), the vSNOs, the release cache and the registry volume, the seed images,
+the builder's leftovers, and a `warnings` list for whatever could not be read. JSON unless
+`--markdown`. Nothing it writes carries credentials: registry logins, S3 keys and the pull secret are
+named, never quoted.
+
+```bash
+vsno report > vsno-report.json
+vsno report --markdown > vsno-report.md
+```
+
+| Flag | Meaning |
+|---|---|
+| `--markdown` | Write Markdown tables instead of JSON |
+
 ## `vsno teardown`
 
 Deletes the environment namespace: its VMs, support services, volumes and generated credentials.
