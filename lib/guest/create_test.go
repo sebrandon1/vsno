@@ -459,6 +459,21 @@ func TestCreateNoCacheWithoutARegistry(t *testing.T) {
 	}
 }
 
+// The CA is a convenience, never a reason to fail a create.
+func TestEnvironmentCA(t *testing.T) {
+	if got := environmentCA(context.Background(), Env{}, ns); got != "" {
+		t.Errorf("no cluster = %q, want \"\"", got)
+	}
+	w := newWorld(t)
+	if got := environmentCA(context.Background(), w.env(), ns); got != "" {
+		t.Errorf("no registry = %q, want \"\"", got)
+	}
+	giveRegistry(t, w)
+	if got := environmentCA(context.Background(), w.env(), ns); !strings.Contains(got, "BEGIN CERTIFICATE") {
+		t.Errorf("CA = %q, want the registry's", got)
+	}
+}
+
 // giveRegistry adds the registry's credentials and CA to the world.
 func giveRegistry(t *testing.T, w *world) {
 	t.Helper()
