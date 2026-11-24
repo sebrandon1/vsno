@@ -158,7 +158,8 @@ func TestUpgradeSeed(t *testing.T) {
 	t.Run("the same image installed two ways", TestUpgradeSeedSameImageInstalledTwoWays)
 	t.Run("seed vSNO stopped", func(t *testing.T) {
 		res, err := upgrade(t, &lca{Fake: targetFake()}, UpgradeOptions{}, nil)
-		if err != nil || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "can't read the seed vSNO shiny-crane") {
+		if err != nil || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "can't read the seed vSNO shiny-crane") ||
+			!strings.Contains(res.Warnings[0], "`vsno start shiny-crane` makes the comparison possible") {
 			t.Errorf("err = %v, warnings = %q", err, res.Warnings)
 		}
 	})
