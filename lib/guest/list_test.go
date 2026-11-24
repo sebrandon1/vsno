@@ -298,3 +298,34 @@ func TestObserveWithoutAClock(t *testing.T) {
 		t.Errorf("without a clock: %+v", o)
 	}
 }
+
+// A Service that has waited longer than any ISO build is the relic of a create
+// that died, and says so.
+func TestListMarksAnAbandonedService(t *testing.T) {
+	w := newWorld(t)
+	s := svc("gone", "172.30.1.9")
+	s.Labels = map[string]string{LabelName: "gone"}
+	s.CreationTimestamp = metav1.NewTime(time.Now().Add(-time.Hour))
+	if _, err := w.kube.CoreV1().Services(ns).Create(context.Background(), s, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := List(context.Background(), w.env(), ns)
+	if err != nil || len(got) != 1 || got[0].State != Abandoned {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	if !strings.Contains(got[0].Detail, "vsno delete gone") {
+		t.Errorf("detail = %q, want the delete hint", got[0].Detail)
+	}
+	// A fresh one is still building.
+	w2 := newWorld(t)
+	s2 := svc("new", "172.30.1.8")
+	s2.Labels = map[string]string{LabelName: "new"}
+	s2.CreationTimestamp = metav1.NewTime(time.Now().Add(-time.Minute))
+	if _, err := w2.kube.CoreV1().Services(ns).Create(context.Background(), s2, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = List(context.Background(), w2.env(), ns)
+	if err != nil || len(got) != 1 || got[0].State != Building {
+		t.Errorf("fresh service: %+v, %v", got, err)
+	}
+}

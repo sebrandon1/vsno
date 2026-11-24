@@ -14,6 +14,7 @@ type State string
 
 const (
 	Building   State = "building-iso"  // create is building the agent ISO; no VM yet
+	Abandoned  State = "abandoned"     // a Service with no VM behind it, older than any build
 	Importing  State = "importing-iso" // CDI is copying the ISO into the cluster
 	Starting   State = "starting"      // the VM is scheduling or booting
 	Installing State = "installing"    // the agent installer runs, before the first reboot
