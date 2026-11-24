@@ -36,6 +36,11 @@ const (
 	seedFloorWarn = 5 << 30
 )
 
+// RoomFail and RoomWarn are the free-space floors a seed generation needs in
+// the environment's registry, for callers outside this package (vsno doctor).
+func RoomFail() int64 { return seedFloorFail }
+func RoomWarn() int64 { return seedFloorWarn }
+
 // PrecheckOptions are the user's choices for vsno seed precheck.
 type PrecheckOptions struct {
 	Namespace string
