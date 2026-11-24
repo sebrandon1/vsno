@@ -189,3 +189,20 @@ func TestSettingFor(t *testing.T) {
 		t.Error("SettingFor(nope) found something")
 	}
 }
+
+// A value is one line: a line break would add a line to the file, which could
+// name another setting.
+func TestSetRefusesLineBreaks(t *testing.T) {
+	path := isolate(t)
+	for _, v := range []string{"a\nb", "a\rb", "a\nseed.sync.ca=/etc/evil"} {
+		if err := Set(SeedSyncTo, v); err == nil || !strings.Contains(err.Error(), "line break") {
+			t.Errorf("Set(%q) = %v, want a refusal", v, err)
+		}
+	}
+	if b, err := os.ReadFile(path); err == nil && strings.Contains(string(b), "seed.sync.ca") {
+		t.Errorf("a line break smuggled a setting in:\n%s", b)
+	}
+	if v, ok, _ := Get(SeedSyncTo); ok {
+		t.Errorf("the refused value was written: %q", v)
+	}
+}
