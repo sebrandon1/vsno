@@ -237,8 +237,13 @@ func finish(g *Guest, o *Observed) {
 	g.IBU = p.IBU.Text()
 }
 
+// abandonGrace is how long a Service may wait for its VM before it is taken to
+// be the relic of a create that died. An ISO build takes one to three minutes.
+const abandonGrace = 10 * time.Minute
+
 // buildingISO returns the vSNOs that have a Service but no VM yet: create
-// adds the Service first, then builds the ISO, then makes the VM.
+// adds the Service first, then builds the ISO, then makes the VM. One that has
+// waited longer than any build is abandoned, not building.
 func buildingISO(ctx context.Context, e Env, ns string, have []Guest) ([]Guest, error) {
 	svcs, err := e.Kube.CoreV1().Services(ns).List(ctx, metav1.ListOptions{LabelSelector: LabelName})
 	if err != nil {
@@ -250,9 +255,14 @@ func buildingISO(ctx context.Context, e Env, ns string, have []Guest) ([]Guest, 
 		if slices.ContainsFunc(have, func(g Guest) bool { return g.Name == name }) {
 			continue
 		}
-		out = append(out, Guest{Namespace: ns, Name: name, State: Building, Requested: s.Annotations[AnnRequested],
+		g := Guest{Namespace: ns, Name: name, State: Building, Requested: s.Annotations[AnnRequested],
 			Version: s.Annotations[AnnVersion], Image: s.Annotations[AnnImage],
-			ServiceIP: s.Spec.ClusterIP, API: API(name), Created: s.CreationTimestamp.Time})
+			ServiceIP: s.Spec.ClusterIP, API: API(name), Created: s.CreationTimestamp.Time}
+		if !g.Created.IsZero() && e.Now().Sub(g.Created) > abandonGrace {
+			g.State = Abandoned
+			g.Detail = "no VM and no build; `vsno delete " + name + "` cleans it up"
+		}
+		out = append(out, g)
 	}
 	return out, nil
 }

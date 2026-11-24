@@ -27,8 +27,8 @@ var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
 	Short:   "List the vSNOs and what's left on their node",
-	Long: `list shows each vSNO in the environment: its state (importing-iso, starting,
-installing, finishing, making-seed, ready, stopped, failed), OpenShift version,
+	Long: `list shows each vSNO in the environment: its state (building-iso, importing-iso,
+starting, installing, finishing, making-seed, ready, stopped, failed, abandoned), OpenShift version,
 size, age and API, plus a footer with the memory left on the node and how many
 more default-size vSNOs fit. Running vSNOs are asked for their state through
 the builder pod. A state that is really progress — a control plane still
@@ -204,7 +204,7 @@ func stateText(pal ui.Palette, s guest.State) string {
 	switch s {
 	case guest.Ready:
 		return pal.Green(string(s))
-	case guest.Failed:
+	case guest.Failed, guest.Abandoned:
 		return pal.Red(string(s))
 	case guest.Stopped, guest.Unknown:
 		return pal.Dim(string(s))

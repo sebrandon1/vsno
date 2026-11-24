@@ -151,8 +151,9 @@ in the cluster pull secret.
 
 ## `vsno list`
 
-Shows each vSNO's state (`importing-iso`, `starting`, `installing`, `finishing`, `making-seed`,
-`ready`, `stopped`, `failed`), version, size, age and API, plus a footer with the memory left on the
+Shows each vSNO's state (`building-iso`, `importing-iso`, `starting`, `installing`, `finishing`,
+`making-seed`, `ready`, `stopped`, `failed`, `abandoned` — a Service with no VM behind it, older than
+any build, which `vsno delete` cleans up), version, size, age and API, plus a footer with the memory left on the
 node and how many more default-size vSNOs fit, and one `Next:` line with what they are ready for, as
 `vsno status` reports it. Alias: `ls`.
 
