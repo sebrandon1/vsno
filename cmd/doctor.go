@@ -28,7 +28,7 @@ something vsno knows about:
 It only reads unless --fix is given, and --fix runs only two reversible
 actions: enabling crio and kubelet on such a vSNO, and the status patch that
 unsticks LCA's Idle condition. It never deletes anything.`,
-	Args: someArgs("the vSNOs to check, as `vsno list` shows them"),
+	Args: cobra.ArbitraryArgs, // names are optional: none means every vSNO and the environment
 	RunE: runDoctor,
 }
 
@@ -49,6 +49,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	env.Defaults(namespace) // --fix needs env.Access after Run returns
 	findings, err := doctor.Run(cmd.Context(), doctor.Env{Env: env}, namespace, args)
 	if err != nil {
 		return err

@@ -18,6 +18,11 @@ func volumeLeaks(ctx context.Context, e Env, ns string) ([]Finding, error) {
 	}
 	var out []Finding
 	for _, pv := range pvs {
+		// Before a teardown every volume is Bound and in use: only a Released
+		// one has lost its claim and is holding a disk for nothing.
+		if pv.Phase != "Released" {
+			continue
+		}
 		out = append(out, Finding{
 			Result: precheck.Result{Group: "doctor", Check: "storage",
 				Status: precheck.Warn,
