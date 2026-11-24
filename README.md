@@ -8,27 +8,34 @@ One workflow built on top of that is testing
 [lifecycle-agent](https://github.com/openshift-kni/lifecycle-agent) **Image Based Upgrades (IBU)**
 between two vSNOs.
 
-> **Status:** all milestones are done: `precheck`, `setup`, `status`, `teardown`, the vSNO lifecycle
-> (`create`, `list`, `delete`, `start`, `stop`, `oc`, `ssh`, `kubeconfig`, `screenshot`), seed
-> images, fast creates from an in-cluster release cache, Image Based Upgrades (`prepare`, `upgrade`),
-> testing lifecycle-agent branches in them, `vsno run` for the whole flow, and `vsno snapshot` to
-> bring an installed vSNO back in about a minute instead of installing it.
->
-> New here? Read the **[How-To guide](docs/howto.md)**: a copy-and-paste walkthrough from precheck
-> to teardown. Bugs and ideas are tracked in the
-> [issue tracker](https://github.com/sebrandon1/vsno/issues).
+New here? The **[How-To guide](docs/howto.md)** is a copy-and-paste walkthrough. Bugs and ideas are
+in the [issue tracker](https://github.com/sebrandon1/vsno/issues).
 
 ## Quick start
 
+Nothing to configure: `setup` uses the node, disk and channels `precheck` suggests.
+
 ```bash
 go install github.com/sebrandon1/vsno@latest   # or download a release binary
-vsno precheck                                   # can this cluster host vSNOs?
-vsno precheck --write-config vsno.yaml          # ...and save the suggested settings
-vsno setup --config vsno.yaml                   # install what vSNOs need
-vsno create seed --version 4.22 --watch         # one vSNO; ~45 minutes
-vsno list                                       # state, version, size, API
-vsno run                                        # ...or the whole IBU from a kubeconfig
+
+export KUBECONFIG=~/kubeconfigs/host-cluster   # the cluster that will host the vSNOs
+vsno precheck                                  # can it host vSNOs?  ~1 minute
+vsno setup                                     # install what they need; answer its prompts
+vsno create seed --version 4.22 --watch        # first vSNO;  ~45 minutes
+vsno list                                      # state, version, size, API, free capacity
 ```
+
+Work on that vSNO with `vsno oc seed`, `vsno ssh seed` or `vsno kubeconfig seed`; or run a whole
+IBU:
+
+```bash
+vsno run                    # a seed and a target vSNO, a seed image, the upgrade; shows the plan first
+vsno run --yes --finalize   # for CI: no questions, and finalize at the end
+```
+
+To pin the choices instead of taking precheck's suggestion, pass them to `setup` (`--node worker-1
+--device /dev/disk/by-id/<id>`), or save them once with `vsno precheck --write-config vsno.yaml` and
+pass `--config vsno.yaml`.
 
 `vsno version` (or `vsno --version`) prints the build version.
 
@@ -38,7 +45,8 @@ vsno run                                        # ...or the whole IBU from a kub
 |---|---|
 | `vsno precheck` | Check whether this cluster can host vSNOs, and suggest settings |
 | `vsno setup` | Install what vSNOs need on the host cluster |
-| `vsno status` | Show the state of a vSNO environment |
+| `vsno status` | Show the state of a vSNO environment (`--watch` to refresh) |
+| `vsno config` | Remember settings between runs: `namespace`, `output`, seed sync |
 | `vsno create [name] --version <v>` | Create a vSNO (`--from-snapshot` to restore one) |
 | `vsno list` | List the vSNOs and what's left on their node |
 | `vsno start` / `vsno stop` | Start or stop a vSNO, keeping its disk |
@@ -49,6 +57,8 @@ vsno run                                        # ...or the whole IBU from a kub
 | `vsno seed create` / `list` / `delete` / `precheck` | Make and manage seed images |
 | `vsno upgrade` | Upgrade a vSNO with an Image Based Upgrade |
 | `vsno run` | Do a whole Image Based Upgrade from only a kubeconfig |
+| `vsno doctor` | Find the states that make an environment look broken (`--fix` for the two safe ones) |
+| `vsno report` | Write everything about the environment as one JSON or Markdown document |
 | `vsno snapshot create` / `list` / `delete` | Keep a vSNO's disk, and create from it |
 | `vsno cache add` / `list` / `prune` / `gc` | Manage the mirrored OpenShift releases |
 | `vsno iso list` / `info` / `delete` / `eject` / `prune` | Clean up what creates leave behind |
@@ -56,6 +66,20 @@ vsno run                                        # ...or the whole IBU from a kub
 | `vsno version` | Print the vsno version |
 
 Every command's flags are in **[docs/commands.md](docs/commands.md)**.
+
+## When something looks wrong
+
+```bash
+vsno status                 # components, support services, vSNOs, recent stages
+vsno doctor                 # the known broken states, and the way out of each
+vsno doctor --fix           # the two reversible fixes only; it never deletes
+vsno report --markdown      # the whole environment in one document, for a bug report or a demo
+```
+
+`vsno doctor` names each state it knows — a stuck IBU `Idle` condition, a seed generation nothing is
+following, a vSNO a stopped generation left with `crio` and `kubelet` disabled, a `Released`
+PersistentVolume, a registry under the seed floor — and says how to clear it. The
+[How-To guide](docs/howto.md#9-when-something-looks-wrong) has the rest.
 
 ## Guides
 

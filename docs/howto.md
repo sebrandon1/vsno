@@ -44,14 +44,17 @@ vsno precheck
 ```
 
 It reports what it found and what to change, and exits non-zero when something is missing. When it
-passes, save the suggested settings:
+passes, there is nothing to save: `setup` runs precheck again and takes the same suggestion.
+
+To review or pin the choices instead, write them once and pass the file:
 
 ```bash
 vsno precheck --write-config vsno.yaml
+vsno setup --config vsno.yaml
 ```
 
-`vsno.yaml` holds the node, the LVMS disk and the sizes precheck suggests. `setup` reads it with
-`--config`; `run` takes the same choices from its own flags (`--node`, `--device`, `--cores`,
+`vsno.yaml` holds the node, the LVMS disk and the sizes precheck suggests. `setup` takes the same
+choices as flags too (`--node`, `--device`), and so does `run` (`--node`, `--device`, `--cores`,
 `--memory`).
 
 ## 2. Set up the environment
@@ -62,10 +65,10 @@ See what setup would do first:
 vsno setup --dry-run
 ```
 
-Then run it:
+Then run it, with no settings file:
 
 ```bash
-vsno setup --config vsno.yaml
+vsno setup
 ```
 
 Setup installs OpenShift Virtualization and LVM Storage if they are not already there (reusing them
@@ -82,8 +85,9 @@ vsno setup --registry-size 200Gi            # room for more mirrored releases
 vsno setup --memory-overcommit 150          # fit more vSNOs (changes every VM on the host)
 ```
 
-`setup` only takes over a namespace vsno did not create when you say `--force`, so it cannot
-overwrite a hand-built environment by accident.
+Taking over the LVMS disk asks you to type the node name, since it erases the disk; `--yes` answers
+that for you in a script. `setup` only takes over a namespace vsno did not create when you say
+`--force`, so it cannot overwrite a hand-built environment by accident.
 
 Check it any time:
 
@@ -120,6 +124,7 @@ vsno list --watch
 | `ready` | the vSNO's cluster is up |
 | `stopped` | stopped on purpose (`vsno stop`) |
 | `failed` | the install or the VM failed; DETAIL says why |
+| `abandoned` | a `create` that died before its VM existed; `vsno delete <name>` clears it |
 | `deleting` | being deleted |
 
 Useful options:
@@ -271,12 +276,21 @@ saying yes.
 
 ```bash
 vsno status                      # components, support services, vSNOs, recent stages, cache
+vsno doctor                      # the known broken states, and the command that clears each
+vsno doctor <name> --fix         # the two reversible fixes only; it never deletes
+vsno report --markdown           # everything at once, for a bug report or a demo
 vsno list -o json                # every field, including the ClusterVersion's own message
 vsno oc <name> -- get clusteroperators
 vsno oc <name> -- get imagebasedupgrades
 vsno oc <name> get pods -n openshift-lifecycle-agent
 vsno screenshot <name> --file console.png
 ```
+
+`vsno doctor` covers the states that read as a hang but are known: an `ImageBasedUpgrade` whose
+`Idle` condition is stuck at a reason the Lifecycle Agent's controller does not act on, a seed
+generation nothing is following, a vSNO a stopped generation left with `crio` and `kubelet`
+disabled, a `Released` PersistentVolume still holding the environment's disk, and a registry too
+full for the next seed image.
 
 - `finishing` with "control plane rolling out" during a fresh install is normal; the CVO reports
   errors that clear themselves while it applies. After 20 minutes the DETAIL shows the CVO's
@@ -302,7 +316,8 @@ vsno screenshot <name> --file console.png
 |---|---|
 | `precheck` | checks the host cluster can host vSNOs, and suggests settings |
 | `setup` | installs OpenShift Virtualization, LVM Storage and the environment |
-| `status` | reports the environment's state without changing it |
+| `status` | reports the environment's state without changing it (`--watch`) |
+| `config` | shows and changes the settings vsno remembers between runs |
 | `create` | creates a vSNO (`--version`, `--from-snapshot`, `--watch`) |
 | `list` | lists vSNOs and the node's remaining capacity |
 | `start`, `stop` | power a vSNO while keeping its disk |
@@ -312,6 +327,8 @@ vsno screenshot <name> --file console.png
 | `seed` | makes, lists and deletes seed images |
 | `upgrade` | runs, finalizes, rolls back or aborts an IBU on a target |
 | `run` | the whole IBU from a kubeconfig, resumable, with `--restart` |
+| `doctor` | finds the known broken states and fixes the two reversible ones |
+| `report` | writes everything about the environment in one JSON or Markdown document |
 | `snapshot` | keeps a vSNO's disk and restores a vSNO from it |
 | `cache` | lists and prunes the mirrored releases |
 | `iso` | lists, deletes and prunes what installs leave behind |

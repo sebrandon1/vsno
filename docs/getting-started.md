@@ -109,9 +109,16 @@ have a `node`, and `nodes` lists each evaluated worker with `eligible`.
 ## setup: prepare the host cluster
 
 ```bash
-vsno precheck --write-config vsno.yaml   # review the suggested node and disk
-vsno setup --config vsno.yaml
 vsno setup --dry-run                     # list what setup would do, change nothing
+vsno setup                               # the node, disk and channels precheck suggests
+```
+
+The suggestion is usually right, so no settings file is needed. To review it first, or keep it for
+a later run:
+
+```bash
+vsno precheck --write-config vsno.yaml   # the suggested node, disk and channels
+vsno setup --config vsno.yaml
 ```
 
 `setup` installs what the vSNOs need on the host cluster:
@@ -200,6 +207,13 @@ vsno status -o json
 - the last five stages recorded in `vsno-state`
 
 It exits non-zero when the namespace is missing or a component is missing or failing.
+
+`vsno doctor` picks up where `status` stops: it looks for the states that are not visible as a
+failing component but make an environment look broken — a stuck IBU `Idle` condition, a seed
+generation nothing is following, a vSNO left with `crio` and `kubelet` disabled, a `Released`
+PersistentVolume, a registry under the seed floor — and prints the command that clears each.
+`vsno report` writes the same picture as one JSON (or `--markdown`) document, with the credentials
+named but never quoted.
 
 ## teardown
 
