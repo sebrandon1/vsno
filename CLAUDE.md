@@ -120,7 +120,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   Progress that would read as failure has a state of its own: `finishing` says "control plane
   rolling out" while the CVO's message is fresh (the raw message is `Guest.CVMessage`, in `-o json`
   and `vsno status`), and `making-seed` comes from the `vsno.io/seeding` annotation `seed.Create`
-  sets while LCA has the guest's services stopped.
+  sets while LCA has the guest's services stopped. `SeedingSince` is the one reading of that mark
+  (recent within an hour), shared with `seed create`, which refuses a second generation on it.
   Golden files in `testdata/` (`go test ./lib/guest -update`).
 - `lib/guestctl`: running things on a vSNO, shared by `lib/seed` and `lib/ibu`: `Access` (oc and
   ssh; `ThroughBuilder` reaches the guest through the builder pod), `Get` (oc ... -o json),
@@ -158,9 +159,12 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   and with `Install` sets up what it can; `EnsureReady` (`prep.go`) is the one definition of that —
   LCA, OADP and registry trust — used by `Precheck`, `Create` and `lib/ibu.Prepare`, so the commands
   cannot disagree (LCA's prerequisites have OADP on the seed too: `OADP`, `OADPNamespace`).
-  `Create` runs the precheck first, then drives the Lifecycle Agent (`waitStable`, `generate`,
-  `finish`); while the guest API is down it reads progress from the node's
-  `lca-generate-seed-image` unit. `List`/`Delete` talk to the
+  `Create` refuses a generation already running (`checkSeedGen`: LCA's SeedGenerator, or the mark
+  when the guest's API is down), runs the precheck, then drives the Lifecycle Agent (`waitStable`,
+  `generate`, `finish`); while the guest API is down it reads progress from the node's
+  `lca-generate-seed-image` unit. The mark is cleared only once the SeedGenerator says the
+  generation ended (`seedGenEnded`, read with the run's cancellation dropped), so an interrupted
+  `create` leaves the vSNO reading `making-seed` instead of `unknown` while LCA finishes. `List`/`Delete` talk to the
   environment's registry through `scripts/registry.sh` (skopeo + curl, credentials on stdin) from the
   builder. Templates and the script are embedded; goldens in `testdata/`.
 - `lib/registry`: the environment's in-cluster OCI registry. `Registry{Host,User,Password,CA}`,

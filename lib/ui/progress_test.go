@@ -132,6 +132,7 @@ func TestTTYRedrawFitsTerminal(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	s.Done("2 probed")
 
+	shortened := false
 	for _, redraw := range strings.Split(b.String(), "\r\033[K")[1:] {
 		if strings.HasSuffix(redraw, "\n") {
 			continue // the final line is printed once, so it may wrap
@@ -139,9 +140,19 @@ func TestTTYRedrawFitsTerminal(t *testing.T) {
 		if n := len([]rune(redraw)); n > 39 {
 			t.Errorf("redraw is %d characters on a 40-column terminal: %q", n, redraw)
 		}
-		if !strings.Contains(redraw, "…") || !strings.HasSuffix(redraw, "s)") {
-			t.Errorf("want the node name shortened and the elapsed time kept: %q", redraw)
+		if !strings.HasSuffix(redraw, "s)") {
+			t.Errorf("want the elapsed time kept: %q", redraw)
 		}
+		// The spinner draws once as soon as the step starts, and on a busy
+		// machine that lands before Update does: only a redraw carrying the
+		// detail has a node name to shorten.
+		if strings.Contains(redraw, "a-very-long-node-name") {
+			t.Errorf("the node name wasn't shortened: %q", redraw)
+		}
+		shortened = shortened || strings.Contains(redraw, "…")
+	}
+	if !shortened {
+		t.Errorf("no redraw shortened the node name: %q", b.String())
 	}
 }
 

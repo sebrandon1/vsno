@@ -129,6 +129,10 @@ var vmErrors = []string{"ErrorUnschedulable", "ErrImagePull", "ImagePullBackOff"
 // agentFailed are agent installer statuses the install doesn't recover from.
 var agentFailed = []string{"error", "cancelled"} //nolint:misspell // the installer's spelling
 
+// seedDetail is what list says while LCA has a vSNO's services stopped for a
+// seed image: the probe gets no answer, and saying only that reads as a fault.
+const seedDetail = "LCA has the guest's services stopped for the seed image"
+
 // rolloutGrace is how long a fresh install's ClusterVersion may report
 // Progressing errors before the raw message is worth showing: the CVO says
 // "Unable to apply ... MultipleErrors" while a replacement pod cannot schedule
@@ -155,6 +159,8 @@ func Classify(o Observed) (State, string) {
 		return Starting, "" // meant to run, and about to
 	case o.VMStatus != "Running":
 		return Starting, o.VMStatus
+	case o.Seeding && o.Probe == nil:
+		return MakingSeed, seedDetail
 	case o.Probe == nil:
 		return Unknown, "not probed"
 	}
@@ -190,7 +196,7 @@ func classifyProbe(o Observed) (State, string) {
 	case p.CV != nil:
 		return finishingFromCV(o, p)
 	case p.Agent == nil && o.Seeding:
-		return MakingSeed, ""
+		return MakingSeed, seedDetail
 	case p.Agent == nil:
 		return Unknown, "no answer from the installer or API"
 	case slices.Contains(agentFailed, p.Agent.Status):

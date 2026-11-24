@@ -256,8 +256,8 @@ func TestListNamesProgress(t *testing.T) {
 		!strings.Contains(got[0].CVMessage, "MultipleErrors") {
 		t.Errorf("rolling = %+v, want finishing while the rollout is fresh", got[0])
 	}
-	if got[1].State != MakingSeed || got[1].Detail != "" {
-		t.Errorf("seeding = %+v, want making-seed", got[1])
+	if got[1].State != MakingSeed || !strings.Contains(got[1].Detail, "services stopped for the seed image") {
+		t.Errorf("seeding = %+v, want making-seed with what LCA is doing", got[1])
 	}
 }
 
@@ -274,8 +274,9 @@ func TestSeeding(t *testing.T) {
 		{now.Add(-2 * time.Hour).Format(time.RFC3339), now, false},
 		{now.Format(time.RFC3339), time.Time{}, false},
 	} {
-		if got := seeding(c.v, c.now); got != c.want {
-			t.Errorf("seeding(%q) = %v, want %v", c.v, got, c.want)
+		at, got := SeedingSince(c.v, c.now)
+		if got != c.want || (got && at.IsZero()) {
+			t.Errorf("SeedingSince(%q) = %v, %v, want %v", c.v, at, got, c.want)
 		}
 	}
 }

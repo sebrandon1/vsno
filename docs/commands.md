@@ -266,7 +266,8 @@ as `seeds/<vSNO>:<version>`.
 Turns a ready vSNO into a seed image: waits for the cluster to settle, installs the Lifecycle Agent
 from the vSNO's own catalog if missing, makes the vSNO trust the registry, then runs LCA's seed
 generation and follows it. The image lands in the registry as `seeds/<vsno>:<version>`. Takes about
-15–30 minutes.
+15–30 minutes. A generation already running on the vSNO is refused before that, in a second.
+Interrupting `create` does not stop LCA's generation: the vSNO reads `making-seed` until it ends.
 
 | Flag | Meaning |
 |---|---|

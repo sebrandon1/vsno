@@ -49,6 +49,11 @@ const (
 func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
 	e.Defaults(o.Namespace)
 	res := &Result{Name: o.Name, Image: o.Image}
+	// Before the precheck: it spends minutes on the vSNO, and a generation that
+	// is already running is one `oc get seedgenerator` away.
+	if err := checkSeedGen(ctx, e, o.Namespace, o.Name); err != nil {
+		return res, err
+	}
 	var reg Registry
 	if err := guestctl.Step(e.Progress, "Checking "+o.Name, func(precheck.ProgressStep) (string, error) {
 		// Install is what makes this command do what its help says: a vSNO
@@ -73,7 +78,12 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Result, error) {
 		start := e.Now()
 		setSeeding(ctx, e, o.Namespace, o.Name, start)
 		err := generate(ctx, e, a, res.Image, auth, ps)
-		setSeeding(ctx, e, o.Namespace, o.Name, time.Time{})
+		// An interrupted run leaves LCA generating on the node, with the guest's
+		// services stopped: the mark has to stay until the SeedGenerator says the
+		// generation ended, or `vsno list` reads the silence as a fault.
+		if seedGenEnded(ctx, a) {
+			setSeeding(context.WithoutCancel(ctx), e, o.Namespace, o.Name, time.Time{})
+		}
 		res.Duration = e.Now().Sub(start).Round(time.Second)
 		return fmt.Sprintf("%s in %s", res.Image, res.Duration), err
 	}); err != nil {
@@ -311,6 +321,66 @@ func generate(ctx context.Context, e Env, a Access, image, auth string, ps prech
 		return fmt.Errorf("seed generation not finished after %s; it may still finish (`vsno oc <name> -- get seedgenerator seedimage`)", e.Timeout)
 	}
 	return err
+}
+
+// seedGenQuery is the SeedGenerator read that answers "is one running?", asked
+// ahead of the precheck with a timeout short enough to refuse in seconds.
+const seedGenQuery = "--request-timeout=15s"
+
+// seedGen reads the SeedGenerator LCA runs: found is false when there is none,
+// and err when the guest's API doesn't answer.
+func seedGen(ctx context.Context, a Access) (sg guestctl.Object, found bool, err error) {
+	found, err = guestctl.Get(ctx, a, &sg, "get", "seedgenerators", "seedimage", "--ignore-not-found", seedGenQuery)
+	return sg, found, err
+}
+
+// checkSeedGen refuses a second generation before the precheck spends minutes
+// on the vSNO. LCA's SeedGenerator is the answer while the guest's API is up;
+// while it is down — which a generation causes — the mark vsno left on the VM
+// is. A generation that ended while nothing followed it leaves a stale mark,
+// which is cleared.
+func checkSeedGen(ctx context.Context, e Env, ns, name string) error {
+	if sg, found, err := seedGen(ctx, e.Access(name)); err == nil && found {
+		if p, msg := phaseOf(sg); p == sgRunning {
+			return fmt.Errorf("a seed generation is already running on the vSNO: %s", msg)
+		}
+		setSeeding(ctx, e, ns, name, time.Time{}) // it ended while nothing was following it
+		return nil
+	}
+	// No SeedGenerator to read, or no answer at all: the mark is what is left.
+	at, ok := seedingMark(ctx, e, ns, name)
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf("vsno marked a seed generation on the vSNO as started %s ago, and its SeedGenerator can't be read: "+
+		"LCA is still generating. `vsno list` follows it; run this again when it ends", e.Now().Sub(at).Round(time.Second))
+}
+
+// seedingMark is when vsno marked the vSNO as generating, if the mark is recent
+// enough to mean the generation is running now.
+func seedingMark(ctx context.Context, e Env, ns, name string) (time.Time, bool) {
+	vm, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return time.Time{}, false
+	}
+	return guest.SeedingSince(vm.GetAnnotations()[guest.AnnSeeding], e.Now())
+}
+
+// seedGenEnded reports whether the SeedGenerator LCA runs is gone or finished.
+// It reads with the run's cancellation dropped: the mark must be cleared only
+// when the generation really ended, and a canceled context reaches nothing.
+func seedGenEnded(ctx context.Context, a Access) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	defer cancel()
+	sg, found, err := seedGen(ctx, a)
+	if err != nil {
+		return false // can't tell: keep the mark, which list treats as recent for an hour
+	}
+	if !found {
+		return true
+	}
+	p, _ := phaseOf(sg)
+	return p != sgRunning
 }
 
 // setSeeding marks the vSNO's VM while seed generation runs: LCA stops the
