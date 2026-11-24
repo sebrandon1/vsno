@@ -79,6 +79,10 @@ outside the environment's registry, pass its reference and `--seed-version`.
 5. It prints the identity before and after, which must differ only in version, and how long each
    stage and phase took.
 
+When an upgrade looks stuck, `vsno doctor <target>` names the states that cause it — an `Idle`
+condition LCA's controller does not act on, a seed generation nothing is following, a vSNO left
+with `crio` and `kubelet` disabled — and prints the command that clears each.
+
 `--finalize` then moves to Idle, dropping the old version; `--rollback` goes back to it. Run again
 with the same seed, upgrade carries on from where the target is, so an upgrade can be finalized or
 rolled back later. A target part way through with another seed is refused. `vsno list` shows a

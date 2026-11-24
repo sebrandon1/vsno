@@ -58,9 +58,10 @@ it. A vSNO created with `--watch` records how long each phase took; `list -o wid
 `list` shows every vSNO in every vsno environment, with a NAMESPACE column: the namespaces vsno
 labeled, plus any that hold the builder pod (an environment assembled by hand predates the label).
 `-n` narrows it to one. Each row has the vSNO's state, version, size, age and API, and the footer
-says how many more default-size vSNOs fit on each node. The states are `importing-iso`, `starting`,
-`installing` (with the installer's progress), `finishing`, `making-seed`, `ready`, `stopped`,
-`failed` and `deleting`.
+says how many more default-size vSNOs fit on each node. The states are `building-iso` (the ISO is
+being built; no VM yet), `importing-iso`, `starting`, `installing` (with the installer's progress),
+`finishing`, `making-seed`, `ready`, `stopped`, `failed`, `abandoned` (a `create` that died before
+its VM existed; `vsno delete <name>` clears it) and `deleting`.
 
 Two states are progress that would otherwise read as a failure: `finishing` says "control plane
 rolling out" while the ClusterVersion is not Available yet, and `making-seed` covers seed
