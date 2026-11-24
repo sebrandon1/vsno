@@ -557,11 +557,15 @@ A flag beats the environment, which beats the file:
 
 | Setting | Flag | Environment |
 |---|---|---|
+| `namespace` | `-n` | `VSNO_NAMESPACE` |
+| `output` | `-o` | `VSNO_OUTPUT` |
 | `seed.sync.to` | `--to` | `VSNO_SEED_SYNC_TO` |
 | `seed.sync.authfile` | `--authfile` | `VSNO_SEED_SYNC_AUTHFILE` |
 | `seed.sync.ca` | `--ca` | `VSNO_SEED_SYNC_CA` |
 
-A configured `seed.sync.to` applies only when neither `--to` nor `--from` is given, so a pull never
+A configured `namespace` is treated as chosen: `vsno list` then lists that environment rather than
+all of them, and if it is not a vsno environment the commands say so and name the key to unset. A
+configured `seed.sync.to` applies only when neither `--to` nor `--from` is given, so a pull never
 inherits a destination.
 
 | Subcommand | What it does |

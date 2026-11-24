@@ -26,6 +26,10 @@ type Key string
 // is reported rather than silently ignored: a typo would otherwise look like
 // a setting that does nothing.
 const (
+	// Namespace is the environment commands act on by default.
+	Namespace Key = "namespace"
+	// Output is the default -o format.
+	Output Key = "output"
 	// SeedSyncTo is where `vsno seed sync` pushes a seed by default.
 	SeedSyncTo Key = "seed.sync.to"
 	// SeedSyncAuthFile is the credentials file for that registry.
@@ -47,6 +51,8 @@ type Setting struct {
 
 // Settings are the known settings, in the order they are listed.
 var Settings = []Setting{
+	{Key: Namespace, What: "the environment commands act on", Env: "VSNO_NAMESPACE", Flag: "-n"},
+	{Key: Output, What: "the output format: table, wide or json", Env: "VSNO_OUTPUT", Flag: "-o"},
 	{Key: SeedSyncTo, What: "where `vsno seed sync` pushes a seed", Env: "VSNO_SEED_SYNC_TO", Flag: "--to"},
 	{Key: SeedSyncAuthFile, What: "credentials for that registry", Env: "VSNO_SEED_SYNC_AUTHFILE", Flag: "--authfile"},
 	{Key: SeedSyncCA, What: "that registry's CA certificate", Env: "VSNO_SEED_SYNC_CA", Flag: "--ca"},
