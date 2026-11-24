@@ -49,6 +49,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	env.Defaults(namespace) // --fix needs env.Access after Run returns
 	findings, err := doctor.Run(cmd.Context(), doctor.Env{Env: env}, namespace, args)
 	if err != nil {
 		return err

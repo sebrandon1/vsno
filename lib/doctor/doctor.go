@@ -44,6 +44,9 @@ func (e Env) guests(ctx context.Context, ns string) ([]guest.Guest, error) {
 // Run checks every vSNO it can name, and then the environment. names empty
 // means every vSNO in the namespace.
 func Run(ctx context.Context, e Env, ns string, names []string) ([]Finding, error) {
+	// Access and the registry reader come from Defaults when the caller did
+	// not supply them: a nil Access is a panic waiting for the first check.
+	e.Defaults(ns)
 	all, err := e.guests(ctx, ns)
 	if err != nil {
 		return nil, err
@@ -51,6 +54,11 @@ func Run(ctx context.Context, e Env, ns string, names []string) ([]Finding, erro
 	var out []Finding
 	for _, g := range all {
 		if len(names) > 0 && !contains(names, g.Name) {
+			continue
+		}
+		// A stopped vSNO answers nothing by design; its checks would only say
+		// "couldn't be read".
+		if g.State == guest.Stopped || g.State == guest.Deleting {
 			continue
 		}
 		a := e.Access(g.Name)

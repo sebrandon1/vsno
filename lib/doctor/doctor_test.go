@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/guestctl/guestctltest"
 	"github.com/sebrandon1/vsno/lib/precheck"
@@ -12,6 +13,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	dynfake "k8s.io/client-go/dynamic/fake"
 	kfake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -162,5 +165,76 @@ func TestFixRefusesTheRest(t *testing.T) {
 	_ = e
 	if err := Fix(context.Background(), f, Finding{Result: precheck.Result{Check: "storage"}}); err == nil || !strings.Contains(err.Error(), "no automatic fix") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// quiet answers every builder call with nothing, which reads as "not found".
+type quiet struct{}
+
+func (quiet) Run(_ context.Context, _ string, _ []string, _ builder.IO) error { return nil }
+
+// A caller that supplies no Access gets one from Defaults; before that, the
+// first guest check dereferenced a nil function and panicked.
+func TestRunDefaultsAccess(t *testing.T) {
+	e := Env{}
+	e.Env = seed.Env{Env: guest.Env{
+		Kube:    kfake.NewClientset(),
+		Dyn:     dynfake.NewSimpleDynamicClient(runtime.NewScheme()),
+		Builder: quiet{},
+	}}
+	e.Guests = func(context.Context, string) ([]guest.Guest, error) {
+		return []guest.Guest{{Name: "a", State: guest.Ready}}, nil
+	}
+	got, err := Run(context.Background(), e, ns, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The defaulted Access looks the vSNO up through the builder, which has no
+	// VM here, so each check says it could not be read — the point is that it
+	// returned instead of dereferencing a nil Access.
+	if len(got) == 0 {
+		t.Fatal("the checks did not run")
+	}
+	for _, f := range got {
+		if f.Status != precheck.Warn || !strings.Contains(f.Detail, "couldn't be read") {
+			t.Errorf("finding = %+v", f)
+		}
+	}
+}
+
+// A Bound volume is in use, not leaking: only a Released one is a finding.
+func TestOnlyReleasedVolumesAreFindings(t *testing.T) {
+	e, _ := fake(nil, nil)
+	k := e.Kube.(*kfake.Clientset)
+	for _, pv := range []struct{ name, phase string }{{"pvc-live", "Bound"}, {"pvc-gone", "Released"}} {
+		if err := k.Tracker().Add(&corev1.PersistentVolume{
+			ObjectMeta: metav1.ObjectMeta{Name: pv.name},
+			Spec: corev1.PersistentVolumeSpec{
+				ClaimRef: &corev1.ObjectReference{Namespace: ns, Name: "x"},
+				Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1Gi")},
+			},
+			Status: corev1.PersistentVolumeStatus{Phase: corev1.PersistentVolumePhase(pv.phase)},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := Run(context.Background(), e, ns, nil)
+	if err != nil || len(got) != 1 || !strings.Contains(got[0].Detail, "pvc-gone") {
+		t.Errorf("findings = %+v, %v", got, err)
+	}
+}
+
+// A stopped vSNO is not asked anything: it answers nothing by design.
+func TestStoppedVSNOsAreSkipped(t *testing.T) {
+	e, f := fake(nil, nil)
+	e.Guests = func(context.Context, string) ([]guest.Guest, error) {
+		return []guest.Guest{{Name: "s", State: guest.Stopped}}, nil
+	}
+	got, err := Run(context.Background(), e, ns, nil)
+	if err != nil || len(got) != 0 {
+		t.Errorf("findings = %+v, %v", got, err)
+	}
+	if len(f.Calls) != 0 {
+		t.Errorf("it asked the stopped vSNO: %q", f.Calls)
 	}
 }
