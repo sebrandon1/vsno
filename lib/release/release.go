@@ -62,6 +62,9 @@ const Forms = "4.20.46 (a release), 4.20 (its latest stable z-stream), 4.22-nigh
 
 // Resolve turns v into a release image.
 func (r Resolver) Resolve(ctx context.Context, v string) (Release, error) {
+	// A copy-paste often carries a trailing space or newline; it is not part of
+	// the version, and "unrecognized --version \"4.22.23 \"" helps nobody.
+	v = strings.TrimSpace(v)
 	rel := Release{Requested: v}
 	switch {
 	case strings.ContainsAny(v, "/@"):

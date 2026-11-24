@@ -115,6 +115,11 @@ func Set(k Key, v string) error {
 	if err := Check(k); err != nil {
 		return err
 	}
+	// The file is one KEY=VALUE per line, so a newline in a value would write
+	// a line of its own — one that could name another setting.
+	if strings.ContainsAny(v, "\r\n") {
+		return fmt.Errorf("%s can't hold a line break: it would add a line to %s", k, "the settings file")
+	}
 	path, err := Path()
 	if err != nil {
 		return err

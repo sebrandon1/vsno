@@ -194,3 +194,17 @@ func TestIsPullspec(t *testing.T) {
 		}
 	}
 }
+
+// A copy-paste often carries a space or newline; the version still resolves.
+func TestResolveTrimsWhitespace(t *testing.T) {
+	r := server(t)
+	for _, in := range []string{"4.20.10 ", " 4.20.10", "4.20.10\n", "\t4.20.10"} {
+		got, err := r.Resolve(context.Background(), in)
+		if err != nil || got.Version != "4.20.10" {
+			t.Errorf("Resolve(%q) = %+v, %v", in, got, err)
+		}
+		if got.Requested != "4.20.10" {
+			t.Errorf("Resolve(%q) kept the whitespace in Requested: %q", in, got.Requested)
+		}
+	}
+}
