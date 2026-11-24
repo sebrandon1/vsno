@@ -60,6 +60,10 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   `go-toolbox/confkit`. `Settings` lists the keys with what each means and the environment variable
   that overrides it; `Resolve` is the one precedence rule (flag, then environment, then file), and
   `cmd` reads `seed.sync.*` through it. A missing file is empty, never an error.
+- `lib/report`: `Collect` gathers what `status`, `guest.List`, `cache.List`, `seed.List` and
+  `isos.List` report into one document for a bug report or a demo; each part that fails becomes a
+  warning, and the type graph carries no credentials (a test walks it to be sure). `cmd/report.go`
+  renders it as JSON or `--markdown`.
 - `lib/precheck`: the cluster checks.
 - `lib/manifests`: embedded `templates/*.yaml.tmpl` rendered with `text/template` (`quote` for every
   value). Golden files are in `testdata/`; regenerate them with `go test ./lib/manifests -update` and
