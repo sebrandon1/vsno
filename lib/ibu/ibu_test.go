@@ -99,6 +99,72 @@ func TestToward(t *testing.T) {
 	}
 }
 
+// A False Idle condition on a reason LCA has no case for is one nothing moves:
+// vsno must say so rather than wait out the timeout. The reasons LCA does act
+// on, and an Idle it already reached, are not stuck.
+func TestStuckIdle(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		u     IBU
+		stuck bool
+	}{
+		{"in progress", ibuWith(StageIdle, "", cond("Idle", "False", "InProgress", "x")), true},
+		{"blocked", ibuWith(StageIdle, "", cond("Idle", "False", "Blocked", "x")), true},
+		{"aborting", ibuWith(StageIdle, "", cond("Idle", "False", "Aborting", "x")), false},
+		{"finalizing", ibuWith(StageIdle, "", cond("Idle", "False", "Finalizing", "x")), false},
+		{"abort failed", ibuWith(StageIdle, "", cond("Idle", "False", "AbortFailed", "x")), false},
+		{"idle", ibuWith(StageIdle, "", cond("Idle", "True", "Idle", "x")), false},
+		{"no condition", ibuWith(StageIdle, ""), false},
+		{"still in Prep", ibuWith(StagePrep, seedRef, cond("Idle", "False", "InProgress", "x")), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, stuck := c.u.StuckIdle()
+			if stuck != c.stuck {
+				t.Errorf("StuckIdle = %v, want %v", stuck, c.stuck)
+			}
+			if stuck && got.Type != "Idle" {
+				t.Errorf("reported %+v, want the Idle condition", got)
+			}
+		})
+	}
+}
+
+func TestIdleHandled(t *testing.T) {
+	for reason, want := range map[string]bool{
+		"Aborting": true, "AbortFailed": true, "Finalizing": true, "FinalizeFailed": true,
+		"InProgress": false, "Blocked": false, "Failed": false, "": false,
+	} {
+		if got := IdleHandled(reason); got != want {
+			t.Errorf("IdleHandled(%q) = %v, want %v", reason, got, want)
+		}
+	}
+}
+
+// Note is the condition a timeout should report, preferring the in-progress
+// condition, which is the specific one.
+func TestNote(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		u    IBU
+		s    Stage
+		want string
+	}{
+		{"in progress", ibuWith(StagePrep, seedRef,
+			cond("PrepCompleted", "False", "Failed", "Prep failed"), cond("PrepInProgress", "False", "Failed", "no room")), StagePrep, "Failed: no room"},
+		{"completed only", ibuWith(StagePrep, seedRef, cond("PrepCompleted", "False", "Failed", "Prep failed")), StagePrep, "Failed: Prep failed"},
+		{"reason and message", ibuWith(StageUpgrade, seedRef, cond("UpgradeInProgress", "True", "InProgress", "Rebooting")), StageUpgrade, "InProgress: Rebooting"},
+		{"message only", ibuWith(StageUpgrade, seedRef, cond("UpgradeInProgress", "True", "", "Rebooting")), StageUpgrade, "Rebooting"},
+		{"reason only", ibuWith(StageUpgrade, seedRef, cond("UpgradeInProgress", "True", "InProgress", "")), StageUpgrade, "InProgress"},
+		{"nothing", ibuWith(StageUpgrade, seedRef), StageUpgrade, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.u.Note(c.s); got != c.want {
+				t.Errorf("Note = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestPrecache(t *testing.T) {
 	if p, f, n, ok := Precache("Prep in progress: total: 190 (pulled: 12, failed: 1)"); !ok || p != 12 || f != 1 || n != 190 {
 		t.Errorf("= %d %d %d %v", p, f, n, ok)
@@ -211,7 +277,16 @@ type lca struct {
 	reboot int // reads the API is down for after Upgrade or Rollback starts
 	// prepFails and rollsBack make Prep fail, and Upgrade roll back on its own.
 	prepFails, rollsBack bool
-	patches              []string
+	// idleStuck leaves the Idle condition on a reason LCA's controller has no
+	// case for, as a failed Prep from an already-current target does.
+	idleStuck bool
+	// silentUpgrade reports Upgrade in progress with no message, as LCA does
+	// for a stage with nothing to say.
+	silentUpgrade bool
+	// idleSlow leaves the Idle condition on an unhandled reason for its first
+	// reads after the move to Idle, as a controller that is a moment behind.
+	idleSlow int
+	patches  []string
 }
 
 func (l *lca) Oc(ctx context.Context, args []string, s builder.IO) error {
@@ -245,28 +320,50 @@ func (l *lca) read(s builder.IO) error {
 	if (l.stage == StageUpgrade || l.stage == StageRollback) && l.reads <= l.reboot {
 		return errors.New("connection refused")
 	}
-	var u IBU
-	switch {
-	case l.stage == "" || l.stage == StageIdle:
-		u = ibuWith(StageIdle, "", cond("Idle", "True", "Idle", "Idle"))
-		u.Status.ValidNextStages = []Stage{StagePrep}
-	case l.stage == StagePrep && l.prepFails:
-		u = ibuWith(StagePrep, l.image, cond("PrepInProgress", "False", "Failed", "failed to pull the seed image"))
-	case l.stage == StagePrep && l.reads < 3:
-		u = ibuWith(StagePrep, l.image, cond("PrepInProgress", "True", "InProgress", "total: 4 (pulled: 2, failed: 0)"))
-	case l.stage == StagePrep:
-		u = ibuWith(StagePrep, l.image, cond("PrepCompleted", "True", "Completed", "Prep completed"))
-	case l.stage == StageUpgrade && l.rollsBack:
-		u = ibuWith(StageRollback, l.image, cond("RollbackInProgress", "True", "InProgress", "lca-init-monitor timed out"))
-	case l.stage == StageUpgrade:
-		u = ibuWith(StageUpgrade, l.image, cond("UpgradeCompleted", "True", "Completed", "Upgrade completed"))
-	case l.stage == StageRollback:
-		u = ibuWith(StageRollback, l.image, cond("RollbackCompleted", "True", "Completed", "Rollback completed"))
-	}
+	u := l.state()
 	u.Status.History = []History{{Stage: StagePrep, StartTime: time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)}}
 	b, _ := json.Marshal(u)
 	_, _ = s.Stdout.Write(b)
 	return nil
+}
+
+// state is what the target's IBU looks like at the stage it was patched to.
+func (l *lca) state() IBU {
+	switch {
+	case l.stage == "" || l.stage == StageIdle:
+		return l.idleState()
+	case l.stage == StagePrep && l.prepFails:
+		return ibuWith(StagePrep, l.image, cond("PrepInProgress", "False", "Failed", "failed to pull the seed image"))
+	case l.stage == StagePrep && l.reads < 3:
+		return ibuWith(StagePrep, l.image, cond("PrepInProgress", "True", "InProgress", "total: 4 (pulled: 2, failed: 0)"))
+	case l.stage == StagePrep:
+		return ibuWith(StagePrep, l.image, cond("PrepCompleted", "True", "Completed", "Prep completed"))
+	case l.stage == StageUpgrade && l.rollsBack:
+		return ibuWith(StageRollback, l.image, cond("RollbackInProgress", "True", "InProgress", "lca-init-monitor timed out"))
+	case l.stage == StageUpgrade && l.silentUpgrade:
+		return ibuWith(StageUpgrade, l.image, cond("UpgradeInProgress", "False", "InProgress", ""))
+	case l.stage == StageUpgrade:
+		return ibuWith(StageUpgrade, l.image, cond("UpgradeCompleted", "True", "Completed", "Upgrade completed"))
+	case l.stage == StageRollback:
+		return ibuWith(StageRollback, l.image, cond("RollbackCompleted", "True", "Completed", "Rollback completed"))
+	}
+	return IBU{}
+}
+
+// idleState is an Idle target: reached, or stuck on a reason LCA doesn't act
+// on, or briefly behind the patch that moved it there.
+func (l *lca) idleState() IBU {
+	if l.idleSlow > 0 && l.reads <= l.idleSlow {
+		return ibuWith(StageIdle, l.image, cond("Idle", "False", "InProgress", "Abort or finalize not allowed"))
+	}
+	if l.idleStuck {
+		u := ibuWith(StageIdle, l.image, cond("Idle", "False", "InProgress", "Abort or finalize not allowed"))
+		u.Status.Conditions = append(u.Status.Conditions, cond("PrepCompleted", "False", "Failed", "Prep failed"))
+		return u
+	}
+	u := ibuWith(StageIdle, "", cond("Idle", "True", "Idle", "Idle"))
+	u.Status.ValidNextStages = []Stage{StagePrep}
+	return u
 }
 
 // identityReplies answer the identity reads: version before, then after.

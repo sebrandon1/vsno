@@ -137,7 +137,12 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   `Upgrade` resolves the seed, prepares the target, then `begin` (identity, LCA
   match, `resumeFrom`) and `drive` (`moveTo` each stage, tolerating the API's absence while the node
   reboots). `IBU.Toward` is the one classifier of LCA's conditions (`stageConditions`,
-  `failedReasons`). Tests drive a simulated LCA (`lca` in `ibu_test.go`). `LCASource` (`--lca-ref`,
+  `failedReasons`); `IBU.StuckIdle` is the other half of what LCA's controller handles — an `Idle`
+  condition on a reason outside `idleHandled` is one nothing moves, so `moveTo` fails after
+  `idleStuckGrace` with the two-step recovery (`vsno doctor <target> --fix`, or the patch and the
+  controller restart by hand) instead of polling out `finalizeWait`. `lib/doctor` uses the same
+  `ibu.IdleHandled`, so the two cannot disagree about a stuck upgrade.
+  Tests drive a simulated LCA (`lca` in `ibu_test.go`). `LCASource` (`--lca-ref`,
   `--lca-repo`, `--lca-image`): `buildLCA` runs `scripts/lca-build.sh` in a privileged buildah pod on
   the builder's node (it mounts `builder-work`), then `scripts/lca-render.sh` renders `config/default`
   in the builder with the image replaced; `deployLCA` swaps the guest's OLM LCA for it.

@@ -6,6 +6,7 @@ package ibu
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -45,6 +46,16 @@ var stageConditions = map[Stage]struct{ inProgress, completed string }{
 // failedReasons are the condition reasons LCA uses for a stage that can't
 // complete: it failed, timed out, was refused, or is blocked by another flow.
 var failedReasons = []string{"Failed", "TimedOut", "InvalidTransition", "Blocked", "AbortFailed", "FinalizeFailed"}
+
+// idleHandled are the reasons LCA's controller acts on for the Idle condition:
+// handleAbortOrFinalize switches on exactly these. A False Idle condition with
+// any other reason matches no case, so nothing moves it and the controller has
+// nothing left to reconcile.
+var idleHandled = []string{"Aborting", "AbortFailed", "Finalizing", "FinalizeFailed"}
+
+// IdleHandled reports whether LCA's controller acts on this Idle condition
+// reason.
+func IdleHandled(reason string) bool { return slices.Contains(idleHandled, reason) }
 
 // IBU is the part of LCA's ImageBasedUpgrade vsno reads.
 type IBU struct {
@@ -113,6 +124,66 @@ func (u IBU) Toward(s Stage) (Progress, string) {
 		return Moving, cur.Message
 	}
 	return Moving, ""
+}
+
+// StuckIdle reports the Idle condition when LCA will not act on it: the spec
+// is at Idle, the condition is False, and its reason is one LCA's controller
+// has no case for. This is the state a failed Prep that started from an
+// already-current target leaves behind: `--abort` and `--finalize` wait out
+// their timeout, because nothing moves.
+func (u IBU) StuckIdle() (guestctl.Condition, bool) {
+	if u.Spec.Stage != StageIdle {
+		return guestctl.Condition{}, false
+	}
+	c := u.Status.Conditions.Find(stageConditions[StageIdle].completed)
+	if c == nil || c.Status == "True" || IdleHandled(c.Reason) {
+		return guestctl.Condition{}, false
+	}
+	return *c, true
+}
+
+// UnstickPatch is the JSON patch that points the Idle condition at a reason
+// LCA's controller acts on — Aborting, or Finalizing once an upgrade completed.
+// It addresses the condition by its position, which is how json-patch reaches
+// it. Applying it to an IBU StuckIdle reported, then restarting the controller,
+// is the recovery.
+func (u IBU) UnstickPatch() string {
+	reason := "Aborting"
+	if u.Status.Conditions.IsTrue(stageConditions[StageUpgrade].completed) {
+		reason = "Finalizing"
+	}
+	idx := 0
+	for i, x := range u.Status.Conditions {
+		if x.Type == stageConditions[StageIdle].completed {
+			idx = i
+			break
+		}
+	}
+	return fmt.Sprintf(`[{"op":"replace","path":"/status/conditions/%d/reason","value":%q}]`, idx, reason)
+}
+
+// Note is what LCA's conditions say about stage s now, as "Reason: message",
+// for a timeout that would otherwise report nothing. The in-progress condition
+// is the specific one when there is one, as in Toward.
+func (u IBU) Note(s Stage) string {
+	c := stageConditions[s]
+	show := func(x *guestctl.Condition) string {
+		switch {
+		case x == nil:
+			return ""
+		case x.Reason == "":
+			return x.Message
+		case x.Message == "":
+			return x.Reason
+		}
+		return x.Reason + ": " + x.Message
+	}
+	if c.inProgress != "" {
+		if note := show(u.Status.Conditions.Find(c.inProgress)); note != "" {
+			return note
+		}
+	}
+	return show(u.Status.Conditions.Find(c.completed))
 }
 
 // precacheRe reads LCA's precache progress, "total: 190 (pulled: 12, failed: 0)".

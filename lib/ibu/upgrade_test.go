@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/guest"
@@ -197,7 +198,8 @@ func TestUpgradeReadFailures(t *testing.T) {
 	t.Run("API down for longer than the stage allows", func(t *testing.T) {
 		target := &lca{Fake: targetFake(), reboot: 1 << 30}
 		_, err := upgrade(t, target, UpgradeOptions{}, nil)
-		if err == nil || !strings.Contains(err.Error(), "Upgrade didn't finish in") {
+		if err == nil || !strings.Contains(err.Error(), "Upgrade didn't finish in") ||
+			!strings.Contains(err.Error(), "last: LCA reported nothing") {
 			t.Errorf("err = %v", err)
 		}
 	})
@@ -407,6 +409,76 @@ func TestUpgradeAbort(t *testing.T) {
 	}
 	if err := (UpgradeOptions{Target: "t", Abort: true, Seed: "s"}).check(); err == nil || !strings.Contains(err.Error(), "--abort takes only the target") {
 		t.Errorf("abort with a seed: err = %v", err)
+	}
+}
+
+// An abort that LCA's controller will never act on fails in seconds, naming the
+// stuck condition and the recovery, rather than polling out the ten minutes.
+func TestUpgradeAbortStuckIdle(t *testing.T) {
+	target := &lca{Fake: targetFake(), stage: StagePrep, image: seedRef, prepFails: true, idleStuck: true}
+	res, err := Upgrade(context.Background(), testEnv(map[string]guestctl.Access{"t": target}), UpgradeOptions{Namespace: ns, Target: "t", Abort: true})
+	if err == nil {
+		t.Fatal("a stuck Idle transition must fail")
+	}
+	for _, want := range []string{
+		`reason "InProgress"`, "will never start",
+		"vsno doctor t --fix",
+		`{"op":"replace","path":"/status/conditions/0/reason","value":"Aborting"}`,
+		"oc delete pod -n openshift-lifecycle-agent",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "didn't finish in") {
+		t.Errorf("it waited out the timeout: %v", err)
+	}
+	if res.Stage != StageIdle || len(target.patches) != 1 {
+		t.Errorf("stage = %s, patches = %q", res.Stage, target.patches)
+	}
+}
+
+// A controller that is a moment behind the patch must not be called stuck: the
+// same condition, once it settles on a reason LCA acts on, is the normal abort.
+func TestUpgradeAbortToleratesASlowController(t *testing.T) {
+	target := &lca{Fake: targetFake(), stage: StagePrep, image: seedRef, prepFails: true, idleSlow: 2}
+	res, err := Upgrade(context.Background(), testEnv(map[string]guestctl.Access{"t": target}), UpgradeOptions{Namespace: ns, Target: "t", Abort: true})
+	if err != nil || res.Stage != StageIdle {
+		t.Errorf("err = %v, stage = %s", err, res.Stage)
+	}
+}
+
+// A stuck finalize gets the reason LCA finalizes on, and the patch names the
+// condition's own position, not always the first.
+func TestStuckIdleError(t *testing.T) {
+	u := ibuWith(StageIdle, "", cond("PrepCompleted", "False", "Failed", "Prep failed"),
+		cond("UpgradeCompleted", "True", "Completed", "Upgrade completed"),
+		cond("Idle", "False", "InProgress", "Abort or finalize not allowed"))
+	if _, ok := u.StuckIdle(); !ok {
+		t.Fatal("want the condition reported")
+	}
+	cond, _ := u.StuckIdle()
+	err := stuckIdleError("t", u, cond, idleStuckGrace)
+	for _, want := range []string{
+		`reason "InProgress" ("Abort or finalize not allowed") for 15s`,
+		"/status/conditions/2/reason", `value":"Finalizing"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want %q", err, want)
+		}
+	}
+}
+
+// A timeout says what LCA last reported when the stage had no message of its
+// own, instead of ending at "last:".
+func TestMoveToTimeoutReportsTheCondition(t *testing.T) {
+	target := &lca{Fake: targetFake(), stage: StageUpgrade, image: seedRef, silentUpgrade: true}
+	e := testEnv(nil)
+	res := &UpgradeResult{SeedImage: seedRef, SeedVersion: "4.21.42"}
+	_, err := moveTo(context.Background(), target, guestctl.Clock{Every: e.Poll, Now: e.Now},
+		StageUpgrade, StageUpgrade, time.Second, res, &steps{})
+	if err == nil || !strings.Contains(err.Error(), "last: InProgress") {
+		t.Errorf("err = %v, want the condition as the last thing LCA said", err)
 	}
 }
 
