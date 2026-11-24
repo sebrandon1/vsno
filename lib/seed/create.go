@@ -327,15 +327,20 @@ func generate(ctx context.Context, e Env, a Access, image, auth string, ps prech
 // ahead of the precheck with a timeout short enough to refuse in seconds.
 const seedGenQuery = "--request-timeout=15s"
 
+// seedGen reads the SeedGenerator LCA runs: found is false when there is none,
+// and err when the guest's API doesn't answer.
+func seedGen(ctx context.Context, a Access) (sg guestctl.Object, found bool, err error) {
+	found, err = guestctl.Get(ctx, a, &sg, "get", "seedgenerators", "seedimage", "--ignore-not-found", seedGenQuery)
+	return sg, found, err
+}
+
 // checkSeedGen refuses a second generation before the precheck spends minutes
 // on the vSNO. LCA's SeedGenerator is the answer while the guest's API is up;
-// while it is down — which a generation causes — the mark vsno leaves on the
-// VM is, and a mark whose SeedGenerator has finished is stale, so it is
-// cleared and the run goes on.
+// while it is down — which a generation causes — the mark vsno left on the VM
+// is. A generation that ended while nothing followed it leaves a stale mark,
+// which is cleared.
 func checkSeedGen(ctx context.Context, e Env, ns, name string) error {
-	var sg guestctl.Object
-	found, err := guestctl.Get(ctx, e.Access(name), &sg, "get", "seedgenerators", "seedimage", "--ignore-not-found", seedGenQuery)
-	if err == nil && found {
+	if sg, found, err := seedGen(ctx, e.Access(name)); err == nil && found {
 		if p, msg := phaseOf(sg); p == sgRunning {
 			return fmt.Errorf("a seed generation is already running on the vSNO: %s", msg)
 		}
@@ -367,8 +372,7 @@ func seedingMark(ctx context.Context, e Env, ns, name string) (time.Time, bool) 
 func seedGenEnded(ctx context.Context, a Access) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
-	var sg guestctl.Object
-	found, err := guestctl.Get(ctx, a, &sg, "get", "seedgenerators", "seedimage", "--ignore-not-found", seedGenQuery)
+	sg, found, err := seedGen(ctx, a)
 	if err != nil {
 		return false // can't tell: keep the mark, which list treats as recent for an hour
 	}
