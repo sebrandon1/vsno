@@ -344,7 +344,8 @@ func checkSeed(ctx context.Context, e Env, from, targetName string, target guest
 	sa := e.Access(from)
 	theirs, err := seed.InstalledLCA(ctx, sa)
 	if err != nil || theirs == "" {
-		res.Warnings = append(res.Warnings, "can't read the seed vSNO "+from+", so it isn't compared with the target (LCA version, trust bundle)")
+		res.Warnings = append(res.Warnings, "can't read the seed vSNO "+from+", so it isn't compared with the target "+
+			"(LCA version, trust bundle); `vsno start "+from+"` makes the comparison possible")
 		return nil //nolint:nilerr // a stopped seed vSNO is normal after seed generation
 	}
 	ours, err := seed.InstalledLCA(ctx, target)

@@ -18,6 +18,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/cluster"
 	"github.com/sebrandon1/vsno/lib/manifests"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/registry"
 	"github.com/sebrandon1/vsno/lib/release"
 	"github.com/sebrandon1/vsno/lib/state"
 	corev1 "k8s.io/api/core/v1"
@@ -238,6 +239,10 @@ const restoreFiles = `mkdir -p "/work/guests/$1" && cp -a "/work/snapshots/$1/."
 // it.
 func cacheRelease(ctx context.Context, e Env, o CreateOptions, spec Spec, sec *Secrets) (bool, error) {
 	if e.Cache == nil || o.NoCache {
+		// The mirror is optional, the trust it brings is not: LCA requires a seed
+		// image's trust bundle to match its target's, so a vSNO installed without
+		// one can only make seeds for vSNOs installed the same way.
+		sec.AdditionalTrustBundle = environmentCA(ctx, e, spec.Namespace)
 		return false, nil
 	}
 	err := step(e, "Caching release "+describe(spec.Release), func(ps precheck.ProgressStep) (string, error) {
@@ -252,6 +257,19 @@ func cacheRelease(ctx context.Context, e Env, o CreateOptions, spec Spec, sec *S
 		return "mirrored " + p.Repo, nil
 	})
 	return err == nil, err
+}
+
+// environmentCA is the environment registry's CA, or "" when there is none to
+// trust: a hand-built environment, or one where setup has not run.
+func environmentCA(ctx context.Context, e Env, ns string) string {
+	if e.Kube == nil {
+		return ""
+	}
+	reg, err := registry.Load(ctx, e.Kube, ns)
+	if err != nil {
+		return ""
+	}
+	return reg.CA
 }
 
 // eject drops the install ISO of a vSNO that just became ready, freeing the

@@ -156,12 +156,7 @@ func TestUpgradeSeed(t *testing.T) {
 		}
 	})
 	t.Run("the same image installed two ways", TestUpgradeSeedSameImageInstalledTwoWays)
-	t.Run("seed vSNO stopped", func(t *testing.T) {
-		res, err := upgrade(t, &lca{Fake: targetFake()}, UpgradeOptions{}, nil)
-		if err != nil || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "can't read the seed vSNO shiny-crane") {
-			t.Errorf("err = %v, warnings = %q", err, res.Warnings)
-		}
-	})
+	t.Run("seed vSNO stopped", TestUpgradeSeedStoppedSeed)
 	t.Run("a tag of the vSNO", func(t *testing.T) {
 		// The target must be behind the seed the tag names, or the upgrade is
 		// refused before the seed is looked at.
@@ -185,6 +180,21 @@ func TestUpgradeSeed(t *testing.T) {
 			t.Errorf("err = %v", err)
 		}
 	})
+}
+
+// A seed vSNO that can't be read is a warning, not a refusal, and it says how
+// to make the comparison the upgrade would otherwise make.
+func TestUpgradeSeedStoppedSeed(t *testing.T) {
+	res, err := upgrade(t, &lca{Fake: targetFake()}, UpgradeOptions{}, nil)
+	if err != nil || len(res.Warnings) != 1 {
+		t.Fatalf("err = %v, warnings = %q", err, res.Warnings)
+	}
+	w := res.Warnings[0]
+	for _, want := range []string{"can't read the seed vSNO shiny-crane", "`vsno start shiny-crane` makes the comparison possible"} {
+		if !strings.Contains(w, want) {
+			t.Errorf("warning = %q, want %q", w, want)
+		}
+	}
 }
 
 func TestUpgradeReadFailures(t *testing.T) {

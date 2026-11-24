@@ -185,7 +185,10 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   install-config's `imageDigestSources`, the CA, and a pull secret with the registry added.
   `Reconcile` settles a Job that
   finished while nothing was watching, so `cache list` shows the truth and can show a running
-  mirror's progress from the registry volume's growth since it began. `Prune` deletes a
+  mirror's progress from the registry volume's growth since it began. `create --no-cache` skips
+  the mirror but not its trust: `guest.cacheRelease` still puts the registry's CA in
+  `install-config`'s `additionalTrustBundle`, because LCA compares a seed image's trust bundle with
+  its target's. `Prune` deletes a
   release's manifests and runs `GarbageCollect`, which stops the registry, runs its collector in a
   Job over the same volume, and starts it again.
 - `lib/isos`: what creates leave behind. `List` runs `scripts/isos.sh` in the builder (served ISOs,

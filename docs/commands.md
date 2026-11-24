@@ -141,7 +141,7 @@ a free random one such as `brave-otter`.
 | `--cores <n>` | vCPUs (default `16`) |
 | `--memory <gib>` | Memory, GiB (default `16`) |
 | `--disk <gib>` | Root disk, GiB (default `200`) |
-| `--no-cache` | Install from the internet instead of the environment registry's mirror |
+| `--no-cache` | Install from the internet instead of the environment registry's mirror (the vSNO still trusts the registry's CA) |
 | `-w, --watch` | Follow the install until the vSNO is ready |
 | `--timeout <duration>` | How long to wait for the install (default `1h30m`) |
 

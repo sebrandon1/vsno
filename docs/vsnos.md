@@ -49,7 +49,9 @@ memory. `vsno stop` frees a vSNO's memory and keeps its disk.
 
 The first `create` of a version also mirrors that release's payload into the environment's
 registry (15–20 GB, once), so every later vSNO of it installs from the cluster: `--no-cache` skips
-that. A vSNO created with `--watch` records how long each phase took; `list -o wide` shows it.
+that. Either way the vSNO trusts the registry's CA, because LCA refuses a seed image whose trust
+bundle differs from its target's, so a vSNO that skipped it could only make seeds for others like
+it. A vSNO created with `--watch` records how long each phase took; `list -o wide` shows it.
 
 `list` shows every vSNO in every vsno environment, with a NAMESPACE column: the namespaces vsno
 labeled, plus any that hold the builder pod (an environment assembled by hand predates the label).

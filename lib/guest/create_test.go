@@ -422,6 +422,72 @@ func TestCreateNoCache(t *testing.T) {
 	}
 }
 
+// --no-cache skips the mirror, not the trust it brings: LCA compares a seed
+// image's trust bundle with its target's, so every vSNO created here must have
+// openshift-config/user-ca-bundle (install-config's additionalTrustBundle).
+func TestCreateNoCacheStillTrustsTheRegistry(t *testing.T) {
+	w := newWorld(t)
+	giveRegistry(t, w)
+	o := createOpts("seed", "4.20")
+	o.NoCache = true
+	env := w.env()
+	env.Cache = &fakeCache{p: mirrored()}
+	if _, err := Create(context.Background(), env, o); err != nil {
+		t.Fatal(err)
+	}
+	iso := w.runner.ran("iso.sh")
+	if strings.Contains(iso[0].stdin, "imageDigestSources") {
+		t.Error("the install config points at a mirror")
+	}
+	if !strings.Contains(iso[0].stdin, "additionalTrustBundle:") || !strings.Contains(iso[0].stdin, "BEGIN CERTIFICATE") {
+		t.Error("--no-cache left the vSNO without the registry's CA")
+	}
+}
+
+// An environment with no registry has no CA to give, and that is not a failure.
+func TestCreateNoCacheWithoutARegistry(t *testing.T) {
+	w := newWorld(t)
+	o := createOpts("seed", "4.20")
+	o.NoCache = true
+	env := w.env()
+	env.Cache = &fakeCache{p: mirrored()}
+	if _, err := Create(context.Background(), env, o); err != nil {
+		t.Fatal(err)
+	}
+	if iso := w.runner.ran("iso.sh"); strings.Contains(iso[0].stdin, "additionalTrustBundle") {
+		t.Error("it invented a trust bundle")
+	}
+}
+
+// The CA is a convenience, never a reason to fail a create.
+func TestEnvironmentCA(t *testing.T) {
+	if got := environmentCA(context.Background(), Env{}, ns); got != "" {
+		t.Errorf("no cluster = %q, want \"\"", got)
+	}
+	w := newWorld(t)
+	if got := environmentCA(context.Background(), w.env(), ns); got != "" {
+		t.Errorf("no registry = %q, want \"\"", got)
+	}
+	giveRegistry(t, w)
+	if got := environmentCA(context.Background(), w.env(), ns); !strings.Contains(got, "BEGIN CERTIFICATE") {
+		t.Errorf("CA = %q, want the registry's", got)
+	}
+}
+
+// giveRegistry adds the registry's credentials and CA to the world.
+func giveRegistry(t *testing.T, w *world) {
+	t.Helper()
+	for name, data := range map[string]map[string][]byte{
+		"registry-auth": {"username": []byte("u"), "password": []byte("p")},
+		"registry-ca":   {"ca.crt": []byte("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n")},
+	} {
+		if _, err := w.kube.CoreV1().Secrets(ns).Create(context.Background(),
+			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}, Data: data}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestCreateFailsWhenMirroringFails(t *testing.T) {
 	w := newWorld(t)
 	env := w.env()
