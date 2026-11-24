@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/cache"
@@ -89,6 +92,83 @@ func addRunLCAFlags(f *pflag.FlagSet) {
 }
 
 // runOptions are the settings file's, with the flags given on top.
+// runFileAliases are the spellings people write for a setting whose JSON name
+// differs from its flag: --memory is memoryGiB, and --device is disk.
+var runFileAliases = map[string]string{"memory": "memoryGiB", "device": "disk"}
+
+// decodeRunFile reads -f's file into o: aliases are applied first, then the
+// keys are checked against the struct's own JSON names, so an unknown one is
+// refused with the name to use rather than sigs.k8s.io/yaml's bare "unknown
+// field".
+func decodeRunFile(path string, b []byte, o *run.Options) error {
+	var m map[string]any
+	if err := yaml.Unmarshal(b, &m); err != nil {
+		return fmt.Errorf("parsing %s: %w", path, err)
+	}
+	for from, to := range runFileAliases {
+		v, ok := m[from]
+		if !ok {
+			continue
+		}
+		if _, taken := m[to]; !taken {
+			m[to] = v
+		}
+		delete(m, from)
+	}
+	keys := runFileKeys()
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		if !slices.Contains(keys, k) {
+			msg := fmt.Sprintf("%q is not a setting in %s", k, path)
+			if near := closestKey(k, keys); near != "" {
+				msg += fmt.Sprintf("; did you mean %q?", near)
+			}
+			return fmt.Errorf("%s (the settings are %s)", msg, strings.Join(keys, ", "))
+		}
+	}
+	clean, err := yaml.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("parsing %s: %w", path, err)
+	}
+	if err := yaml.UnmarshalStrict(clean, o); err != nil {
+		return fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return nil
+}
+
+// runFileKeys is the file's settings, from the struct's JSON names, so the list
+// cannot drift from what is decoded.
+func runFileKeys() []string {
+	t := reflect.TypeOf(run.Options{})
+	out := make([]string, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// closestKey is the known key sharing the longest prefix with k, if any shares
+// a plausible one.
+func closestKey(k string, keys []string) string {
+	best, bestN := "", 0
+	for _, want := range keys {
+		n := 0
+		for n < len(k) && n < len(want) && strings.EqualFold(k[n:n+1], want[n:n+1]) {
+			n++
+		}
+		if n > bestN {
+			best, bestN = want, n
+		}
+	}
+	if bestN < 3 {
+		return ""
+	}
+	return best
+}
+
 func runOptions(cmd *cobra.Command) (run.Options, error) {
 	var o run.Options
 	if rnFile != "" {
@@ -96,8 +176,8 @@ func runOptions(cmd *cobra.Command) (run.Options, error) {
 		if err != nil {
 			return o, err
 		}
-		if err := yaml.UnmarshalStrict(b, &o); err != nil {
-			return o, fmt.Errorf("parsing %s: %w", rnFile, err)
+		if err := decodeRunFile(rnFile, b, &o); err != nil {
+			return o, err
 		}
 	}
 	f := rnOpts

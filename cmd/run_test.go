@@ -63,7 +63,9 @@ func TestRunOptions(t *testing.T) {
 	if err := os.WriteFile(file, []byte("targetNmae: typo\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runOptions(runCmd); err == nil || !strings.Contains(err.Error(), "parsing") {
+	// A typo is refused with the key it probably meant, not "unknown field".
+	_, err = runOptions(runCmd)
+	if !hasAll(err, `"targetNmae" is not a setting`, `did you mean "targetName"?`) {
 		t.Errorf("unknown key: %v", err)
 	}
 }
@@ -108,5 +110,45 @@ func TestRunDeviceFromTheOldFlag(t *testing.T) {
 	o, err := runOptions(runCmd)
 	if err != nil || o.Disk != "/dev/disk/by-id/old" {
 		t.Errorf("options = %+v, err = %v", o, err)
+	}
+}
+
+// hasAll reports whether err holds every substring.
+func hasAll(err error, subs ...string) bool {
+	if err == nil {
+		return false
+	}
+	for _, s := range subs {
+		if !strings.Contains(err.Error(), s) {
+			return false
+		}
+	}
+	return true
+}
+
+// The file takes --memory as memory, and --device as device, since those are
+// what the help calls them.
+func TestRunFileAliases(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "vsno.yaml")
+	b := []byte("memory: 20\ndevice: /dev/disk/by-id/a\n")
+	if err := os.WriteFile(file, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var o run.Options
+	if err := decodeRunFile(file, b, &o); err != nil {
+		t.Fatal(err)
+	}
+	if o.MemoryGiB != 20 || o.Disk != "/dev/disk/by-id/a" {
+		t.Errorf("options = %+v", o)
+	}
+	// The JSON name still wins if both are given.
+	var both run.Options
+	b2 := []byte("memory: 20\nmemoryGiB: 30\n")
+	if err := decodeRunFile(file, b2, &both); err != nil {
+		t.Fatal(err)
+	}
+	if both.MemoryGiB != 30 {
+		t.Errorf("both spellings: %+v", both)
 	}
 }
