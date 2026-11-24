@@ -57,7 +57,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	single := rootCmd.PersistentFlags().Changed("namespace")
+	single := rootCmd.PersistentFlags().Changed("namespace") || namespaceFromConfig
 	var env guest.Env
 	if single {
 		if env, err = guestEnv(cmd.Context(), c, 0); err != nil {

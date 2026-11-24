@@ -2,12 +2,18 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kfake "k8s.io/client-go/kubernetes/fake"
 
+	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/config"
 	"github.com/sebrandon1/vsno/lib/trace"
 )
 
@@ -160,5 +166,53 @@ func TestTrimmedArgs(t *testing.T) {
 	}
 	if !slices.Equal(got, []string{"seed-cluster", " get nodes -o wide "}) {
 		t.Errorf("trimmedFirst = %q", got)
+	}
+}
+
+// A settings file's namespace and output apply unless the flags say otherwise.
+func TestApplyConfigDefaults(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for _, s := range config.Settings {
+		t.Setenv(s.Env, "")
+	}
+	t.Cleanup(func() {
+		namespace, outputFormat, namespaceFromConfig = "vsno", formatTable, false
+		for _, f := range []string{"namespace", "output"} {
+			if fl := rootCmd.PersistentFlags().Lookup(f); fl != nil {
+				fl.Changed = false
+			}
+		}
+	})
+	if err := config.Set(config.Namespace, "vsno-dev"); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Set(config.Output, "json"); err != nil {
+		t.Fatal(err)
+	}
+	applyConfigDefaults(listCmd)
+	if namespace != "vsno-dev" || !namespaceFromConfig || outputFormat != formatJSON {
+		t.Errorf("defaults = %q, %v, %q", namespace, namespaceFromConfig, outputFormat)
+	}
+
+	// A flag wins.
+	namespace, namespaceFromConfig, outputFormat = "vsno", false, formatTable
+	if err := rootCmd.PersistentFlags().Set("namespace", "vsno"); err != nil {
+		t.Fatal(err)
+	}
+	applyConfigDefaults(listCmd)
+	if namespace != "vsno" || namespaceFromConfig {
+		t.Errorf("flag did not win: %q, %v", namespace, namespaceFromConfig)
+	}
+}
+
+// A remembered namespace that is not an environment is named, with the key.
+func TestUseEnvironmentConfigNamespaceMissing(t *testing.T) {
+	t.Cleanup(func() { namespace, namespaceFromConfig = "vsno", false })
+	namespace, namespaceFromConfig = "gone", true
+	k := kfake.NewClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "vsno",
+		Labels: map[string]string{cluster.ManagedByLabel: "vsno"}}})
+	err := useEnvironment(context.Background(), k)
+	if err == nil || !strings.Contains(err.Error(), "config unset namespace") {
+		t.Errorf("err = %v", err)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"os"
 
 	"github.com/sebrandon1/vsno/lib/cluster"
+	"github.com/sebrandon1/vsno/lib/config"
 	"github.com/sebrandon1/vsno/lib/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -38,6 +39,9 @@ var (
 	outputFormat string
 	noColor      bool
 	verbose      bool
+	// namespaceFromConfig is set when -n was not given and the settings file
+	// named the environment; commands then treat it as chosen.
+	namespaceFromConfig bool
 )
 
 var rootCmd = &cobra.Command{
@@ -57,6 +61,7 @@ Start with:  vsno precheck`,
 				return err
 			}
 		}
+		applyConfigDefaults(cmd)
 		if err := cliout.ValidateFormat(outputFormat, formatTable, formatWide, formatJSON); err != nil {
 			return err
 		}
@@ -77,6 +82,33 @@ Start with:  vsno precheck`,
 		}
 		return nil
 	},
+}
+
+// flagChanged reports whether the user gave flag f, persistent or local.
+func flagChanged(cmd *cobra.Command, f string) bool {
+	if fl := cmd.Flag(f); fl != nil {
+		return fl.Changed
+	}
+	return false
+}
+
+// applyConfigDefaults takes the settings file's namespace and output when the
+// flags did not say otherwise: flag, then VSNO_NAMESPACE/VSNO_OUTPUT, then the
+// file, as lib/config.Resolve orders them.
+func applyConfigDefaults(cmd *cobra.Command) {
+	file := configFor()
+	nsSet, _ := config.SettingFor(config.Namespace)
+	outSet, _ := config.SettingFor(config.Output)
+	if !flagChanged(cmd, "namespace") {
+		if ns := config.Resolve(nsSet, "", file, false); ns != "" {
+			namespace, namespaceFromConfig = ns, true
+		}
+	}
+	if !flagChanged(cmd, "output") {
+		if o := config.Resolve(outSet, "", file, false); o != "" {
+			outputFormat = o
+		}
+	}
 }
 
 func init() {
@@ -208,6 +240,14 @@ func useEnvironment(ctx context.Context, kube kubernetes.Interface) error {
 	for _, n := range l.Items {
 		names = append(names, n.Name)
 	}
+	if namespaceFromConfig {
+		// A remembered namespace that no longer exists is a mistake worth
+		// naming, with the key that set it.
+		if !slices.Contains(names, namespace) {
+			return fmt.Errorf("the settings file names namespace %q, which is not a vsno environment; `vsno config unset namespace` forgets it", namespace)
+		}
+		return nil
+	}
 	switch {
 	case slices.Contains(names, namespace):
 	case len(names) == 1:
@@ -246,7 +286,7 @@ func envNote(ctx context.Context, kube kubernetes.Interface, ns string) string {
 			return ""
 		}
 		return fmt.Sprintf("note: %s is not a vsno environment; there is %s\n", ns, strings.Join(others, ", "))
-	case len(others) == 0 || rootCmd.PersistentFlags().Changed("namespace"):
+	case len(others) == 0 || rootCmd.PersistentFlags().Changed("namespace") || namespaceFromConfig:
 		return "" // one environment, or one was chosen: nothing to say
 	}
 	return fmt.Sprintf("note: %s is one of several vsno environments (also: %s); pass -n to choose another\n", ns, strings.Join(others, ", "))

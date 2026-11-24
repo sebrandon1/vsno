@@ -59,7 +59,9 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `lib/config`: the settings file, `$XDG_CONFIG_HOME/vsno/config` (`~/.config/vsno/config`), over
   `go-toolbox/confkit`. `Settings` lists the keys with what each means and the environment variable
   that overrides it; `Resolve` is the one precedence rule (flag, then environment, then file), and
-  `cmd` reads `seed.sync.*` through it. A missing file is empty, never an error.
+  `cmd` reads `namespace`, `output` and `seed.sync.*` through it — `applyConfigDefaults` in
+  `cmd/root.go` sets the two global flags' values when they were not given. A missing file is
+  empty, never an error.
 - `lib/doctor`: `Run` looks for the states four open issues describe — a stuck IBU `Idle` condition,
   a seed generation nothing follows, a guest whose `kubelet`/`crio` an interrupted generation left
   off, a `Released` PV (`teardown.Allocated`), a registry under the seed floor (`seed.RoomWarn`).

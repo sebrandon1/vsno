@@ -206,3 +206,27 @@ func TestSetRefusesLineBreaks(t *testing.T) {
 		t.Errorf("the refused value was written: %q", v)
 	}
 }
+
+// The defaults a user retypes: the environment and the output format.
+func TestDefaultsAreSettings(t *testing.T) {
+	for _, c := range []struct {
+		key       Key
+		env, flag string
+	}{
+		{Namespace, "VSNO_NAMESPACE", "-n"},
+		{Output, "VSNO_OUTPUT", "-o"},
+	} {
+		s, ok := SettingFor(c.key)
+		if !ok || s.Env != c.env || s.Flag != c.flag {
+			t.Errorf("%s = %+v, %v", c.key, s, ok)
+		}
+	}
+	isolate(t)
+	if err := Set(Namespace, "vsno-dev"); err != nil {
+		t.Fatal(err)
+	}
+	v, ok, err := Get(Namespace)
+	if err != nil || !ok || v != "vsno-dev" {
+		t.Errorf("Get = %q, %v, %v", v, ok, err)
+	}
+}
