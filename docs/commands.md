@@ -118,7 +118,13 @@ is not ready, `vsno create` with no vSNOs, the seed commands with one ready vSNO
 `vsno upgrade <target> --seed <seed>` when two ready vSNOs are at different versions. `-o json` has
 the same line as `next`.
 
-Takes only the global flags (`-o json` for the machine-readable report).
+| Flag | Meaning |
+|---|---|
+| `-w, --watch` | Refresh until interrupted |
+| `--interval <duration>` | Refresh interval for `--watch` (default `15s`) |
+
+`-o json` is the machine-readable report, and cannot be combined with `--watch`: a watch would print
+one document after another.
 
 ## `vsno create`
 

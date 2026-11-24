@@ -22,6 +22,11 @@ import (
 // statusStages is how many recent stages the table shows; JSON has them all.
 const statusStages = 5
 
+var (
+	stWatch    bool
+	stInterval time.Duration
+)
+
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show the state of a vSNO environment",
@@ -41,6 +46,9 @@ failing.`,
 }
 
 func init() {
+	f := statusCmd.Flags()
+	f.BoolVarP(&stWatch, "watch", "w", false, "refresh until interrupted")
+	f.DurationVar(&stInterval, "interval", 15*time.Second, "refresh interval for --watch")
 	rootCmd.AddCommand(statusCmd)
 }
 
@@ -52,15 +60,37 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	if err := useEnvironment(cmd.Context(), c.Kube); err != nil {
 		return err
 	}
-	fmt.Fprint(cmd.ErrOrStderr(), envNote(cmd.Context(), c.Kube, namespace))
+	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
+	draw := func() error {
+		fmt.Fprint(cmd.ErrOrStderr(), envNote(cmd.Context(), c.Kube, namespace))
+		r, err := collectStatus(cmd, c)
+		if err != nil {
+			return err
+		}
+		if err := renderStatus(w, r, pal); err != nil {
+			return err
+		}
+		if !r.Healthy() && !stWatch {
+			return errors.New("status: the environment is not ready")
+		}
+		return nil
+	}
+	if !stWatch {
+		return draw()
+	}
+	return watchLoop(cmd, w, pal, stInterval, draw)
+}
+
+// collectStatus is status's one read of the cluster, without rendering.
+func collectStatus(cmd *cobra.Command, c *kube.Clients) (*status.Report, error) {
 	r, err := status.Collect(cmd.Context(), c.Kube, c.Dyn, namespace)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if r.Exists {
 		env, err := guestEnv(cmd.Context(), c, 0)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		env.Progress = nil
 		if r.VSNOs, err = guest.List(cmd.Context(), env, namespace); err != nil {
@@ -79,13 +109,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	r.Next = status.Next(r)
-	if err := renderStatus(cmd.OutOrStdout(), r, palette(cmd.OutOrStdout())); err != nil {
-		return err
-	}
-	if !r.Healthy() {
-		return errors.New("status: the environment is not ready")
-	}
-	return nil
+	return r, nil
 }
 
 // builderVolume is the builder's volume usage, warned about above 80%. It is

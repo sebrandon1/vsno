@@ -67,6 +67,9 @@ Start with:  vsno precheck`,
 		if err := checkJSON(cmd); err != nil {
 			return err
 		}
+		if err := checkWatch(cmd); err != nil {
+			return err
+		}
 		if verbose {
 			trace.Enable(cmd.ErrOrStderr())
 		} else {
