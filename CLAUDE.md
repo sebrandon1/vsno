@@ -23,8 +23,8 @@ make coverage
 
 User documentation lives in `docs/`; `README.md` is the landing page. `docs/howto.md` is the
 copy-and-paste walkthrough, `docs/getting-started.md`, `docs/vsnos.md`, `docs/upgrades.md` and
-`docs/performance.md` are the guides, and `docs/commands.md` is the reference generated from
-`vsno <command> --help` — keep it in step when a flag changes.
+`docs/performance.md` are the guides, and `docs/commands.md` is the reference, hand-maintained
+from `vsno <command> --help` — keep it in step when a flag changes.
 
 ## Architecture
 
@@ -46,7 +46,19 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
     plus the adapter to the `precheck.Progress` interface.
   - `version.go`: `vsno version`.
   - `config.go`: `vsno config` (list, `path`, `get`, `set`, `unset`) over `lib/config`; nothing
-    secret is ever stored, only paths to credentials files.
+    secret is ever stored, only paths to credentials files. `get`, `set`, `unset` and `path` take
+    `-o json`.
+  - `create.go`: resolves `--version`, mirrors the release, builds the ISO, makes the VM.
+    `--dry-run` reports that plan through `guest.Plan` and changes nothing.
+  - `list.go`: the table; optional vSNO names plus `--state`/`--version` narrow the rows
+    (`listFilter`), while `Next:` still describes the unfiltered environment.
+  - `describe.go`: one vSNO's full report — state, ClusterVersion message, sizes, timings, its seed
+    images and snapshot — composed from `guest.List`, `seed.List` and `snapshot.List`, with
+    `status.NextFor` for the next step. `wait.go`: `vsno wait` for scripts, over
+    `guest.WaitStateDetail`, exiting non-zero unless the state asked for is reached.
+  - `completion.go`: the `ValidArgsFunction`/`RegisterFlagCompletionFunc` candidates. cobra's
+    `__complete` runs before `PersistentPreRunE`, so these read `lib/config` themselves, never call
+    `useEnvironment`, are bounded by their own timeout, and print nothing on error.
 - `lib/kube`: builds client-go typed and dynamic clients from a kubeconfig (explicit path, then
   `$KUBECONFIG`, then `~/.kube/config`), and wraps the config's `WrapTransport` so `lib/trace` sees
   every request.
@@ -98,7 +110,8 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   package but `state`, so precheck can use it.
 - `lib/status`: `Collect` reads the host components, support services, VMs and state. A broken
   component becomes a Fail or Warn row; only namespace or state read errors fail it. An operator
-  with an update available is a Warn row, so status still exits 0.
+  with an update available is a Warn row, so status still exits 0. `Next` says what the environment
+  is ready for; `NextFor` is the same for one vSNO, which is what `vsno describe` shows.
 - `lib/teardown`: `Run` plans the targets in order, checks the safety rules, confirms, then
   deletes each target and waits for those marked `wait`. `plan.go` mirrors setup for the report:
   `manifests.Steps` in reverse, each step's rendered objects (reversed; `Planner` says delete or
@@ -122,7 +135,12 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   and `vsno status`), and `making-seed` comes from the `vsno.io/seeding` annotation `seed.Create`
   sets while LCA has the guest's services stopped. `SeedingSince` is the one reading of that mark
   (recent within an hour), shared with `seed create`, which refuses a second generation on it.
-  Golden files in `testdata/` (`go test ./lib/guest -update`).
+  Golden files in `testdata/` (`go test ./lib/guest -update`). `Names` is the cheap name list
+  completion uses (VMs plus Services, no builder probes); `WaitStateDetail` and `MissingState` let
+  `vsno wait` follow a vSNO whose VM does not exist yet; `States` lists the states in lifecycle
+  order for validation and completion. `plan.go`'s `Plan` is `create --dry-run`: it reuses
+  `prepare` (so it fails for the same reasons create would) and reads the cache through an optional
+  `Lookup` on `guest.Cache`, which `vsno create`'s adapter implements.
 - `lib/guestctl`: running things on a vSNO, shared by `lib/seed` and `lib/ibu`: `Access` (oc and
   ssh; `ThroughBuilder` reaches the guest through the builder pod), `Get` (oc ... -o json),
   `Oc`/`Apply`, `SSHOut`, `Conditions`/`Object`, `Poll` with an injectable `Clock`, `Step` for
@@ -215,7 +233,7 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 | `probe.go` | `ParseProbe` turns that output into `NodeHardware`/`Disk`. `Disk.PreferredByID` prefers `wwn-*`. |
 | `prober.go` | `PodProber` creates a temporary privileged namespace, one pod per node, reads the logs, then deletes the namespace. It reports each node as it finishes (`onDone`). |
 | `checks.go` | Individual checks over `Env` (Kube, Dyn, `Prober`, `Progress`). `EvaluateNode` is pure and tested with fixtures. |
-| `run.go` | `Run` orders the checks, evaluates workers, picks the best node, and fills `Suggested`. |
+| `run.go` | `Run` orders the checks, evaluates workers, picks the best node, and fills `Suggested`. `WorkerNames` is the candidate list `--node` completes. |
 | `cidr.go`, `auth.go` | Pure helpers: CIDR overlap, and registry credential lookup |
 
 ### Behaviour to preserve

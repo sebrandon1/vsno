@@ -330,3 +330,24 @@ func TestListMarksAnAbandonedService(t *testing.T) {
 		t.Errorf("fresh service: %+v, %v", got, err)
 	}
 }
+
+func TestServiceAbandoned(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name string
+		s    *corev1.Service
+		want bool
+	}{
+		{"still building", &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+			CreationTimestamp: metav1.Time{Time: now.Add(-time.Minute)}}}, false},
+		{"at the grace", &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+			CreationTimestamp: metav1.Time{Time: now.Add(-abandonGrace)}}}, false},
+		{"past the grace", &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+			CreationTimestamp: metav1.Time{Time: now.Add(-abandonGrace - time.Second)}}}, true},
+		{"no timestamp", &corev1.Service{}, false},
+	} {
+		if got := serviceAbandoned(c.s, now); got != c.want {
+			t.Errorf("%s: serviceAbandoned = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

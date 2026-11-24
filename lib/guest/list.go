@@ -241,6 +241,19 @@ func finish(g *Guest, o *Observed) {
 // be the relic of a create that died. An ISO build takes one to three minutes.
 const abandonGrace = 10 * time.Minute
 
+// serviceAbandoned reports whether a Service with no VM behind it has waited
+// longer than any ISO build: the relic of a create that died, not one still
+// building.
+func serviceAbandoned(s *corev1.Service, now time.Time) bool {
+	created := s.CreationTimestamp.Time
+	return !created.IsZero() && now.Sub(created) > abandonGrace
+}
+
+// noBuildDetail is an abandoned Service's detail: nothing created its VM.
+func noBuildDetail(name string) string {
+	return "no VM and no build; `vsno delete " + name + "` cleans it up"
+}
+
 // buildingISO returns the vSNOs that have a Service but no VM yet: create
 // adds the Service first, then builds the ISO, then makes the VM. One that has
 // waited longer than any build is abandoned, not building.
@@ -258,9 +271,9 @@ func buildingISO(ctx context.Context, e Env, ns string, have []Guest) ([]Guest, 
 		g := Guest{Namespace: ns, Name: name, State: Building, Requested: s.Annotations[AnnRequested],
 			Version: s.Annotations[AnnVersion], Image: s.Annotations[AnnImage],
 			ServiceIP: s.Spec.ClusterIP, API: API(name), Created: s.CreationTimestamp.Time}
-		if !g.Created.IsZero() && e.Now().Sub(g.Created) > abandonGrace {
+		if serviceAbandoned(&s, e.Now()) {
 			g.State = Abandoned
-			g.Detail = "no VM and no build; `vsno delete " + name + "` cleans it up"
+			g.Detail = noBuildDetail(name)
 		}
 		out = append(out, g)
 	}

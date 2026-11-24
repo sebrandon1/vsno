@@ -20,7 +20,7 @@ func snapshotEntries() []snapshot.Entry {
 
 func TestRenderSnapshots(t *testing.T) {
 	var b bytes.Buffer
-	renderSnapshots(&b, snapshotEntries(), plain)
+	renderSnapshots(&b, snapshotEntries(), time.Now(), plain)
 	out := b.String()
 	for _, want := range []string{
 		"NAME", "VSNO", "VERSION", "SIZE", "AGE", "STATE",
@@ -35,7 +35,7 @@ func TestRenderSnapshots(t *testing.T) {
 
 func TestRenderSnapshotsEmpty(t *testing.T) {
 	var b bytes.Buffer
-	renderSnapshots(&b, nil, plain)
+	renderSnapshots(&b, nil, time.Now(), plain)
 	if !strings.Contains(b.String(), "No snapshots.") {
 		t.Errorf("empty snapshots = %q, want the create hint", b.String())
 	}
