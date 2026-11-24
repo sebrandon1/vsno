@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/config"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/registry"
 	"github.com/sebrandon1/vsno/lib/seed"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
@@ -140,7 +142,9 @@ func seedEnv(cmd *cobra.Command, timeout time.Duration) (seed.Env, error) {
 		return seed.Env{}, err
 	}
 	env, err := guestEnv(cmd.Context(), c, timeout)
-	return seed.Env{Env: env}, err
+	return seed.Env{Env: env, Volume: func(ctx context.Context, ns string) (int64, int64, error) {
+		return registry.Usage(ctx, c.Config, c.Kube, ns)
+	}}, err
 }
 
 func runSeedCreate(cmd *cobra.Command, args []string) error {

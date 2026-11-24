@@ -46,6 +46,10 @@ type Env struct {
 	guest.Env
 	// Access returns oc and ssh for vSNO name; nil means through the builder.
 	Access func(name string) Access
+	// Volume reads the environment registry's used and total bytes. Nil means
+	// the caller can't tell, and the precheck then says nothing about space
+	// rather than inventing a number.
+	Volume func(ctx context.Context, ns string) (used, total int64, err error)
 }
 
 // Defaults fills in what e leaves unset: silent progress, a 10s poll, an
