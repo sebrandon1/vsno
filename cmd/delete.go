@@ -202,8 +202,8 @@ type powerResult struct {
 
 // powerWait is what start and stop say they are doing, and the states they wait
 // for: a stop wants the VM halted, a start wants the guest answering again — or
-// one of the two states that end with it not answering, which runPower turns
-// into what is going on.
+// one of the two states that end with it not answering, which startOutcome
+// turns into what is going on.
 func powerWait(run bool) (verb string, want []guest.State) {
 	if run {
 		return "starting", []guest.State{guest.Ready, guest.Failed, guest.MakingSeed}
