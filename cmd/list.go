@@ -65,23 +65,17 @@ func runList(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	w, pal := cmd.OutOrStdout(), palette(cmd.OutOrStdout())
-	for {
+	draw := func() error {
 		l, err := collect(cmd.Context(), c, env, single)
 		if err != nil {
 			return err
 		}
-		if lsWatch && pal.On {
-			fmt.Fprint(w, "\033[H\033[2J") // clear the screen between refreshes
-		}
-		if err := renderList(w, l, time.Now(), pal); err != nil || !lsWatch {
-			return err
-		}
-		select {
-		case <-cmd.Context().Done():
-			return nil
-		case <-time.After(lsInterval):
-		}
+		return renderList(w, l, time.Now(), pal)
 	}
+	if !lsWatch {
+		return draw()
+	}
+	return watchLoop(cmd, w, pal, lsInterval, draw)
 }
 
 // collect reads the vSNOs and the nodes' capacity, from one environment or all.
