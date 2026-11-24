@@ -19,6 +19,21 @@ Accepted by every command, before or after the command name:
 | `-h, --help` | Help for the command |
 | `--version` | Print the vsno version (root only; also `vsno version`). Not `-v`, which is verbose |
 
+### Shell completion
+
+`vsno completion bash|zsh|fish|powershell` prints a completion script, from cobra. The
+completions are vsno's own: vSNO names (`delete`, `start`, `oc`, `upgrade`, …), worker nodes for
+`--node`, the vsno environments for `-n`, the setting names for `config get|set|unset`, the seed
+images for `seed delete` and the snapshots for `snapshot delete`.
+
+```bash
+source <(vsno completion bash)
+```
+
+Completion reads the cluster (never through the builder, except for seed images and snapshots) and
+gives up after a couple of seconds, offering nothing when the cluster cannot be reached. It never
+prints a warning and never probes a guest.
+
 Anything that deletes asks first, unless it takes `--yes`. The answer is `y`, or the name of what
 you are destroying when the thing is hard to get back: a vSNO's disk, a namespace, a vSNO or a seed
 image. The words older versions asked for (`prune`, `gc`, `yes`) still work.
@@ -47,6 +62,8 @@ With `--verbose`, a `create` reads like this:
 | [`status`](#vsno-status) | Show the state of an environment |
 | [`create`](#vsno-create) | Create a vSNO |
 | [`list`](#vsno-list) | List the vSNOs and their state |
+| [`describe`](#vsno-describe) | Show everything about one vSNO |
+| [`wait`](#vsno-wait) | Wait for a vSNO to reach a state, for scripts |
 | [`start`](#vsno-start) / [`stop`](#vsno-stop) | Start or stop a vSNO, keeping its disk |
 | [`delete`](#vsno-delete) | Delete vSNOs |
 | [`oc`](#vsno-oc) / [`ssh`](#vsno-ssh) / [`kubeconfig`](#vsno-kubeconfig) / [`screenshot`](#vsno-screenshot) | Reach a vSNO |
@@ -57,6 +74,9 @@ With `--verbose`, a `create` reads like this:
 | [`snapshot`](#vsno-snapshot) | Keep a vSNO's disk, and restore from it |
 | [`cache`](#vsno-cache) | Manage the mirrored OpenShift releases |
 | [`iso`](#vsno-iso) | Show, delete and prune what creates leave behind |
+| [`config`](#vsno-config) | Read and write the settings file |
+| [`doctor`](#vsno-doctor) | Look for known broken states and fix the reversible ones |
+| [`report`](#vsno-report) | Collect one document for a bug report or a demo |
 | [`teardown`](#vsno-teardown) | Delete an environment |
 | [`version`](#vsno-version) | Print the vsno version |
 
@@ -130,7 +150,7 @@ one document after another.
 
 Installs a single-node OpenShift cluster in a VM (`vsno setup` must have run): resolves `--version`
 to a release image, builds the agent ISO in the builder pod, creates the VM, its disks, a Service
-and DNS entries. The install takes about 45 minutes; `--watch` follows it. Without a name it picks
+and DNS entries. The install takes about 20–45 minutes; `--watch` follows it. Without a name it picks
 a free random one such as `brave-otter`.
 
 | Flag | Meaning |
@@ -144,6 +164,15 @@ a free random one such as `brave-otter`.
 | `--no-cache` | Install from the internet instead of the environment registry's mirror (the vSNO still trusts the registry's CA) |
 | `-w, --watch` | Follow the install until the vSNO is ready |
 | `--timeout <duration>` | How long to wait for the install (default `1h30m`) |
+| `--dry-run` | Resolve the release, node, disk and cache state, report the steps, change nothing |
+
+`--dry-run` reads what `create` reads — so it fails for the same reasons (no environment, no builder,
+no pull secret, a name already taken, too little capacity) — and stops before anything is created.
+It reports whether the release is already in the environment's registry mirror:
+
+```bash
+vsno create target --version 4.22 --dry-run
+```
 
 `--version` accepts a release (`4.20.46`), a minor (`4.20`, its latest z-stream), `4.22-nightly`, a
 nightly's name, or a release image pullspec. Nightlies need `registry.ci.openshift.org` credentials
@@ -157,10 +186,60 @@ any build, which `vsno delete` cleans up), version, size, age and API, plus a fo
 node and how many more default-size vSNOs fit, and one `Next:` line with what they are ready for, as
 `vsno status` reports it. Alias: `ls`.
 
+Takes optional vSNO names, and `--state` and `--version` narrow the rows further. Names OR within
+themselves, states OR, and the three groups AND. `Next:` still describes the whole environment.
+
+```bash
+vsno list seed target
+vsno list --state ready --version 4.22
+vsno list --state failed,abandoned
+```
+
 | Flag | Meaning |
 |---|---|
 | `-w, --watch` | Refresh until interrupted |
 | `--interval <duration>` | Refresh interval for `--watch` (default `15s`) |
+| `--state <state>` | Only this state; repeatable or comma-separated |
+| `--version <version\|minor>` | Only this full version, or this minor (such as `4.22`) |
+
+## `vsno describe`
+
+Shows everything vsno knows about one vSNO in one place: state and detail (with the
+ClusterVersion's own message), installed and requested version, release image, size, node, API,
+age, whether it installed from the release cache, its LCA source, create timings, unhealthy
+operators, the Image Based Upgrade stage, the seed images made from it, its snapshot, and a
+`Next:` line.
+
+```bash
+vsno describe seed
+vsno describe seed -o json
+```
+
+The seed images and the snapshot are read from the environment's registry and builder. When either
+cannot be read, the rest is still shown and the reason appears as a warning. This is the first
+place to look when one vSNO misbehaves; `vsno doctor` is for the environment as a whole.
+
+## `vsno wait`
+
+Polls until the vSNO reaches the state `--for` names, then exits 0; exits non-zero when it reaches
+`failed` or `abandoned` instead, or the timeout runs out. It is the scriptable form of
+`vsno list --watch`:
+
+```bash
+vsno create target --version 4.22
+vsno wait target --for ready --timeout 45m
+```
+
+A vSNO still building its ISO is followed too: until its VM exists, the Service `create` adds first
+says it is building. A name that is not there fails immediately instead of waiting out the timeout.
+`--for failed` also stops when the vSNO is clearly healthy (ready or stopped) and says so.
+
+`-o json` prints `vsno`, `for`, `state` and `detail`.
+
+| Flag | Meaning |
+|---|---|
+| `--for ready\|stopped\|failed` | State to wait for (default `ready`) |
+| `--timeout <duration>` | How long to wait (default `90m`) |
 
 ## `vsno start`
 
@@ -401,7 +480,8 @@ name. A running vSNO is stopped for the snapshot and started again afterwards. A
 
 ### `vsno snapshot create`
 
-Stops the vSNO if needed, snapshots its disk, and starts it again.
+Stops the vSNO if needed, snapshots its disk, and starts it again. Takes `[name]`; without it,
+snapshots the environment's only vSNO.
 
 | Flag | Meaning |
 |---|---|
@@ -414,7 +494,7 @@ Lists the kept snapshots and whether their vSNO still exists. Alias: `ls`.
 ### `vsno snapshot delete`
 
 Removes the named snapshots and the installer files kept with them. Lists them and asks you to type
-`yes` unless `--yes`.
+`y` unless `--yes` (`yes` still works).
 
 | Flag | Meaning |
 |---|---|
@@ -471,8 +551,8 @@ finished while nothing was watching is recorded before the list is shown. Alias:
 
 Removes a cached release, or the ones no vSNO uses (`--keep N` keeps the N most recently used). It
 deletes the images and then runs the registry's garbage collector, which is what frees the space.
-Lists what it would remove and asks you to type `prune` unless `--yes`. A release a vSNO still runs
-is refused.
+Lists what it would remove and asks you to type `y` unless `--yes` (`prune`, what older versions
+asked for, still works). A release a vSNO still runs is refused.
 
 | Flag | Meaning |
 |---|---|
@@ -541,7 +621,8 @@ Takes only the global flags.
 
 Removes what a finished or failed `create` left behind: the served ISO and build directory of
 vSNOs that no longer exist, the `openshift-install` binaries no vSNO runs (`--keep N` keeps the N
-newest), and their ISO DataVolumes. Lists them and asks you to type `prune` unless `--yes`.
+newest), and their ISO DataVolumes. Lists them and asks you to type `y` unless `--yes` (`prune`
+still works).
 
 | Flag | Meaning |
 |---|---|
@@ -584,6 +665,11 @@ vsno config set seed.sync.to quay.io/me/seeds
 vsno seed sync seed-a:4.22.22
 ```
 
+All of them take `-o json`: `config` prints an array of `{key, what, from, value}`; `config path`
+prints `{path}`; `config get` prints `{key, value}`; `config set` prints `{key, value, path}`; and
+`config unset` prints `{key, path}`. `config get` and `config unset` read and write the file only;
+`vsno config` is where the environment's contribution to a value is shown (`from`).
+
 ## `vsno doctor`
 
 Looks for the states that read as a hang or a boot failure but are something vsno knows about: an
@@ -592,6 +678,8 @@ ImageBasedUpgrade whose `Idle` condition is stuck at a reason LCA's controller d
 vsno process is following ([#127](https://github.com/sebrandon1/vsno/issues/127)); a vSNO whose
 `kubelet` and `crio` a half-finished seed generation left disabled ([#129](https://github.com/sebrandon1/vsno/issues/129));
 a `Released` PersistentVolume still holding a disk; and a registry too full for the next seed image.
+
+Takes optional vSNO names; none means every vSNO and the environment.
 
 It only reads unless `--fix` is given, and `--fix` runs only two reversible actions — enabling crio
 and kubelet on such a vSNO, and the status patch that unsticks LCA's Idle condition. It never

@@ -22,7 +22,8 @@ var kubeconfigCmd = &cobra.Command{
 	Long: `kubeconfig prints the vSNO's admin kubeconfig. Its server,
 https://api.<name>.vsno.lab:6443, resolves only inside the environment (through
 its dnsmasq), so use it from a pod there, or use vsno oc from anywhere.`,
-	Args: oneArg("the vSNO, as `vsno list` shows it"),
+	Args:              oneArg("the vSNO, as `vsno list` shows it"),
+	ValidArgsFunction: completeVSNOFirst,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := accessEnv(cmd.Context())
 		if err != nil {
@@ -40,7 +41,8 @@ builder pod. Flags after the name go to oc, for example:
 
   vsno oc seed get nodes -o wide
   vsno oc seed -- get clusterversion`,
-	Args: someArgs("the vSNO to run oc against, then the oc arguments"),
+	Args:              someArgs("the vSNO to run oc against, then the oc arguments"),
+	ValidArgsFunction: completeVSNOFirst,
 	RunE: trimmedFirst(func(cmd *cobra.Command, args []string) error {
 		return runAccess(cmd, args, guest.Oc)
 	}),
@@ -51,7 +53,8 @@ var sshCmd = &cobra.Command{
 	Short: "SSH to a vSNO as core",
 	Long: `ssh opens a shell on the vSNO as user core (or runs the command), from the
 builder pod with the environment's SSH key.`,
-	Args: someArgs("the vSNO to ssh to, then the command to run"),
+	Args:              someArgs("the vSNO to ssh to, then the command to run"),
+	ValidArgsFunction: completeVSNOFirst,
 	RunE: trimmedFirst(func(cmd *cobra.Command, args []string) error {
 		return runAccess(cmd, args, guest.SSH)
 	}),
@@ -62,7 +65,8 @@ var screenshotCmd = &cobra.Command{
 	Short: "Save a PNG of a vSNO's console",
 	Long: `screenshot saves the vSNO's VGA console as a PNG: useful when the guest is
 unreachable, for example stuck in emergency mode after a reboot.`,
-	Args: oneArg("the vSNO, as `vsno list` shows it"),
+	Args:              oneArg("the vSNO, as `vsno list` shows it"),
+	ValidArgsFunction: completeVSNOFirst,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env, err := accessEnv(cmd.Context())
 		if err != nil {

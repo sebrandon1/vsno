@@ -283,3 +283,30 @@ func TestReadErrorsTolerate(t *testing.T) {
 		t.Errorf("after a good read: %v", err)
 	}
 }
+
+// A vSNO with no VM yet is still building its ISO while the Service create
+// added first is young; older than any build, it is abandoned.
+func TestMissingState(t *testing.T) {
+	w := newWorld(t)
+	env := w.env()
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	env.Now = func() time.Time { return now }
+	ctx := context.Background()
+
+	if st, _ := MissingState(ctx, env, ns, "gone"); st != Unknown {
+		t.Errorf("nothing at all = %s, want unknown", st)
+	}
+	for name, age := range map[string]time.Duration{"fresh": time.Minute, "old": 2 * abandonGrace} {
+		s := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name,
+			Labels: map[string]string{LabelName: name}, CreationTimestamp: metav1.Time{Time: now.Add(-age)}}}
+		if _, err := w.kube.CoreV1().Services(ns).Create(ctx, s, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if st, _ := MissingState(ctx, env, ns, "fresh"); st != Building {
+		t.Errorf("fresh Service = %s, want building-iso", st)
+	}
+	if st, d := MissingState(ctx, env, ns, "old"); st != Abandoned || !strings.Contains(d, "vsno delete") {
+		t.Errorf("old Service = %s %q, want abandoned with the delete hint", st, d)
+	}
+}

@@ -95,6 +95,26 @@ func Next(r *Report) string {
 		ready[0].Name, ready[0].Name)
 }
 
+// NextFor is what to do about one vSNO, from its state alone: Next for a
+// single row, which is what `vsno describe` shows.
+func NextFor(g guest.Guest) string {
+	switch g.State {
+	case guest.Ready:
+		return Next(&Report{Exists: true, VSNOs: []guest.Guest{g}})
+	case guest.Stopped:
+		return fmt.Sprintf("start it with `vsno start %s`", g.Name)
+	case guest.Failed:
+		return fmt.Sprintf("`vsno delete %s` removes it; its detail says what failed", g.Name)
+	case guest.Abandoned:
+		return fmt.Sprintf("`vsno delete %s` cleans it up", g.Name)
+	case guest.MakingSeed, guest.Building, guest.Importing, guest.Starting, guest.Installing, guest.Finishing:
+		return fmt.Sprintf("follow it with `vsno wait %s`", g.Name)
+	case guest.Unknown:
+		return fmt.Sprintf("`vsno list --watch` follows it; `vsno screenshot %s` shows the console", g.Name)
+	}
+	return ""
+}
+
 // readyVSNOs are the ones an upgrade or a seed can be made from now.
 func readyVSNOs(vsnos []guest.Guest) []guest.Guest {
 	var out []guest.Guest

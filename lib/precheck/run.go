@@ -9,6 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 // Options narrows what Run does.
@@ -89,6 +90,16 @@ func nodeNames(nodes []corev1.Node) []string {
 		names = append(names, n.Name)
 	}
 	return names
+}
+
+// WorkerNames returns the nodes that can host a vSNO now: Ready, schedulable
+// workers. It is what --node completes.
+func WorkerNames(ctx context.Context, kube kubernetes.Interface) ([]string, error) {
+	nodes, err := kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing nodes: %w", err)
+	}
+	return nodeNames(candidateWorkers(nodes.Items)), nil
 }
 
 // evaluateWorkers probes the workers and evaluates each one that answered.

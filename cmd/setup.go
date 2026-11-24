@@ -105,6 +105,7 @@ func init() {
 	f.BoolVar(&suKSM, "ksm", false, "turn on kernel samepage merging for the vSNO node (changes OpenShift Virtualization; asks unless --yes)")
 	f.StringVar(&suRegSize, "registry-size", manifests.DefaultRegistrySize,
 		"size of the in-cluster registry's volume, which holds mirrored releases (it only grows)")
+	_ = setupCmd.RegisterFlagCompletionFunc("node", completeNodes)
 	rootCmd.AddCommand(setupCmd)
 }
 

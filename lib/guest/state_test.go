@@ -107,3 +107,17 @@ func TestIBUDone(t *testing.T) {
 		}
 	}
 }
+
+func TestStates(t *testing.T) {
+	got := States()
+	want := []State{Building, Abandoned, Importing, Starting, Installing, Finishing,
+		MakingSeed, Ready, Stopped, Failed, Unknown, Deleting}
+	if len(got) != len(want) {
+		t.Fatalf("States = %v, want %d", got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("States[%d] = %s, want %s", i, got[i], want[i])
+		}
+	}
+}

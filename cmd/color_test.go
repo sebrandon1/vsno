@@ -53,6 +53,9 @@ func TestColorKeepsLayout(t *testing.T) {
 		"setup":         func(b *bytes.Buffer, p ui.Palette) { _ = renderSetup(b, setupResult(), false, p) },
 		"setup dry run": func(b *bytes.Buffer, p ui.Palette) { _ = renderSetup(b, dryRunResult(), true, p) },
 		"teardown":      func(b *bytes.Buffer, p ui.Palette) { _ = renderTeardown(b, targets, errors.New("x"), false, p) },
+		"describe": func(b *bytes.Buffer, p ui.Palette) {
+			_ = renderDescribe(b, testDescription(), time.Now(), p)
+		},
 		"list wide": func(b *bytes.Buffer, p ui.Palette) {
 			old := outputFormat
 			outputFormat = formatWide

@@ -6,6 +6,7 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/sebrandon1/go-toolbox/cliout"
@@ -13,6 +14,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
 	"github.com/sebrandon1/vsno/lib/precheck"
+	"github.com/sebrandon1/vsno/lib/release"
 	"github.com/sebrandon1/vsno/lib/status"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
@@ -21,6 +23,8 @@ import (
 var (
 	lsWatch    bool
 	lsInterval time.Duration
+	lsState    []string
+	lsVersion  string
 )
 
 var listCmd = &cobra.Command{
@@ -33,14 +37,23 @@ size, age and API, plus a footer with the memory left on the node and how many
 more default-size vSNOs fit. Running vSNOs are asked for their state through
 the builder pod. A state that is really progress — a control plane still
 rolling out, a seed image being made — is named as such; the ClusterVersion's
-own message is in -o json and in vsno status.`,
-	Args: cobra.NoArgs,
-	RunE: runList,
+own message is in -o json and in vsno status.
+
+Name the vSNOs to show only those, and narrow further with --state (repeatable
+or comma-separated) and --version (a full version, or a minor such as 4.22).
+The filters combine. The Next line still describes the whole environment.`,
+	Args:              cobra.ArbitraryArgs,
+	ValidArgsFunction: completeVSNOs,
+	RunE:              trimmed(runList),
 }
 
 func init() {
-	listCmd.Flags().BoolVarP(&lsWatch, "watch", "w", false, "refresh until interrupted")
-	listCmd.Flags().DurationVar(&lsInterval, "interval", 15*time.Second, "refresh interval for --watch")
+	f := listCmd.Flags()
+	f.BoolVarP(&lsWatch, "watch", "w", false, "refresh until interrupted")
+	f.DurationVar(&lsInterval, "interval", 15*time.Second, "refresh interval for --watch")
+	f.StringArrayVar(&lsState, "state", nil, "only vSNOs in this state (repeatable, or comma-separated)")
+	f.StringVar(&lsVersion, "version", "", "only vSNOs at this version, or in this minor")
+	_ = listCmd.RegisterFlagCompletionFunc("state", completeStates)
 	rootCmd.AddCommand(listCmd)
 }
 
@@ -50,9 +63,132 @@ type listing struct {
 	HostMinor string           `json:"hostMinor,omitempty"` // the host's OpenShift minor, for the empty hint
 	VSNOs     []guest.Guest    `json:"vsnos"`
 	Capacity  []guest.Capacity `json:"capacity,omitempty"`
+	// Filter narrows VSNOs; Next is about the whole environment, not the
+	// filtered rows.
+	Filter *listFilter `json:"filter,omitempty"`
+	Next   string      `json:"next,omitempty"`
 }
 
-func runList(cmd *cobra.Command, _ []string) error {
+// listFilter is what list narrows to: names OR, states OR, the version, all
+// ANDed.
+type listFilter struct {
+	Names   []string      `json:"names,omitempty"`
+	States  []guest.State `json:"states,omitempty"`
+	Version string        `json:"version,omitempty"`
+}
+
+func (f listFilter) empty() bool {
+	return len(f.Names) == 0 && len(f.States) == 0 && f.Version == ""
+}
+
+func (f listFilter) String() string {
+	var parts []string
+	if len(f.Names) > 0 {
+		parts = append(parts, "name "+strings.Join(f.Names, ", "))
+	}
+	if len(f.States) > 0 {
+		parts = append(parts, "state "+joinStates(f.States))
+	}
+	if f.Version != "" {
+		parts = append(parts, "version "+f.Version)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// apply keeps the vSNOs the filter describes.
+func (f listFilter) apply(gs []guest.Guest) []guest.Guest {
+	out := make([]guest.Guest, 0, len(gs))
+	for _, g := range gs {
+		if len(f.Names) > 0 && !slices.Contains(f.Names, g.Name) {
+			continue
+		}
+		if len(f.States) > 0 && !slices.Contains(f.States, g.State) {
+			continue
+		}
+		if f.Version != "" && !versionMatches(f.Version, g.ShownVersion()) {
+			continue
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
+// listFilterFrom validates the arguments and flags before the cluster is read,
+// so a typo fails immediately.
+func listFilterFrom(args, states []string, version string) (listFilter, error) {
+	f := listFilter{Names: names(args), Version: strings.TrimSpace(version)}
+	var err error
+	if f.States, err = parseStates(states); err != nil {
+		return listFilter{}, err
+	}
+	return f, nil
+}
+
+// parseStates accepts --state repeated or comma-separated, in any case.
+func parseStates(vals []string) ([]guest.State, error) {
+	known := guest.States()
+	var out []guest.State
+	for _, v := range vals {
+		for _, piece := range strings.Split(v, ",") {
+			if piece = strings.TrimSpace(piece); piece == "" {
+				continue
+			}
+			s := guest.State(strings.ToLower(piece))
+			if !slices.Contains(known, s) {
+				return nil, fmt.Errorf("--state takes %s (not %q)", joinStates(known), piece)
+			}
+			if !slices.Contains(out, s) {
+				out = append(out, s)
+			}
+		}
+	}
+	return out, nil
+}
+
+func joinStates(ss []guest.State) string {
+	return strings.Join(stateNames(ss), ", ")
+}
+
+// stateNames is the states as strings, for display and completion.
+func stateNames(ss []guest.State) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = string(s)
+	}
+	return out
+}
+
+// versionMatches is exact, or the same minor when want is only a minor.
+func versionMatches(want, have string) bool {
+	switch {
+	case want == "":
+		return true
+	case want == have:
+		return true
+	case have == "":
+		return false
+	case strings.Count(want, ".") == 1:
+		return release.Minor(have) == want
+	}
+	return false
+}
+
+// filter narrows the listing and records what the whole environment is ready
+// for: a filter changes which rows are shown, not the next step.
+func (l *listing) filter(f listFilter) {
+	l.Next = status.Next(&status.Report{Exists: true, VSNOs: l.VSNOs})
+	if f.empty() {
+		return
+	}
+	l.Filter = &f
+	l.VSNOs = f.apply(l.VSNOs)
+}
+
+func runList(cmd *cobra.Command, args []string) error {
+	filter, err := listFilterFrom(args, lsState, lsVersion)
+	if err != nil {
+		return err
+	}
 	c, err := kube.New(kubeconfig, kubeContext)
 	if err != nil {
 		return err
@@ -70,6 +206,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
+		l.filter(filter)
 		return renderList(w, l, time.Now(), pal)
 	}
 	if !lsWatch {
@@ -122,13 +259,20 @@ func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 	if outputFormat == formatJSON {
 		return cliout.PrintJSON(w, l)
 	}
-	if len(l.VSNOs) == 0 {
+	switch {
+	case len(l.VSNOs) == 0 && l.Filter != nil:
+		where := "in any vsno environment"
+		if l.Namespace != "" {
+			where = "in " + l.Namespace
+		}
+		fmt.Fprintf(w, "No vSNOs match %s %s.\n", l.Filter, where)
+	case len(l.VSNOs) == 0:
 		if l.Namespace == "" {
 			fmt.Fprintln(w, "No vSNOs in any vsno environment. "+emptyHint(l))
 			return nil
 		}
 		fmt.Fprintf(w, "No vSNOs in %s. %s\n", l.Namespace, emptyHint(l))
-	} else {
+	default:
 		var t ui.Table
 		head := []string{pal.Bold("NAMESPACE"), pal.Bold("NAME"), pal.Bold("STATE"), pal.Bold("VERSION"), pal.Bold("AGE"),
 			pal.Bold("CPU"), pal.Bold("MEMORY"), pal.Bold("DISK"), pal.Bold("API"), pal.Bold("DETAIL")}
@@ -154,11 +298,10 @@ func renderList(w io.Writer, l *listing, now time.Time, pal ui.Palette) error {
 		fmt.Fprintf(w, "\nnode %s: %d GiB memory free, room for %d more default-size vSNO(s) (%d GiB each)\n",
 			c.Node, c.FreeMemoryGiB, c.FitDefault, guest.DefaultMemoryGiB)
 	}
-	// What the vSNOs are ready for, from the part of the report list has.
-	if len(l.VSNOs) > 0 {
-		if next := status.Next(&status.Report{Exists: true, VSNOs: l.VSNOs}); next != "" {
-			fmt.Fprintf(w, "\n%s %s\n", pal.Bold("Next:"), next)
-		}
+	// What the whole environment is ready for. A filter narrows the rows, not
+	// the next step; a filtered-to-nothing listing says nothing.
+	if len(l.VSNOs) > 0 && l.Next != "" {
+		fmt.Fprintf(w, "\n%s %s\n", pal.Bold("Next:"), l.Next)
 	}
 	return nil
 }

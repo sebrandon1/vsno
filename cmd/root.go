@@ -120,6 +120,8 @@ func init() {
 	pf.BoolVar(&noColor, "no-color", false, "don't color the output (also: NO_COLOR=1)")
 	// -v is verbose, so cobra registers --version without a shorthand.
 	pf.BoolVarP(&verbose, "verbose", "v", false, "trace the cluster requests and builder commands on stderr")
+	_ = rootCmd.RegisterFlagCompletionFunc("output", completeOutput)
+	_ = rootCmd.RegisterFlagCompletionFunc("namespace", completeNamespaces)
 }
 
 // commandsWithWide have columns beyond the default view. Elsewhere wide would be
@@ -197,6 +199,12 @@ func oneArg(what string) cobra.PositionalArgs {
 		}
 		return nil
 	}
+}
+
+// noVSNO is the error for a name the environment does not have: a reader that
+// mistypes one is told how to see the names there are.
+func noVSNO(name, ns string) error {
+	return fmt.Errorf("no vSNO named %s in %s; `vsno list` shows the ones there are", name, ns)
 }
 
 // someArgs validates a command that takes one or more positionals.

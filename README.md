@@ -21,7 +21,7 @@ go install github.com/sebrandon1/vsno@latest   # or download a release binary
 export KUBECONFIG=~/kubeconfigs/host-cluster   # the cluster that will host the vSNOs
 vsno precheck                                  # can it host vSNOs?  ~1 minute
 vsno setup                                     # install what they need; answer its prompts
-vsno create seed --version 4.22 --watch        # first vSNO;  ~45 minutes
+vsno create seed --version 4.22 --watch        # first vSNO;  ~20-45 minutes
 vsno list                                      # state, version, size, API, free capacity
 ```
 
@@ -37,7 +37,9 @@ To pin the choices instead of taking precheck's suggestion, pass them to `setup`
 --device /dev/disk/by-id/<id>`), or save them once with `vsno precheck --write-config vsno.yaml` and
 pass `--config vsno.yaml`.
 
-`vsno version` (or `vsno --version`) prints the build version.
+`vsno version` (or `vsno --version`) prints the build version. Shell completion is built in:
+`source <(vsno completion bash)` (also `zsh`, `fish` and `powershell`) completes vSNO names, nodes,
+environments and settings.
 
 ## Commands
 
@@ -49,6 +51,8 @@ pass `--config vsno.yaml`.
 | `vsno config` | Remember settings between runs: `namespace`, `output`, seed sync |
 | `vsno create [name] --version <v>` | Create a vSNO (`--from-snapshot` to restore one) |
 | `vsno list` | List the vSNOs and what's left on their node |
+| `vsno describe` | Show everything about one vSNO, and what to do next |
+| `vsno wait` | Wait for a vSNO to be ready, stopped or failed (for scripts) |
 | `vsno start` / `vsno stop` | Start or stop a vSNO, keeping its disk |
 | `vsno delete` | Delete vSNOs |
 | `vsno oc` / `vsno ssh` | Run `oc` against a vSNO, or open a shell on it |

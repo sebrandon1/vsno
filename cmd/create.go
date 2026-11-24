@@ -30,6 +30,8 @@ var (
 	crTimeout time.Duration
 	// crFromSnapshot restores the root disk from the vSNO's snapshot.
 	crFromSnapshot bool
+	// crDryRun reports what create would do and changes nothing.
+	crDryRun bool
 )
 
 var createCmd = &cobra.Command{
@@ -38,8 +40,13 @@ var createCmd = &cobra.Command{
 	Long: `create installs a single-node OpenShift cluster in a VM in the environment
 (vsno setup must have run). It resolves --version to a release image, builds
 the agent ISO in the builder pod, creates the VM, its disks, a Service and DNS
-entries. The install then takes about 45 minutes: --watch follows it with
-progress until the cluster is ready; otherwise follow it with vsno list --watch.
+entries. The install then takes about 20-45 minutes: --watch follows it with
+progress until the cluster is ready; otherwise follow it with vsno list --watch
+or vsno wait.
+
+--dry-run resolves the release, the node, the disk and whether the cache has
+the release already, and reports the steps it would take, changing nothing.
+It still needs a set-up environment, because that is what create needs.
 
 Without -n, vSNO commands use the environment vsno setup created, when there
 is exactly one.
@@ -66,8 +73,10 @@ func init() {
 	f.BoolVar(&crFromSnapshot, "from-snapshot", false, "restore the disk from the vSNO's snapshot (see vsno snapshot) instead of installing")
 	f.BoolVarP(&crWatch, "watch", "w", false, "follow the install until the vSNO is ready")
 	f.DurationVar(&crTimeout, "timeout", 90*time.Minute, "how long to wait for the install")
+	f.BoolVar(&crDryRun, "dry-run", false, "report what create would do and change nothing")
 	// --version is required unless the disk comes from a snapshot, which brings
 	// its own; runCreate checks.
+	_ = createCmd.RegisterFlagCompletionFunc("node", completeNodes)
 	rootCmd.AddCommand(createCmd)
 }
 
@@ -105,6 +114,25 @@ func (c cacheClient) Ensure(ctx context.Context, ns string, rel release.Release,
 	return cache.Ensure(ctx, c.env, cache.EnsureOptions{Namespace: ns, Release: rel, OnLine: onLine})
 }
 
+// Lookup reports the release already mirrored for ns, without starting one:
+// what --dry-run needs.
+func (c cacheClient) Lookup(ctx context.Context, ns string, rel release.Release) (*cache.Entry, error) {
+	rep, err := cache.List(ctx, c.env, ns, nil)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rep.Entries {
+		e := &rep.Entries[i]
+		switch {
+		case rel.Image != "" && e.Image == rel.Image:
+			return e, nil
+		case rel.Version != "" && e.Version == rel.Version:
+			return e, nil
+		}
+	}
+	return nil, nil
+}
+
 func runCreate(cmd *cobra.Command, args []string) error {
 	c, err := kube.New(kubeconfig, kubeContext)
 	if err != nil {
@@ -125,13 +153,16 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err := checkCreateArgs(name, crFromSnapshot, crVersion); err != nil {
 		return err
 	}
-	if outputFormat != formatJSON {
-		fmt.Fprint(cmd.ErrOrStderr(), envNote(cmd.Context(), c.Kube, namespace))
-		fmt.Fprintf(cmd.ErrOrStderr(), "Creating vSNO %s in %s on %s (context %q)...\n\n", name, namespace, c.Config.Host, c.Context)
-	}
 	snap, err := restoreFrom(cmd, name)
 	if err != nil {
 		return err
+	}
+	if crDryRun {
+		return runCreateDryRun(cmd, env, name, snap)
+	}
+	if outputFormat != formatJSON {
+		fmt.Fprint(cmd.ErrOrStderr(), envNote(cmd.Context(), c.Kube, namespace))
+		fmt.Fprintf(cmd.ErrOrStderr(), "Creating vSNO %s in %s on %s (context %q)...\n\n", name, namespace, c.Config.Host, c.Context)
 	}
 	g, err := guest.Create(cmd.Context(), env, guest.CreateOptions{
 		Namespace: namespace, Name: name, Version: crVersion, Node: crNode,
@@ -181,6 +212,55 @@ func restoreTarget(s *snapshot.Entry, name string) (string, error) {
 	return s.Name, nil
 }
 
+// runCreateDryRun previews the create: it resolves the release, node, size and
+// cache state exactly as create would, and changes nothing.
+func runCreateDryRun(cmd *cobra.Command, env guest.Env, name, snap string) error {
+	p, err := guest.Plan(cmd.Context(), env, guest.CreateOptions{
+		Namespace: namespace, Name: name, Version: crVersion, Node: crNode,
+		Cores: crCores, MemoryGiB: crMemory, DiskGiB: crDisk, Wait: crWatch, NoCache: crNoCache,
+		Snapshot: snap,
+	})
+	if err != nil {
+		return err
+	}
+	w := cmd.OutOrStdout()
+	return renderCreatePlan(w, p, palette(w))
+}
+
+func renderCreatePlan(w io.Writer, p *guest.CreatePlan, pal ui.Palette) error {
+	if outputFormat == formatJSON {
+		return writeJSON(w, p)
+	}
+	fmt.Fprintf(w, "%s %s %s\n", pal.Bold("vSNO"), pal.Bold(p.Name), pal.Dim("in "+p.Namespace+" on "+p.Node))
+	version := p.Release.Version
+	if version == "" {
+		version = p.Release.Requested
+	}
+	line := fmt.Sprintf("%s, %d vCPU / %d GiB / %d GiB", version, p.Cores, p.MemoryGiB, p.DiskGiB)
+	switch {
+	case p.Snapshot != "":
+		line += ", restored from snapshot " + p.Snapshot
+	case p.NoCache:
+		line += ", no cache"
+	case p.Cache != nil:
+		line += ", cache hit"
+	default:
+		line += ", cache miss"
+	}
+	fmt.Fprintln(w, line)
+	if p.Release.Image != "" {
+		fmt.Fprintln(w, pal.Dim(p.Release.Image))
+	}
+	var t ui.Table
+	t.Row(pal.Bold("STEP"), pal.Bold("DETAIL"))
+	for _, s := range p.Steps {
+		t.Row(s.Name, pal.Dim(s.Detail))
+	}
+	t.Write(w)
+	fmt.Fprintf(w, "\n%s\n", pal.Dim("Dry run: nothing was changed."))
+	return nil
+}
+
 func renderCreated(w io.Writer, g *guest.Guest, ready bool, pal ui.Palette) error {
 	if outputFormat == formatJSON {
 		return cliout.PrintJSON(w, g)
@@ -190,7 +270,7 @@ func renderCreated(w io.Writer, g *guest.Guest, ready bool, pal ui.Palette) erro
 	case ready:
 		fmt.Fprintf(w, "%s vSNO %s is ready: OpenShift %s, %s\n", pal.Icon("✓"), pal.Bold(g.Name), g.Version, g.API)
 	default:
-		fmt.Fprintf(w, "vSNO %s is installing in %s (about 45 minutes). Follow it with `vsno -n %s list --watch`.\n", pal.Bold(g.Name), namespace, namespace)
+		fmt.Fprintf(w, "vSNO %s is installing in %s (about 20-45 minutes). Follow it with `vsno -n %s list --watch`.\n", pal.Bold(g.Name), namespace, namespace)
 	}
 	fmt.Fprintf(w, "Try: vsno oc %s -- get nodes | vsno ssh %s | vsno kubeconfig %s\n", g.Name, g.Name, g.Name)
 	return nil

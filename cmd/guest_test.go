@@ -115,7 +115,7 @@ func TestRenderCreated(t *testing.T) {
 	}
 	b.Reset()
 	_ = renderCreated(&b, g, false, plain)
-	if !strings.Contains(b.String(), "vSNO a is installing in vsno (about 45 minutes). Follow it with `vsno -n vsno list --watch`.") {
+	if !strings.Contains(b.String(), "vSNO a is installing in vsno (about 20-45 minutes). Follow it with `vsno -n vsno list --watch`.") {
 		t.Errorf("not ready:\n%s", b.String())
 	}
 	outputFormat = formatJSON

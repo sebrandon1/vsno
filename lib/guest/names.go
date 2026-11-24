@@ -4,11 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"maps"
 	"math/big"
+	"slices"
 
 	"github.com/sebrandon1/vsno/lib/cluster"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 )
 
 // Words for generated names, like Docker's: an adjective and a noun from
@@ -65,4 +69,32 @@ func FreeName(ctx context.Context, e Env, ns string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no free random name after 20 tries; pass a name")
+}
+
+// Names returns the vSNO names in ns: the VMs, plus any Service create left
+// behind while it builds the ISO. It reads no guest through the builder, so it
+// is cheap enough for shell completion.
+func Names(ctx context.Context, kube kubernetes.Interface, dyn dynamic.Interface, ns string) ([]string, error) {
+	set := map[string]struct{}{}
+	vms, err := dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).List(ctx, metav1.ListOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		// No KubeVirt: the Services are all there can be.
+	case err != nil:
+		return nil, fmt.Errorf("listing vSNOs: %w", err)
+	default:
+		for _, vm := range vms.Items {
+			set[vm.GetName()] = struct{}{}
+		}
+	}
+	svcs, err := kube.CoreV1().Services(ns).List(ctx, metav1.ListOptions{LabelSelector: LabelName})
+	if err != nil {
+		return nil, fmt.Errorf("listing vSNO Services: %w", err)
+	}
+	for _, s := range svcs.Items {
+		if name := s.Labels[LabelName]; name != "" {
+			set[name] = struct{}{}
+		}
+	}
+	return slices.Sorted(maps.Keys(set)), nil
 }

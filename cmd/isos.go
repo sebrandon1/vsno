@@ -47,8 +47,9 @@ builder volume's usage. A vSNO brings its served ISO, its build directory and
 its DataVolume; an installer or a DataVolume brings itself.
 
 It only reads. ` + "`vsno iso list`" + ` shows everything at once.`,
-	Args: oneArg("a vSNO, installer or ISO DataVolume, as `vsno iso list` shows it"),
-	RunE: trimmed(runIsoInfo),
+	Args:              oneArg("a vSNO, installer or ISO DataVolume, as `vsno iso list` shows it"),
+	ValidArgsFunction: completeVSNOFirst,
+	RunE:              trimmed(runIsoInfo),
 }
 
 var isoListCmd = &cobra.Command{
@@ -89,8 +90,9 @@ var isoEjectCmd = &cobra.Command{
 CD-ROM and its volume from the VM, the ISO DataVolume, and the builder's copy.
 create does this itself when the install finishes; eject is for vSNOs it
 didn't, such as ones from an older vsno.`,
-	Args: oneArg("the vSNO whose install ISO to eject"),
-	RunE: trimmed(runIsoEject),
+	Args:              oneArg("the vSNO whose install ISO to eject"),
+	ValidArgsFunction: completeVSNOFirst,
+	RunE:              trimmed(runIsoEject),
 }
 
 func init() {

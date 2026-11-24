@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/builder"
@@ -197,14 +198,26 @@ func SetRunning(ctx context.Context, e Env, ns, name string, run bool) error {
 
 // WaitState polls until name reaches one of want, with progress.
 func WaitState(ctx context.Context, e Env, ns, name string, want ...State) (State, error) {
+	st, _, err := WaitStateDetail(ctx, e, ns, name, want...)
+	return st, err
+}
+
+// WaitStateDetail is WaitState with the detail of the state it stopped at.
+func WaitStateDetail(ctx context.Context, e Env, ns, name string, want ...State) (State, string, error) {
 	e.defaults()
 	ps := e.Progress.Start("Waiting for " + name)
 	var st State
+	var detail string
 	var reads readErrors
 	err := wait.PollUntilContextTimeout(ctx, e.Poll, e.Timeout, true, func(ctx context.Context) (bool, error) {
-		var detail string
 		var err error
 		st, detail, _, err = observeOne(ctx, e, ns, name)
+		if apierrors.IsNotFound(err) {
+			// create adds the Service first and the VM later: a vSNO still
+			// building its ISO has no VM to observe.
+			st, detail = MissingState(ctx, e, ns, name)
+			err = nil
+		}
 		if ferr := reads.tolerate(err); ferr != nil {
 			return false, ferr
 		}
@@ -217,8 +230,28 @@ func WaitState(ctx context.Context, e Env, ns, name string, want ...State) (Stat
 	})
 	if err != nil {
 		ps.Fail(err.Error())
-		return st, err
+		return st, detail, err
 	}
 	ps.Done(string(st))
-	return st, nil
+	return st, detail, nil
+}
+
+// MissingState classifies a vSNO whose VM does not exist yet. create adds the
+// Service first, builds the ISO, then makes the VM, so a Service younger than
+// any build means the ISO is still on its way; older, it is the relic of a
+// create that died. With no Service either, nothing is known.
+func MissingState(ctx context.Context, e Env, ns, name string) (State, string) {
+	svcs, err := e.Kube.CoreV1().Services(ns).List(ctx, metav1.ListOptions{LabelSelector: LabelName + "=" + name})
+	if err != nil || len(svcs.Items) == 0 {
+		return Unknown, "no VM and no Service yet"
+	}
+	now := time.Now
+	if e.Now != nil {
+		now = e.Now
+	}
+	created := svcs.Items[0].CreationTimestamp.Time
+	if !created.IsZero() && now().Sub(created) > abandonGrace {
+		return Abandoned, "no VM and no build; `vsno delete " + name + "` cleans it up"
+	}
+	return Building, "building the agent ISO"
 }
