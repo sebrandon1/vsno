@@ -143,7 +143,7 @@ func selectEntries(rep *Report, o PruneOptions) (PrunePlan, error) {
 		}
 		slices.SortFunc(unused, func(a, b Entry) int { return b.LastUsed.Compare(a.LastUsed) })
 		if o.Keep < 0 {
-			o.Keep = 0
+			return p, fmt.Errorf("--keep takes how many releases to keep, not %d", o.Keep)
 		}
 		if o.Keep < len(unused) {
 			p.Entries = unused[o.Keep:]

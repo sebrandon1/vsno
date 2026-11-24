@@ -139,9 +139,12 @@ func renderSnapshots(w io.Writer, entries []snapshot.Entry, pal ui.Palette) {
 	var t ui.Table
 	t.Row("NAME", "VSNO", "VERSION", "SIZE", "AGE", "STATE")
 	for _, e := range entries {
-		state := pal.Green("ready")
+		// A snapshot can be restored under its vSNO's name only while that
+		// vSNO is gone: say which case this is, not "in use", which reads as
+		// if the snapshot were busy.
+		state := pal.Green("restorable")
 		if e.InUse {
-			state = pal.Dim("in use: " + e.VSNO)
+			state = pal.Dim("vSNO " + e.VSNO + " exists")
 		}
 		t.Row(e.Name, e.VSNO, orDash(e.Version), bytesText(e.SizeBytes), ageSince(time.Now(), e.Created), state)
 	}

@@ -24,8 +24,8 @@ func TestRenderSnapshots(t *testing.T) {
 	out := b.String()
 	for _, want := range []string{
 		"NAME", "VSNO", "VERSION", "SIZE", "AGE", "STATE",
-		"a", "4.20.46", "3.0Gi", "2h", "in use: a",
-		"b", "1.0Gi", "30m", "ready", "-",
+		"a", "4.20.46", "3.0Gi", "2h", "vSNO a exists",
+		"b", "1.0Gi", "30m", "restorable", "-",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
