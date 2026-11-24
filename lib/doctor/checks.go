@@ -3,7 +3,6 @@ package doctor
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/sebrandon1/vsno/lib/guestctl"
 	"github.com/sebrandon1/vsno/lib/ibu"
@@ -79,13 +78,9 @@ func followingSeedGen(ctx context.Context, a seed.Access, name string) ([]Findin
 // stopped crio and kubelet and nothing turned them back on, so the vSNO never
 // answers after a start.
 func seedGenServices(ctx context.Context, a seed.Access, name string) ([]Finding, error) {
-	out, err := guestctl.SSHOut(ctx, a, "test", "-d", "/var/lib/lca/ibu-seedgen-orch", "&&", "echo", "orch", ";", "systemctl", "is-enabled", "kubelet", "crio")
-	if err != nil {
+	interrupted, err := seed.SeedGenInterrupted(ctx, a)
+	if err != nil || !interrupted {
 		return nil, err
-	}
-	disabled := strings.Contains(out, "disabled")
-	if !disabled || !strings.Contains(out, "orch") {
-		return nil, nil
 	}
 	return []Finding{{
 		VSNo: name,

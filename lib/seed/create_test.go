@@ -209,6 +209,66 @@ func TestCheckSeedGen(t *testing.T) {
 	}
 }
 
+// RunningSeedGen answers "is a generation under way?" the same way the early
+// check does: LCA's SeedGenerator, or the mark while its API is down.
+func TestRunningSeedGen(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		reply resp
+		mark  time.Duration
+		want  string // String(), or "" for nil
+	}{
+		{"running", resp{Out: sgRunningJS}, 0, "Launching imager container"},
+		{"finished", resp{Out: sgDoneJS}, time.Hour, ""},
+		{"no generator, marked", resp{Out: ""}, 4 * time.Minute, "started 4m"},
+		{"no generator, no mark", resp{Out: ""}, 0, ""},
+		{"API down, marked", resp{Err: errors.New("connection refused")}, 3 * time.Minute, "started 3m"},
+		{"API down, stale mark", resp{Err: errors.New("connection refused")}, 2 * time.Hour, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fa := readyAccess()
+			fa.OcReplies[sgCheck] = []resp{c.reply}
+			e := world(t, fa)
+			if c.mark > 0 {
+				markGenerating(t, e, e.Now().Add(-c.mark))
+			}
+			g := RunningSeedGen(context.Background(), e, ns, "a")
+			if c.want == "" && g != nil {
+				t.Fatalf("got %v, want nil", g)
+			}
+			// A mark is written whole-second, so its age is a prefix, not exact.
+			if c.want != "" && (g == nil || !strings.HasPrefix(g.String(), c.want)) {
+				t.Fatalf("got %v, want %q", g, c.want)
+			}
+		})
+	}
+}
+
+// The node keeps LCA's orchestration directory after an interrupted generation,
+// with the services it stopped still off.
+func TestSeedGenInterrupted(t *testing.T) {
+	const check = "test -d /var/lib/lca/ibu-seedgen-orch && echo orch ; systemctl is-enabled kubelet crio"
+	for _, c := range []struct {
+		name  string
+		reply resp
+		want  bool
+		err   bool
+	}{
+		{"interrupted", resp{Out: "orch\ndisabled\ndisabled\n"}, true, false},
+		{"running", resp{Out: "orch\nenabled\nenabled\n"}, false, false},
+		{"no directory", resp{Out: "enabled\nenabled\n"}, false, false},
+		{"no answer", resp{Err: errors.New("connection refused")}, false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fa := &fakeAccess{SSHReplies: map[string][]resp{check: {c.reply}}}
+			got, err := SeedGenInterrupted(context.Background(), fa)
+			if got != c.want || (err != nil) != c.err {
+				t.Errorf("= %v, %v; want %v, err %v", got, err, c.want, c.err)
+			}
+		})
+	}
+}
+
 // Only a SeedGenerator that is gone, completed or failed ends a generation;
 // one that can't be read is not evidence either way.
 func TestSeedGenEnded(t *testing.T) {

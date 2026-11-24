@@ -45,7 +45,9 @@ Nightlies need credentials for `registry.ci.openshift.org` in the cluster pull s
 (`openshift-config/pull-secret`). `create` checks for them first.
 
 `create` refuses a vSNO that doesn't fit next to what already runs on the node, and shows the free
-memory. `vsno stop` frees a vSNO's memory and keeps its disk.
+memory. `vsno stop` frees a vSNO's memory and keeps its disk; it refuses while the vSNO is making a
+seed image, because stopping then leaves `crio` and `kubelet` disabled. `vsno start --wait` says so
+if it finds that state, and `vsno doctor <name> --fix` recovers it.
 
 The first `create` of a version also mirrors that release's payload into the environment's
 registry (15–20 GB, once), so every later vSNO of it installs from the cluster: `--no-cache` skips

@@ -164,7 +164,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   `generate`, `finish`); while the guest API is down it reads progress from the node's
   `lca-generate-seed-image` unit. The mark is cleared only once the SeedGenerator says the
   generation ended (`seedGenEnded`, read with the run's cancellation dropped), so an interrupted
-  `create` leaves the vSNO reading `making-seed` instead of `unknown` while LCA finishes. `List`/`Delete` talk to the
+  `create` leaves the vSNO reading `making-seed` instead of `unknown` while LCA finishes.
+  `RunningSeedGen` answers "is one going?" for `vsno stop`, which refuses then: LCA stops the
+  guest's services for the generation, and a stop mid-generation leaves them off.
+  `SeedGenInterrupted` is the probe for that aftermath (`/var/lib/lca/ibu-seedgen-orch` present,
+  services disabled), shared by `vsno start` and `lib/doctor`. `List`/`Delete` talk to the
   environment's registry through `scripts/registry.sh` (skopeo + curl, credentials on stdin) from the
   builder. Templates and the script are embedded; goldens in `testdata/`.
 - `lib/registry`: the environment's in-cluster OCI registry. `Registry{Host,User,Password,CA}`,
