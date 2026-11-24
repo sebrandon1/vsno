@@ -30,22 +30,25 @@ var deleteCmd = &cobra.Command{
 	Long: `delete removes each named vSNO: its VM and root disk, the ISO, its Service,
 its DNS entry and the builder's files for it. It lists what it will delete and
 asks you to type the name(s), unless --yes. --dry-run only lists.`,
-	Args: someArgs("one or more vSNOs, as `vsno list` shows them"),
-	RunE: trimmed(runDelete),
+	Args:              someArgs("one or more vSNOs, as `vsno list` shows them"),
+	ValidArgsFunction: completeVSNOs,
+	RunE:              trimmed(runDelete),
 }
 
 var startCmd = &cobra.Command{
-	Use:   "start <name>",
-	Short: "Start a stopped vSNO",
-	Args:  oneArg("the vSNO, as `vsno list` shows it"),
-	RunE:  func(cmd *cobra.Command, args []string) error { return runPower(cmd, args[0], true) },
+	Use:               "start <name>",
+	Short:             "Start a stopped vSNO",
+	Args:              oneArg("the vSNO, as `vsno list` shows it"),
+	ValidArgsFunction: completeVSNOFirst,
+	RunE:              func(cmd *cobra.Command, args []string) error { return runPower(cmd, args[0], true) },
 }
 
 var stopCmd = &cobra.Command{
-	Use:   "stop <name>",
-	Short: "Stop a vSNO, keeping its disk (frees its memory)",
-	Args:  oneArg("the vSNO, as `vsno list` shows it"),
-	RunE:  func(cmd *cobra.Command, args []string) error { return runPower(cmd, args[0], false) },
+	Use:               "stop <name>",
+	Short:             "Stop a vSNO, keeping its disk (frees its memory)",
+	Args:              oneArg("the vSNO, as `vsno list` shows it"),
+	ValidArgsFunction: completeVSNOFirst,
+	RunE:              func(cmd *cobra.Command, args []string) error { return runPower(cmd, args[0], false) },
 }
 
 func init() {

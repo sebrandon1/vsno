@@ -27,6 +27,13 @@ const (
 	Deleting   State = "deleting"
 )
 
+// States lists every state in lifecycle order: what `vsno list --state` takes
+// and completes.
+func States() []State {
+	return []State{Building, Abandoned, Importing, Starting, Installing, Finishing,
+		MakingSeed, Ready, Stopped, Failed, Unknown, Deleting}
+}
+
 // Probe is one line of the builder's probe.sh.
 type Probe struct {
 	Name      string `json:"name"`

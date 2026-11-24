@@ -31,8 +31,9 @@ taken for one of an environment it didn't describe.
 1. resolves `--version` to a release image
 2. builds the agent ISO in the builder pod
 3. creates the VM, its disks, a Service and DNS entries
-4. returns. The install takes about 45 minutes: `--watch` follows it with a progress bar, or
-   follow it later with `vsno list --watch`.
+4. returns. The install takes about 20–45 minutes: `--watch` follows it with a progress bar, or
+   follow it later with `vsno list --watch`. `vsno wait <name>` blocks until it is ready and sets
+   the exit status, which is what a script wants.
 
 `--version` accepts:
 - a release: `4.20.46`
@@ -69,6 +70,10 @@ generation, which stops the guest's services so nothing answers. The ClusterVers
 (the CVO's `Unable to apply …: MultipleErrors` while a pod cannot schedule, say) is in `-o json`
 (`cvMessage`) and in `vsno status`, and `list` shows it in DETAIL only once the rollout is more
 than 20 minutes old — a real stuck install still shows its error.
+
+`vsno describe <name>` is the single-vSNO view: state and detail, version, image, size, node, API,
+age, cache and LCA source, timings, unhealthy operators, the IBU stage, the seed images made from
+it, its snapshot, and what to run next.
 
 Each vSNO's API is `https://api.<name>.vsno.lab:6443`. Only the environment resolves that name,
 so `oc`, `ssh` and `kubeconfig` work through the builder pod. Everything after the vSNO's name goes

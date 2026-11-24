@@ -37,8 +37,9 @@ A target (the default role) also gets a backup location in the environment's S3
 for OADP, waiting until it is Available, and the pull secret for the seed
 image. vsno upgrade prepares its target itself, so this is for checking a vSNO
 ahead of time.`,
-	Args: someArgs("one or more vSNOs to prepare, as `vsno list` shows them"),
-	RunE: trimmed(runPrepare),
+	Args:              someArgs("one or more vSNOs to prepare, as `vsno list` shows them"),
+	ValidArgsFunction: completeVSNOs,
+	RunE:              trimmed(runPrepare),
 }
 
 var upgradeCmd = &cobra.Command{
@@ -60,8 +61,9 @@ version; --rollback goes back to it. --abort cancels a Prep (one that failed,
 say), moving the target back to Idle. Run again with the same seed, upgrade
 carries on from where the target is, so a finished upgrade can be finalized
 later with --finalize.`,
-	Args: oneArg("the vSNO to upgrade, as `vsno list` shows it"),
-	RunE: trimmed(runUpgrade),
+	Args:              oneArg("the vSNO to upgrade, as `vsno list` shows it"),
+	ValidArgsFunction: completeVSNOFirst,
+	RunE:              trimmed(runUpgrade),
 }
 
 // addLCAFlags lets a command take LCA from a git ref or an image instead of

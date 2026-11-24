@@ -472,3 +472,21 @@ func TestRunReportsDensity(t *testing.T) {
 		t.Errorf("density = %+v", got)
 	}
 }
+
+func TestWorkerNames(t *testing.T) {
+	cordoned := node("cordoned", "worker", 90)
+	cordoned.Spec.Unschedulable = true
+	c := kfake.NewClientset(
+		node("worker-b", "worker", 90),
+		node("worker-a", "worker", 90),
+		node("control", "control-plane", 90),
+		cordoned,
+	)
+	got, err := WorkerNames(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"worker-a", "worker-b"}; !slices.Equal(got, want) {
+		t.Errorf("WorkerNames = %v, want %v", got, want)
+	}
+}

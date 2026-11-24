@@ -108,8 +108,12 @@ minutes: the agent installer runs inside the VM). Without it, `create` returns o
 and you can follow along later:
 
 ```bash
-vsno list --watch
+vsno list --watch        # the whole environment, refreshed
+vsno wait <name>         # or block until the vSNO is ready
 ```
+
+`vsno create <name> --version 4.22 --dry-run` previews the same create without doing it: the
+release image, the node and the space, whether the registry already has the release, and the steps.
 
 `list` shows every vSNO with its state, version, size, age, API and a DETAIL column. The states:
 
@@ -269,13 +273,14 @@ vsno teardown                    # asks you to type the namespace
 ```
 
 `teardown --host` also removes what setup installed on the host cluster (HyperConverged, the
-LVMCluster and both operators). It asks first, and it is not a dry run — check its plan before
-saying yes.
+LVMCluster and both operators). It takes `--dry-run` too: it lists every host and namespace target
+and changes nothing. It asks first; `--yes` skips the question.
 
 ## 9. When something looks wrong
 
 ```bash
 vsno status                      # components, support services, vSNOs, recent stages, cache
+vsno describe <name>             # everything about one vSNO, and what to run next
 vsno doctor                      # the known broken states, and the command that clears each
 vsno doctor <name> --fix         # the two reversible fixes only; it never deletes
 vsno report --markdown           # everything at once, for a bug report or a demo

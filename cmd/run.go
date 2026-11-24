@@ -81,6 +81,7 @@ func init() {
 	f.BoolVar(&rnOpts.Yes, "yes", false, "run the plan without asking (for CI)")
 	f.DurationVar(&rnTimeout, "timeout", 20*time.Minute, "how long the setup stage may take")
 	addRunLCAFlags(f)
+	_ = runCmd.RegisterFlagCompletionFunc("node", completeNodes)
 	rootCmd.AddCommand(runCmd)
 }
 

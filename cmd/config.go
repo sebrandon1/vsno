@@ -37,15 +37,20 @@ var configPathCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), p)
+		w := cmd.OutOrStdout()
+		if outputFormat == formatJSON {
+			return writeJSON(w, configPathResult{Path: p})
+		}
+		fmt.Fprintln(w, p)
 		return nil
 	},
 }
 
 var configGetCmd = &cobra.Command{
-	Use:   "get <key>",
-	Short: "Print one setting",
-	Args:  oneArg("a setting, as `vsno config` lists them"),
+	Use:               "get <key>",
+	Short:             "Print one setting",
+	Args:              oneArg("a setting, as `vsno config` lists them"),
+	ValidArgsFunction: completeConfigKeys,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := config.Key(args[0])
 		if err := config.Check(key); err != nil {
@@ -58,7 +63,11 @@ var configGetCmd = &cobra.Command{
 		if !ok {
 			return fmt.Errorf("%s is not set; `vsno config set %s <value>` sets it", key, key)
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), v)
+		w := cmd.OutOrStdout()
+		if outputFormat == formatJSON {
+			return writeJSON(w, configValueResult{Key: string(key), Value: v})
+		}
+		fmt.Fprintln(w, v)
 		return nil
 	},
 }
@@ -73,27 +82,38 @@ var configSetCmd = &cobra.Command{
 		}
 		return nil
 	},
+	ValidArgsFunction: completeConfigKeys,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := config.Key(args[0])
 		if err := config.Set(key, args[1]); err != nil {
 			return err
 		}
 		p, _ := config.Path()
-		fmt.Fprintf(cmd.OutOrStdout(), "Set %s in %s.\n", key, p)
+		w := cmd.OutOrStdout()
+		if outputFormat == formatJSON {
+			return writeJSON(w, configSetResult{Key: string(key), Value: args[1], Path: p})
+		}
+		fmt.Fprintf(w, "Set %s in %s.\n", key, p)
 		return nil
 	},
 }
 
 var configUnsetCmd = &cobra.Command{
-	Use:   "unset <key>",
-	Short: "Forget one setting",
-	Args:  oneArg("a setting, as `vsno config` lists them"),
+	Use:               "unset <key>",
+	Short:             "Forget one setting",
+	Args:              oneArg("a setting, as `vsno config` lists them"),
+	ValidArgsFunction: completeConfigKeys,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := config.Key(args[0])
 		if err := config.Unset(key); err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Unset %s.\n", key)
+		p, _ := config.Path()
+		w := cmd.OutOrStdout()
+		if outputFormat == formatJSON {
+			return writeJSON(w, configUnsetResult{Key: string(key), Path: p})
+		}
+		fmt.Fprintf(w, "Unset %s.\n", key)
 		return nil
 	},
 }
@@ -102,6 +122,26 @@ func init() {
 	configCmd.AddCommand(configPathCmd, configGetCmd, configSetCmd, configUnsetCmd)
 	rootCmd.AddCommand(configCmd)
 }
+
+// The -o json shapes of the config subcommands.
+type (
+	configPathResult struct {
+		Path string `json:"path"`
+	}
+	configValueResult struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	configSetResult struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+		Path  string `json:"path"`
+	}
+	configUnsetResult struct {
+		Key  string `json:"key"`
+		Path string `json:"path,omitempty"`
+	}
+)
 
 // configRow is one line of `vsno config`: the setting, where its value came
 // from, and the value.

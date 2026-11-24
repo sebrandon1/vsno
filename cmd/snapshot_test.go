@@ -58,6 +58,14 @@ func TestRenderSnapshotPlan(t *testing.T) {
 	}
 }
 
+func TestSnapshotDeleteNamesSnapshots(t *testing.T) {
+	err := snapshotDeleteCmd.Args(snapshotDeleteCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "snapshots to delete") ||
+		!strings.Contains(err.Error(), "vsno snapshot list") {
+		t.Errorf("delete's argument error = %v, want it to name the snapshots", err)
+	}
+}
+
 func TestOrDefault(t *testing.T) {
 	for _, c := range []struct{ s, def, want string }{
 		{"", "the only vSNO", "the only vSNO"},

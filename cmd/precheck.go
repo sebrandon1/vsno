@@ -58,6 +58,7 @@ func init() {
 	f.StringVar(&pcProbeImage, "probe-image", precheck.DefaultProbeImage, "image for the probe pod (needs bash + chroot)")
 	f.DurationVar(&pcProbeWait, "probe-timeout", 3*time.Minute, "how long to wait for each probe pod")
 	f.StringVar(&pcWriteConfig, "write-config", "", "write the suggested settings to this YAML file")
+	_ = precheckCmd.RegisterFlagCompletionFunc("node", completeNodes)
 	rootCmd.AddCommand(precheckCmd)
 }
 

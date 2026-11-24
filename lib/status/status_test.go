@@ -346,3 +346,26 @@ func TestNext(t *testing.T) {
 		}
 	}
 }
+
+func TestNextFor(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		g    guest.Guest
+		want string
+	}{
+		{"ready", guest.Guest{Name: "a", State: guest.Ready, Version: "4.22.22"}, "vsno seed create a"},
+		{"ready after an upgrade", guest.Guest{Name: "a", State: guest.Ready, Version: "4.22.22", IBU: "Upgrade done"}, "vsno upgrade a --finalize"},
+		{"stopped", guest.Guest{Name: "a", State: guest.Stopped}, "vsno start a"},
+		{"failed", guest.Guest{Name: "a", State: guest.Failed}, "vsno delete a"},
+		{"abandoned", guest.Guest{Name: "a", State: guest.Abandoned}, "vsno delete a"},
+		{"building", guest.Guest{Name: "a", State: guest.Building}, "vsno wait a"},
+		{"installing", guest.Guest{Name: "a", State: guest.Installing}, "vsno wait a"},
+		{"making a seed", guest.Guest{Name: "a", State: guest.MakingSeed}, "vsno wait a"},
+		{"unknown", guest.Guest{Name: "a", State: guest.Unknown}, "vsno screenshot a"},
+		{"deleting", guest.Guest{Name: "a", State: guest.Deleting}, ""},
+	} {
+		if got := NextFor(c.g); !strings.Contains(got, c.want) {
+			t.Errorf("%s: NextFor = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -112,5 +113,63 @@ func TestOneArgNamesWhatIsWanted(t *testing.T) {
 	}
 	if err := someArgs("x")(nil, []string{"a", "b"}); err != nil {
 		t.Errorf("someArgs: %v", err)
+	}
+}
+
+// Each config subcommand that prints something has a -o json shape.
+func TestConfigJSON(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for _, s := range config.Settings {
+		t.Setenv(s.Env, "")
+	}
+	outputFormat = formatJSON
+	t.Cleanup(func() { outputFormat = formatTable })
+
+	var b bytes.Buffer
+	configCmd.SetOut(&b)
+	t.Cleanup(func() { configCmd.SetOut(nil) })
+
+	decode := func(v any) {
+		t.Helper()
+		if err := json.Unmarshal(b.Bytes(), v); err != nil {
+			t.Fatalf("%s: %v", b.String(), err)
+		}
+		b.Reset()
+	}
+
+	if err := configSetCmd.RunE(configSetCmd, []string{"seed.sync.to", "quay.io/me/seeds"}); err != nil {
+		t.Fatal(err)
+	}
+	var set configSetResult
+	decode(&set)
+	if set.Key != "seed.sync.to" || set.Value != "quay.io/me/seeds" || set.Path == "" {
+		t.Errorf("set json = %+v", set)
+	}
+
+	if err := configGetCmd.RunE(configGetCmd, []string{"seed.sync.to"}); err != nil {
+		t.Fatal(err)
+	}
+	var got configValueResult
+	decode(&got)
+	if got.Key != "seed.sync.to" || got.Value != "quay.io/me/seeds" {
+		t.Errorf("get json = %+v", got)
+	}
+
+	if err := configPathCmd.RunE(configPathCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	var path configPathResult
+	decode(&path)
+	if path.Path != set.Path {
+		t.Errorf("path json = %+v, want %q", path, set.Path)
+	}
+
+	if err := configUnsetCmd.RunE(configUnsetCmd, []string{"seed.sync.to"}); err != nil {
+		t.Fatal(err)
+	}
+	var unset configUnsetResult
+	decode(&unset)
+	if unset.Key != "seed.sync.to" {
+		t.Errorf("unset json = %+v", unset)
 	}
 }

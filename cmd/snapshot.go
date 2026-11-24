@@ -38,10 +38,11 @@ vsno delete does not remove the snapshot: that is what makes a restore possible.
 }
 
 var snapshotCreateCmd = &cobra.Command{
-	Use:   "create [name]",
-	Short: "Snapshot a vSNO's disk",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  trimmed(runSnapshotCreate),
+	Use:               "create [name]",
+	Short:             "Snapshot a vSNO's disk",
+	Args:              cobra.MaximumNArgs(1),
+	ValidArgsFunction: completeVSNOFirst,
+	RunE:              trimmed(runSnapshotCreate),
 }
 
 var snapshotListCmd = &cobra.Command{
@@ -57,8 +58,9 @@ var snapshotDeleteCmd = &cobra.Command{
 	Short: "Delete snapshots",
 	Long: `delete removes the named snapshots and the installer files kept with them.
 It lists what it will delete and asks you to type "yes", unless --yes.`,
-	Args: someArgs("the vSNOs to snapshot, as `vsno list` shows them"),
-	RunE: trimmed(runSnapshotDelete),
+	Args:              someArgs("the snapshots to delete, as `vsno snapshot list` shows them"),
+	ValidArgsFunction: completeSnapshots,
+	RunE:              trimmed(runSnapshotDelete),
 }
 
 func init() {
