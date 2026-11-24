@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/sebrandon1/vsno/lib/guest"
+	"github.com/sebrandon1/vsno/lib/guestctl/guestctltest"
 	"github.com/sebrandon1/vsno/lib/seed"
+	"github.com/spf13/cobra"
 )
 
 // start passes true and stop passes false; the polarity picks the verb shown and
@@ -34,6 +37,48 @@ func TestStartRecovery(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %v, want %q", err, want)
 		}
+	}
+}
+
+// A start that ends without the guest answering either says why, or names the
+// seed generation it found.
+func TestStartOutcome(t *testing.T) {
+	const probe = "test -d /var/lib/lca/ibu-seedgen-orch && echo orch ; systemctl is-enabled kubelet crio"
+	broken := &guestctltest.Fake{SSHReplies: map[string][]guestctltest.Reply{probe: {{Out: "orch\ndisabled\ndisabled\n"}}}}
+	healthy := &guestctltest.Fake{SSHReplies: map[string][]guestctltest.Reply{probe: {{Out: "orch\nenabled\nenabled\n"}}}}
+	timeout := errors.New("timed out")
+	for _, c := range []struct {
+		name string
+		fa   *guestctltest.Fake
+		st   guest.State
+		err  error
+		want string // "" = the error comes back unchanged (nil here)
+		note bool
+	}{
+		{"failed", healthy, guest.Failed, nil, "failed to start", false},
+		{"making-seed, interrupted", broken, guest.MakingSeed, nil, "crio and kubelet are disabled", false},
+		{"making-seed, LCA generating", healthy, guest.MakingSeed, nil, "", true},
+		{"timed out, interrupted", broken, guest.Unknown, timeout, "crio and kubelet are disabled", false},
+		{"timed out, not interrupted", healthy, guest.Unknown, timeout, "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var stderr strings.Builder
+			cmd := &cobra.Command{}
+			cmd.SetErr(&stderr)
+			se := seed.Env{Access: func(string) seed.Access { return c.fa }}
+			err := startOutcome(cmd, se, "seed2", c.st, c.err)
+			switch {
+			case c.want == "" && c.err == nil && err != nil:
+				t.Fatalf("err = %v, want none", err)
+			case c.want == "" && c.err != nil && err != c.err:
+				t.Fatalf("err = %v, want the wait's own", err)
+			case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+			if got := stderr.String() != ""; got != c.note {
+				t.Errorf("note = %q, want one = %v", stderr.String(), c.note)
+			}
+		})
 	}
 }
 
