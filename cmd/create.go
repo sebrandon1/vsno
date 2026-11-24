@@ -62,7 +62,7 @@ func init() {
 	f.IntVar(&crCores, "cores", guest.DefaultCores, "vCPUs")
 	f.Int64Var(&crMemory, "memory", guest.DefaultMemoryGiB, "memory, GiB")
 	f.Int64Var(&crDisk, "disk", guest.DefaultDiskGiB, "root disk, GiB")
-	f.BoolVar(&crNoCache, "no-cache", false, "install from the internet instead of the environment registry's mirror")
+	f.BoolVar(&crNoCache, "no-cache", false, "install from the internet instead of the environment registry's mirror (the vSNO still trusts its CA)")
 	f.BoolVar(&crFromSnapshot, "from-snapshot", false, "restore the disk from the vSNO's snapshot (see vsno snapshot) instead of installing")
 	f.BoolVarP(&crWatch, "watch", "w", false, "follow the install until the vSNO is ready")
 	f.DurationVar(&crTimeout, "timeout", 90*time.Minute, "how long to wait for the install")
