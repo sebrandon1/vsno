@@ -28,6 +28,12 @@ const (
 	finalizeWait = 10 * time.Minute
 )
 
+// idleStuckGrace is how long LCA gets to answer a move to Idle with a reason
+// its controller acts on. The transition is one reconcile after the patch, so
+// a condition that is still on another reason after this long is one nothing
+// will move; waiting out finalizeWait would report nothing at all.
+const idleStuckGrace = 15 * time.Second
+
 // UpgradeOptions are the user's choices for vsno upgrade.
 type UpgradeOptions struct {
 	Namespace string
@@ -388,45 +394,119 @@ func moveTo(ctx context.Context, a guestctl.Access, c guestctl.Clock, at, s Stag
 			return "", err
 		}
 	}
-	var last string
-	down := time.Time{}
+	w := &watch{c: c, s: s, ps: ps}
 	err := guestctl.Poll(ctx, c, limit, func() (bool, error) {
-		u, found, err := read(ctx, a)
-		if err != nil || !found {
-			if down.IsZero() {
-				down = c.Now()
-			}
-			why := "isn't answering"
-			if s == StageUpgrade || s == StageRollback {
-				why = "is down while the node reboots"
-			}
-			ps.Update(fmt.Sprintf("the vSNO's API %s (%s)", why, c.Now().Sub(down).Round(time.Second)))
-			return false, nil
-		}
-		down = time.Time{}
-		if s == StageUpgrade {
-			if rb, msg := u.Toward(StageRollback); rb != Moving || u.Spec.Stage == StageRollback {
-				return false, fmt.Errorf("LCA rolled the upgrade back: %s", msg)
-			}
-		}
-		p, msg := u.Toward(s)
-		last = msg
-		if pulled, failed, total, ok := Precache(msg); ok {
-			ps.SetProgress(pulled+failed, total)
-		}
-		ps.Update(msg)
-		switch p {
-		case Arrived:
-			return true, nil
-		case Stuck:
-			return false, fmt.Errorf("%s failed: %s", s, msg)
-		}
-		return false, nil
+		return w.check(ctx, a, res.Target)
 	})
 	if errors.Is(err, guestctl.ErrTimeout) {
+		last := w.last
+		if last == "" {
+			last = w.note
+		}
+		if last == "" {
+			last = "LCA reported nothing"
+		}
 		return "", fmt.Errorf("%s didn't finish in %s; last: %s", s, limit, last)
 	}
 	return fmt.Sprintf("in %s", c.Now().Sub(start).Round(time.Second)), err
+}
+
+// watch is one stage's polling: what LCA last said, how long the API has been
+// down, and how long an Idle condition has sat on a reason LCA doesn't act on.
+type watch struct {
+	c          guestctl.Clock
+	s          Stage
+	ps         precheck.ProgressStep
+	last, note string
+	down       time.Time
+	stuckAt    time.Time
+}
+
+// check is one poll: read the IBU, hold back on what LCA hasn't done, and
+// advance what it has.
+func (w *watch) check(ctx context.Context, a guestctl.Access, target string) (bool, error) {
+	u, ok := w.read(ctx, a)
+	if !ok {
+		return false, nil
+	}
+	if held, err := w.idleStuck(u, target); held || err != nil {
+		return false, err
+	}
+	return w.advance(u)
+}
+
+// read reads the IBU, reporting a down API as progress rather than a failure.
+func (w *watch) read(ctx context.Context, a guestctl.Access) (IBU, bool) {
+	u, found, err := read(ctx, a)
+	if err != nil || !found {
+		if w.down.IsZero() {
+			w.down = w.c.Now()
+		}
+		why := "isn't answering"
+		if w.s == StageUpgrade || w.s == StageRollback {
+			why = "is down while the node reboots"
+		}
+		w.ps.Update(fmt.Sprintf("the vSNO's API %s (%s)", why, w.c.Now().Sub(w.down).Round(time.Second)))
+		return u, false
+	}
+	w.down = time.Time{}
+	w.note = u.Note(w.s)
+	return u, true
+}
+
+// idleStuck holds on an Idle condition LCA will never act on, failing once the
+// grace is up. held is true when the condition is stuck, with or without an
+// error yet.
+func (w *watch) idleStuck(u IBU, target string) (held bool, err error) {
+	cond, stuck := u.StuckIdle()
+	if !stuck {
+		w.stuckAt = time.Time{}
+		return false, nil
+	}
+	if w.stuckAt.IsZero() {
+		w.stuckAt = w.c.Now()
+	}
+	waited := w.c.Now().Sub(w.stuckAt)
+	if waited >= idleStuckGrace {
+		return true, stuckIdleError(target, u, cond, waited)
+	}
+	w.ps.Update(fmt.Sprintf("LCA's Idle condition is False with reason %q, which it doesn't act on (%s)",
+		cond.Reason, waited.Round(time.Second)))
+	return true, nil
+}
+
+// advance reports LCA's progress toward the stage, and whether it got there.
+func (w *watch) advance(u IBU) (bool, error) {
+	if w.s == StageUpgrade {
+		if rb, msg := u.Toward(StageRollback); rb != Moving || u.Spec.Stage == StageRollback {
+			return false, fmt.Errorf("LCA rolled the upgrade back: %s", msg)
+		}
+	}
+	p, msg := u.Toward(w.s)
+	w.last = msg
+	if pulled, failed, total, ok := Precache(msg); ok {
+		w.ps.SetProgress(pulled+failed, total)
+	}
+	w.ps.Update(msg)
+	switch p {
+	case Arrived:
+		return true, nil
+	case Stuck:
+		return false, fmt.Errorf("%s failed: %s", w.s, msg)
+	}
+	return false, nil
+}
+
+// stuckIdleError explains an Idle transition LCA will never start, and the two
+// steps that recover it: point the condition at a reason its controller acts
+// on, and restart the controller so it reconciles again.
+func stuckIdleError(target string, u IBU, c guestctl.Condition, waited time.Duration) error {
+	return fmt.Errorf("LCA's Idle condition has been False with reason %q (%q) for %s, and LCA acts only on %s, "+
+		"so the transition to Idle will never start.\n\nRecover with `vsno doctor %s --fix`, or by hand:\n\n"+
+		"  oc patch imagebasedupgrades upgrade -n %s --subresource=status --type=json -p '%s'\n"+
+		"  oc delete pod -n %s -l control-plane=controller-manager\n\nthen run this command again",
+		c.Reason, c.Message, waited.Round(time.Second), strings.Join(idleHandled, ", "),
+		target, seed.LCANamespace, u.UnstickPatch(), seed.LCANamespace)
 }
 
 // setStage patches the ImageBasedUpgrade to stage s; Prep also names the seed.

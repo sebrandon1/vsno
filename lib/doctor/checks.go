@@ -6,56 +6,34 @@ import (
 	"strings"
 
 	"github.com/sebrandon1/vsno/lib/guestctl"
+	"github.com/sebrandon1/vsno/lib/ibu"
 	"github.com/sebrandon1/vsno/lib/precheck"
 	"github.com/sebrandon1/vsno/lib/seed"
 )
 
-// ibu is the part of LCA's ImageBasedUpgrade the checks read.
-type ibu struct {
-	Spec struct {
-		Stage string `json:"stage"`
-	} `json:"spec"`
-	Status struct {
-		Conditions []struct {
-			Type    string `json:"type"`
-			Status  string `json:"status"`
-			Reason  string `json:"reason"`
-			Message string `json:"message"`
-		} `json:"conditions"`
-	} `json:"status"`
-}
-
-// handledReasons are the Idle-condition reasons LCA's controller acts on: its
-// handleAbortOrFinalize switches on exactly these.
-var handledReasons = []string{"Aborting", "AbortFailed", "Finalizing", "FinalizeFailed"}
-
 // stuckUpgrade finds an ImageBasedUpgrade whose Idle condition is False with a
 // reason LCA does not handle: nothing will move it, and `--abort` waits out its
-// timeout.
+// timeout. ibu.StuckIdle is the one definition of that state, so doctor and
+// upgrade cannot disagree; a Preps that is merely running is not one.
 func stuckUpgrade(ctx context.Context, a seed.Access, name string) ([]Finding, error) {
-	var u ibu
+	var u ibu.IBU
 	found, err := guestctl.Get(ctx, a, &u, "get", "imagebasedupgrades", "upgrade", "-n", seed.LCANamespace, "--ignore-not-found")
 	if err != nil || !found {
 		return nil, err
 	}
-	for _, c := range u.Status.Conditions {
-		if c.Type != "Idle" || c.Status == "True" {
-			continue
-		}
-		if contains(handledReasons, c.Reason) {
-			return nil, nil // LCA is working on it
-		}
-		return []Finding{{
-			VSNo: name,
-			Result: precheck.Result{Group: "doctor", Check: name + ": ImageBasedUpgrade",
-				Status: precheck.Fail,
-				Detail: fmt.Sprintf("stage %q, Idle condition %q with reason %q, which LCA does not act on", orIdle(u.Spec.Stage), c.Status, c.Reason),
-				Hint:   "`vsno upgrade <target> --abort` will not clear this"},
-			Fix:    "the status patch this command would apply, or restart the controller",
-			Action: UnstickIdle,
-		}}, nil
+	c, stuck := u.StuckIdle()
+	if !stuck {
+		return nil, nil
 	}
-	return nil, nil
+	return []Finding{{
+		VSNo: name,
+		Result: precheck.Result{Group: "doctor", Check: name + ": ImageBasedUpgrade",
+			Status: precheck.Fail,
+			Detail: fmt.Sprintf("stage %q, Idle condition %q with reason %q, which LCA does not act on", orIdle(string(u.Spec.Stage)), c.Status, c.Reason),
+			Hint:   "`vsno upgrade <target> --abort` will not clear this"},
+		Fix:    "the status patch this command would apply, or restart the controller",
+		Action: UnstickIdle,
+	}}, nil
 }
 
 // followingSeedGen finds a SeedGenerator LCA is running that no vsno process is

@@ -42,7 +42,7 @@ func TestHealthy(t *testing.T) {
 // The Idle condition stuck at a reason LCA does not handle is named, and --fix
 // points it at the one it does.
 func TestStuckIdleCondition(t *testing.T) {
-	stuck := `{"spec":{"stage":"Prep"},"status":{"conditions":[{"type":"Idle","status":"False","reason":"InProgress"},{"type":"PrepCompleted","status":"False","reason":"Failed"}]}}`
+	stuck := `{"spec":{"stage":"Idle"},"status":{"conditions":[{"type":"Idle","status":"False","reason":"InProgress"},{"type":"PrepCompleted","status":"False","reason":"Failed"}]}}`
 	e, f := fake(map[string][]guestctltest.Reply{
 		"get imagebasedupgrades upgrade -n " + seed.LCANamespace + " --ignore-not-found": {{Out: stuck}},
 	}, nil)
@@ -70,6 +70,18 @@ func TestAbortingIsNotAFinding(t *testing.T) {
 	busy := `{"spec":{"stage":"Prep"},"status":{"conditions":[{"type":"Idle","status":"False","reason":"Aborting"}]}}`
 	e, _ := fake(map[string][]guestctltest.Reply{
 		"get imagebasedupgrades upgrade -n " + seed.LCANamespace + " --ignore-not-found": {{Out: busy}},
+	}, nil)
+	if got, err := Run(context.Background(), e, ns, nil); err != nil || len(got) != 0 {
+		t.Errorf("findings = %+v, %v", got, err)
+	}
+}
+
+// A Prep that is still running has its Idle condition False with reason
+// InProgress too; that is LCA working, not a stuck upgrade.
+func TestPrepInProgressIsNotAFinding(t *testing.T) {
+	prepping := `{"spec":{"stage":"Prep"},"status":{"conditions":[{"type":"Idle","status":"False","reason":"InProgress"},{"type":"PrepInProgress","status":"True","reason":"InProgress","message":"total: 4 (pulled: 1, failed: 0)"}]}}`
+	e, _ := fake(map[string][]guestctltest.Reply{
+		"get imagebasedupgrades upgrade -n " + seed.LCANamespace + " --ignore-not-found": {{Out: prepping}},
 	}, nil)
 	if got, err := Run(context.Background(), e, ns, nil); err != nil || len(got) != 0 {
 		t.Errorf("findings = %+v, %v", got, err)
