@@ -60,6 +60,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   `go-toolbox/confkit`. `Settings` lists the keys with what each means and the environment variable
   that overrides it; `Resolve` is the one precedence rule (flag, then environment, then file), and
   `cmd` reads `seed.sync.*` through it. A missing file is empty, never an error.
+- `lib/doctor`: `Run` looks for the states four open issues describe — a stuck IBU `Idle` condition,
+  a seed generation nothing follows, a guest whose `kubelet`/`crio` an interrupted generation left
+  off, a `Released` PV (`teardown.Allocated`), a registry under the seed floor (`seed.RoomWarn`).
+  `Fix` runs only the two reversible `Action`s; everything else is a hint. Detection is a table of
+  checks over `guestctltest.Fake`, so each state has a unit test.
 - `lib/report`: `Collect` gathers what `status`, `guest.List`, `cache.List`, `seed.List` and
   `isos.List` report into one document for a bug report or a demo; each part that fails becomes a
   warning, and the type graph carries no credentials (a test walks it to be sure). `cmd/report.go`
