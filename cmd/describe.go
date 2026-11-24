@@ -161,15 +161,7 @@ func renderDescribe(w io.Writer, d *vsnoDescription, now time.Time, pal ui.Palet
 	}
 	if d.Snapshot != nil {
 		fmt.Fprintf(w, "\n%s\n", pal.Bold("Snapshot"))
-		var st ui.Table
-		st.Row("  NAME", "VERSION", "SIZE", "AGE", "STATE")
-		state := pal.Green("restorable")
-		if d.Snapshot.InUse {
-			state = pal.Dim("vSNO " + d.Snapshot.VSNO + " exists")
-		}
-		st.Row("  "+d.Snapshot.Name, orDash(d.Snapshot.Version), bytesText(d.Snapshot.SizeBytes),
-			ageSince(now, d.Snapshot.Created), state)
-		st.Write(w)
+		renderSnapshots(w, []snapshot.Entry{*d.Snapshot}, now, pal)
 	}
 	for _, warn := range d.Warnings {
 		fmt.Fprintf(w, "\n%s %s\n", pal.Icon("!"), warn)

@@ -249,9 +249,8 @@ func MissingState(ctx context.Context, e Env, ns, name string) (State, string) {
 	if e.Now != nil {
 		now = e.Now
 	}
-	created := svcs.Items[0].CreationTimestamp.Time
-	if !created.IsZero() && now().Sub(created) > abandonGrace {
-		return Abandoned, "no VM and no build; `vsno delete " + name + "` cleans it up"
+	if serviceAbandoned(&svcs.Items[0], now()) {
+		return Abandoned, noBuildDetail(name)
 	}
 	return Building, "building the agent ISO"
 }

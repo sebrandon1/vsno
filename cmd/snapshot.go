@@ -128,12 +128,12 @@ func runSnapshotList(cmd *cobra.Command, _ []string) error {
 		}
 		return writeJSON(w, entries)
 	}
-	renderSnapshots(w, entries, palette(w))
+	renderSnapshots(w, entries, time.Now(), palette(w))
 	return nil
 }
 
 // renderSnapshots prints the snapshots as a table.
-func renderSnapshots(w io.Writer, entries []snapshot.Entry, pal ui.Palette) {
+func renderSnapshots(w io.Writer, entries []snapshot.Entry, now time.Time, pal ui.Palette) {
 	if len(entries) == 0 {
 		fmt.Fprintln(w, "No snapshots. `vsno snapshot create <vsno>` keeps one.")
 		return
@@ -148,7 +148,7 @@ func renderSnapshots(w io.Writer, entries []snapshot.Entry, pal ui.Palette) {
 		if e.InUse {
 			state = pal.Dim("vSNO " + e.VSNO + " exists")
 		}
-		t.Row(e.Name, e.VSNO, orDash(e.Version), bytesText(e.SizeBytes), ageSince(time.Now(), e.Created), state)
+		t.Row(e.Name, e.VSNO, orDash(e.Version), bytesText(e.SizeBytes), ageSince(now, e.Created), state)
 	}
 	t.Write(w)
 }
