@@ -97,7 +97,7 @@ func TestCreateRefusesOnTheMarkWhileTheAPIIsDown(t *testing.T) {
 	e := world(t, fa)
 	markGenerating(t, e, e.Now().Add(-5*time.Minute))
 	_, err := Create(context.Background(), e, CreateOptions{Namespace: ns, Name: "a"})
-	if err == nil || !strings.Contains(err.Error(), "started 5m") || !strings.Contains(err.Error(), "LCA is still generating") {
+	if err == nil || !strings.Contains(err.Error(), "started 5m") || !strings.Contains(err.Error(), "it may still be generating") {
 		t.Fatalf("err = %v, want the mark's age", err)
 	}
 }

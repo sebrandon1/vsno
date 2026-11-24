@@ -352,8 +352,9 @@ func checkSeedGen(ctx context.Context, e Env, ns, name string) error {
 	if !ok {
 		return nil
 	}
-	return fmt.Errorf("vsno marked a seed generation on the vSNO as started %s ago, and its SeedGenerator can't be read: "+
-		"LCA is still generating. `vsno list` follows it; run this again when it ends", e.Now().Sub(at).Round(time.Second))
+	return fmt.Errorf("vsno marked a seed generation on the vSNO as started %s ago, and LCA's SeedGenerator for it "+
+		"isn't readable: it may still be generating. `vsno list` follows it; run this again when it ends",
+		e.Now().Sub(at).Round(time.Second))
 }
 
 // SeedGen is a seed generation under way on a vSNO.
