@@ -25,6 +25,15 @@ const (
 	checkLCA   = "Lifecycle Agent"
 	checkTrust = "Registry trust"
 	checkSeed  = "Seed target"
+	checkRoom  = "Registry space"
+)
+
+// How much free space in the environment's registry a seed generation is
+// comfortable with. The image a seed run pushes is around 1.5 GiB on this lab,
+// but it is built from scratch each time, so the floor is generous.
+const (
+	seedFloorFail = 2 << 30
+	seedFloorWarn = 5 << 30
 )
 
 // PrecheckOptions are the user's choices for vsno seed precheck.
@@ -133,6 +142,7 @@ func (in *inspector) run(ctx context.Context) {
 	in.lifecycleAgent(ctx)
 	in.trust(ctx)
 	in.target(ctx)
+	in.room(ctx)
 }
 
 func (in *inspector) row(group precheck.Group, st precheck.Status, check, detail, hint string) {
@@ -287,6 +297,35 @@ func (in *inspector) target(ctx context.Context) {
 	}
 	in.row(GroupTarget, precheck.Pass, checkSeed, in.rep.Image+", and the credentials to push it", "")
 }
+
+// room reports whether the environment's registry can hold the seed image. A
+// seed generation pushes about 1.5 GiB; finding out after the vSNO's services
+// have been stopped costs the whole run, so say it here.
+func (in *inspector) room(ctx context.Context) {
+	if in.Volume == nil || in.regErr != nil || in.rep.Image == "" || imageHost(in.rep.Image) != in.reg.Host {
+		return // not this registry, or a caller that cannot read the volume
+	}
+	used, total, err := in.Volume(ctx, in.o.Namespace)
+	if err != nil {
+		in.row(GroupRegistry, precheck.Warn, checkRoom, "the registry's volume couldn't be read: "+err.Error(), "")
+		return
+	}
+	free := total - used
+	detail := fmt.Sprintf("%s free of %s", gib(max(0, free)), gib(total))
+	switch {
+	case free < seedFloorFail:
+		in.row(GroupRegistry, precheck.Fail, checkRoom, detail+"; a seed image needs about "+gib(seedFloorFail),
+			"`vsno cache prune` or `vsno cache gc` frees space")
+	case free < seedFloorWarn:
+		in.row(GroupRegistry, precheck.Warn, checkRoom, detail+"; a seed image needs about "+gib(seedFloorFail),
+			"`vsno cache prune` and `vsno cache gc` are the ways to free space")
+	default:
+		in.row(GroupRegistry, precheck.Pass, checkRoom, detail, "")
+	}
+}
+
+// gib renders a byte count the way the tables do.
+func gib(n int64) string { return fmt.Sprintf("%.1fGi", float64(n)/(1<<30)) }
 
 // install sets up what it can, before the checks are run again. It takes the
 // same steps `vsno prepare` does, so a vSNO readied here and one readied there

@@ -319,8 +319,10 @@ than how old the upstream image is.
 
 ### `vsno seed precheck`
 
-Reports everything making a seed image needs before the 15–30 minute generation. Only reads, and
-exits non-zero if anything is missing.
+Reports everything making a seed image needs before the 15–30 minute generation: the vSNO's state,
+the registry and its trust, the Lifecycle Agent, the image and the credentials to push it, and the
+registry volume's free space (the generation pushes about 1.5 GiB, so under 5 GiB free is a warning
+and under 2 GiB a failure). Only reads, and exits non-zero if anything is missing.
 
 | Flag | Meaning |
 |---|---|

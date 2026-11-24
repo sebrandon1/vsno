@@ -422,3 +422,58 @@ func TestPrecheckErrors(t *testing.T) {
 		}
 	})
 }
+
+// The registry has to hold the seed image this run pushes; say so before the
+// vSNO's services are stopped, not after.
+func TestPrecheckRegistryRoom(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name   string
+		total  int64
+		used   int64
+		status precheck.Status
+		detail string
+	}{
+		{"plenty", 100 << 30, 40 << 30, precheck.Pass, "60.0Gi free of 100.0Gi"},
+		{"tight", 100 << 30, 97 << 30, precheck.Warn, "3.0Gi free of 100.0Gi"},
+		{"full", 100 << 30, 99 << 30, precheck.Fail, "1.0Gi free of 100.0Gi"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := world(t, readyAccess())
+			e.Volume = func(context.Context, string) (int64, int64, error) { return c.used, c.total, nil }
+			rep, err := Precheck(ctx, e, PrecheckOptions{Namespace: ns, Name: "a"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := rowOf(t, rep, checkRoom)
+			if res.Status != c.status || !strings.Contains(res.Detail, c.detail) {
+				t.Errorf("row = %+v, want %s %q", res, c.status, c.detail)
+			}
+		})
+	}
+
+	// A volume that can't be read is a warning, not a failed precheck.
+	e := world(t, readyAccess())
+	e.Volume = func(context.Context, string) (int64, int64, error) { return 0, 0, errors.New("no registry pod") }
+	rep, err := Precheck(ctx, e, PrecheckOptions{Namespace: ns, Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := rowOf(t, rep, checkRoom); res.Status != precheck.Warn || !strings.Contains(res.Detail, "couldn't be read") {
+		t.Errorf("unreadable volume: %+v", res)
+	}
+	if rep.Failed() != 0 {
+		t.Errorf("failed checks: %d", rep.Failed())
+	}
+
+	// A seed going to another registry does not consult this one's volume.
+	e = world(t, readyAccess())
+	called := false
+	e.Volume = func(context.Context, string) (int64, int64, error) { called = true; return 1, 1, nil }
+	if _, err := Precheck(ctx, e, PrecheckOptions{Namespace: ns, Name: "a", Image: "quay.io/someone/seed:1.2.3"}); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Error("it read the volume for an image elsewhere")
+	}
+}
