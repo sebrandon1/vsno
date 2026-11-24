@@ -50,10 +50,11 @@ type Resolver struct {
 }
 
 var (
-	reVersion      = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)$`)
-	reMinor        = regexp.MustCompile(`^(\d+)\.(\d+)$`)
+	// A release number has no leading zero: 4.22.022 is not a version.
+	reVersion      = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$`)
+	reMinor        = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)$`)
 	reLatestNightl = regexp.MustCompile(`^(\d+\.\d+)-nightly$`)
-	reNightly      = regexp.MustCompile(`^\d+\.\d+\.\d+-0\.nightly-\d{4}-\d{2}-\d{2}-\d{6}$`)
+	reNightly      = regexp.MustCompile(`^\d+\.\d+\.\d+-0\.nightly-(\d{4}-\d{2}-\d{2}-\d{6})$`)
 )
 
 // Forms lists the accepted --version forms, for help and errors.
@@ -71,6 +72,12 @@ func (r Resolver) Resolve(ctx context.Context, v string) (Release, error) {
 		rel.Image = v
 		rel.Nightly = strings.HasPrefix(v, CIRegistry+"/")
 	case reNightly.MatchString(v):
+		// The shape is a nightly's, but "2026-13-99-999999" is not a date: it
+		// would resolve to an image that cannot exist, and fail at the pull.
+		stamp := reNightly.FindStringSubmatch(v)[1]
+		if _, err := time.Parse("2006-01-02-150405", stamp); err != nil {
+			return rel, fmt.Errorf("%q is not a nightly: %s is not a date", v, stamp)
+		}
 		rel.Version, rel.Image, rel.Nightly = v, nightlyRepo+":"+v, true
 	case reLatestNightl.MatchString(v):
 		name, pullSpec, err := r.latestNightly(ctx, reLatestNightl.FindStringSubmatch(v)[1])
