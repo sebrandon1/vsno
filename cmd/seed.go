@@ -53,7 +53,7 @@ The image goes to the environment's registry as seeds/<vsno>:<version>, unless
 --image names another (the host cluster's pull secret must have credentials
 for its registry). It takes about 15-30 minutes.`,
 	Args: oneArg("the vSNO to make the seed image from, as `vsno list` shows it"),
-	RunE: runSeedCreate,
+	RunE: trimmed(runSeedCreate),
 }
 
 var seedPrecheckCmd = &cobra.Command{
@@ -70,7 +70,7 @@ what vsno can: the Lifecycle Agent and OADP from the vSNO's own catalog, and
 trust in the registry — the same steps vsno prepare takes — then reports
 again. seed create runs the same checks first.`,
 	Args: oneArg("the vSNO to check, as `vsno list` shows it"),
-	RunE: runSeedPrecheck,
+	RunE: trimmed(runSeedPrecheck),
 }
 
 var seedListCmd = &cobra.Command{
@@ -89,7 +89,7 @@ by <vsno>:<version>, or all of a vSNO's seeds by its name. It lists them and
 asks you to type the arguments, unless --yes. --dry-run only lists. The
 registry frees their space only when it is garbage collected.`,
 	Args: someArgs("the seed images to delete, as `vsno seed list` shows them"),
-	RunE: runSeedDelete,
+	RunE: trimmed(runSeedDelete),
 }
 
 var seedSyncCmd = &cobra.Command{
@@ -109,7 +109,7 @@ written to the cluster. An existing tag on the far side is left alone unless
 --overwrite. The copy runs in the builder pod, so the image never passes
 through your machine.`,
 	Args: oneArg("the seed as <vsno>[:<version>], as `vsno seed list` shows it"),
-	RunE: runSeedSync,
+	RunE: trimmed(runSeedSync),
 }
 
 func init() {

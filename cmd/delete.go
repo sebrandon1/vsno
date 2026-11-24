@@ -30,7 +30,7 @@ var deleteCmd = &cobra.Command{
 its DNS entry and the builder's files for it. It lists what it will delete and
 asks you to type the name(s), unless --yes. --dry-run only lists.`,
 	Args: someArgs("one or more vSNOs, as `vsno list` shows them"),
-	RunE: runDelete,
+	RunE: trimmed(runDelete),
 }
 
 var startCmd = &cobra.Command{

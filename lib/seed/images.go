@@ -128,12 +128,14 @@ func dropSync(ctx context.Context, e Env, ns string, refs []string) error {
 	})
 }
 
-// Match returns the images arg names: a full reference, <vSNO>:<tag>, or
-// <vSNO> for all of its seeds.
+// Match returns the images arg names: a full reference, <vSNO>:<tag>, seeds/<vSNO>,
+// or <vSNO> for all of its seeds.
 func Match(imgs []Image, arg string) []Image {
+	arg = strings.TrimSpace(arg)
 	var out []Image
 	for _, img := range imgs {
-		if arg == img.Ref || arg == img.From+":"+img.Tag || arg == RepoPrefix+img.From+":"+img.Tag || arg == img.From {
+		if arg == img.Ref || arg == img.From+":"+img.Tag || arg == RepoPrefix+img.From+":"+img.Tag ||
+			arg == img.From || arg == RepoPrefix+img.From {
 			out = append(out, img)
 		}
 	}

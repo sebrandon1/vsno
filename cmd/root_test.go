@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 
@@ -139,5 +140,25 @@ func TestCheckJSON(t *testing.T) {
 		case !c.wantErr && err != nil:
 			t.Errorf("%v -o %s: %v, want nil", c.args, c.format, err)
 		}
+	}
+}
+
+// The arguments that name an object lose a copy-paste's whitespace; oc's and
+// ssh's words are left alone.
+func TestTrimmedArgs(t *testing.T) {
+	var got []string
+	take := func(_ *cobra.Command, args []string) error { got = args; return nil }
+	if err := trimmed(take)(nil, []string{" seed-cluster ", "a:4.22.22 "}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"seed-cluster", "a:4.22.22"}) {
+		t.Errorf("trimmed = %q", got)
+	}
+	got = nil
+	if err := trimmedFirst(take)(nil, []string{" seed-cluster ", " get nodes -o wide "}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"seed-cluster", " get nodes -o wide "}) {
+		t.Errorf("trimmedFirst = %q", got)
 	}
 }

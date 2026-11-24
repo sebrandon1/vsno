@@ -599,3 +599,24 @@ func TestListShowsAndDeleteForgetsSyncTime(t *testing.T) {
 		t.Errorf("the deleted image's sync time is still recorded: %+v", st.Syncs)
 	}
 }
+
+// A name with a copy-paste's space still matches, and seeds/<vSNO> names all of
+// a vSNO's seeds.
+func TestMatchTrimsAndTakesTheRepoPrefix(t *testing.T) {
+	imgs, err := parseImages(testRegistry.Host, []byte(listing))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		arg  string
+		want int
+	}{
+		{"a", 1}, {"a:4.20.46", 1}, {" a", 1}, {"a:4.20.46 ", 1},
+		{"seeds/a", 1}, {"seeds/a:4.20.46", 1}, {" seeds/a ", 1},
+		{"b", 1}, {"a:4.20.4", 0}, {"", 0},
+	} {
+		if got := len(Match(imgs, c.arg)); got != c.want {
+			t.Errorf("Match(%q) = %d images, want %d", c.arg, got, c.want)
+		}
+	}
+}
