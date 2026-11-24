@@ -328,6 +328,7 @@ func TestPhaseOf(t *testing.T) {
 const (
 	sgGet       = "get seedgenerators seedimage --ignore-not-found"
 	sgPoll      = sgGet + " --request-timeout=10s"
+	sgCheck     = sgGet + " " + seedGenQuery
 	sgRunningJS = `{"metadata":{"name":"seedimage"},"status":{"conditions":[{"type":"SeedGenInProgress","status":"True","reason":"InProgress","message":"Launching imager container"}]}}`
 	sgDoneJS    = `{"metadata":{"name":"seedimage"},"status":{"conditions":[{"type":"SeedGenCompleted","status":"True","reason":"Completed","message":"Seed Generation completed"}]}}`
 	sgFailedJS  = `{"metadata":{"name":"seedimage"},"status":{"conditions":[{"type":"SeedGenCompleted","status":"False","reason":"Failed","message":"Seed Generation failed: push denied"}]}}`

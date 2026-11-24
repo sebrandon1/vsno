@@ -29,11 +29,16 @@ the two cannot drift. `create` runs the same checks first.
 
 `seed create` turns a ready vSNO into an Image Based Upgrade seed image. Seed generation has to run
 on the vSNO itself, so the cluster is stopped while the Lifecycle Agent builds the image and comes
-back when it's done. `create`:
+back when it's done. It first refuses, in a second, if a generation is already running on the vSNO —
+LCA's SeedGenerator says so, or, while the guest's API is down, the mark `create` leaves on the VM
+does. `create`:
 1. waits for the cluster's operators to settle
 2. installs the Lifecycle Agent from the vSNO's own catalog if it's missing
 3. makes the vSNO trust the environment's registry
 4. runs the seed generation, following it to the end
+
+Interrupting `create` does not stop the generation: LCA finishes it on the node, and the vSNO stays
+`making-seed` in `vsno list` until it does. Run `create` again once it has ended.
 
 The image lands in the environment's registry as `seeds/<vsno>:<version>`. `--image` pushes elsewhere
 (the host cluster's pull secret must have credentials for that registry). It takes about 15–30

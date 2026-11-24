@@ -55,7 +55,8 @@ func TestClassify(t *testing.T) {
 			return o
 		}(), Finishing, "control plane rolling out"},
 		// Seed generation stops the guest's services: no probe answer is progress.
-		{"making the seed image", Observed{VMStatus: "Running", ISOPhase: "Succeeded", Probe: &Probe{}, Seeding: true}, MakingSeed, ""},
+		{"making the seed image", Observed{VMStatus: "Running", ISOPhase: "Succeeded", Probe: &Probe{}, Seeding: true}, MakingSeed, seedDetail},
+		{"making the seed image, not probed", Observed{VMStatus: "Running", ISOPhase: "Succeeded", Seeding: true}, MakingSeed, seedDetail},
 		{"a stale seeding mark does not hide a silent guest", Observed{VMStatus: "Running", ISOPhase: "Succeeded", Probe: &Probe{}, Seeding: false}, Unknown, "no answer from the installer or API"},
 		{"ready", running(&Probe{CV: &CV{Available: true}, Unhealthy: intp(0)}), Ready, ""},
 		{"ready, degraded", running(&Probe{CV: &CV{Available: true}, Unhealthy: intp(2)}), Ready, "2 operator(s) degraded or unavailable"},

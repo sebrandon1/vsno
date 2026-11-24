@@ -296,7 +296,7 @@ func observe(ctx context.Context, e Env, vm *unstructured.Unstructured) (Guest, 
 	o := Observed{VMStatus: nested(vm, "status", "printableStatus"), WantsRunning: wantsRunning(vm)}
 	if e.Now != nil {
 		o.Now = e.Now()
-		o.Seeding = seeding(ann[AnnSeeding], o.Now)
+		_, o.Seeding = SeedingSince(ann[AnnSeeding], o.Now)
 	}
 	if dv, err := e.Dyn.Resource(GVRDataVolume).Namespace(ns).Get(ctx, name+"-iso", metav1.GetOptions{}); err == nil {
 		o.ISOPhase, o.ISOProgress = nested(dv, "status", "phase"), nested(dv, "status", "progress")
@@ -322,11 +322,15 @@ func nested(u *unstructured.Unstructured, path ...string) string {
 // cluster for good.
 const seedGenGrace = time.Hour
 
-// seeding reports whether AnnSeeding's timestamp is recent enough to mean seed
-// generation is running now.
-func seeding(v string, now time.Time) bool {
+// SeedingSince returns when a vSNO was marked as generating a seed image, if
+// the mark is recent enough to still mean one is running. It is exported so
+// `seed create` can ask the same question list does before starting another.
+func SeedingSince(v string, now time.Time) (time.Time, bool) {
 	t, err := time.Parse(time.RFC3339, v)
-	return err == nil && !now.IsZero() && now.Sub(t) < seedGenGrace
+	if err != nil || now.IsZero() || now.Sub(t) >= seedGenGrace {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // gib parses a quantity such as "32Gi" into GiB; 0 if it doesn't parse.
