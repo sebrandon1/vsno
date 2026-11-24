@@ -208,3 +208,24 @@ func TestResolveTrimsWhitespace(t *testing.T) {
 		}
 	}
 }
+
+// A version that cannot exist is refused before it becomes an image reference.
+func TestResolveRefusesImpossibleVersions(t *testing.T) {
+	r := server(t)
+	for _, c := range []struct{ in, want string }{
+		{"4.22.0-0.nightly-2026-13-99-999999", "is not a date"},
+		{"4.22.0-0.nightly-2026-02-30-120000", "is not a date"},
+		{"4.22.0-0.nightly-2026-11-10-999999", "is not a date"},
+		{"4.22.022", "unrecognized --version"},
+		{"4.022.2", "unrecognized --version"},
+		{"4.22.023", "unrecognized --version"},
+	} {
+		if _, err := r.Resolve(context.Background(), c.in); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("Resolve(%q) err = %v, want %q", c.in, err, c.want)
+		}
+	}
+	// A real nightly still resolves.
+	if rel, err := r.Resolve(context.Background(), "4.22.0-0.nightly-2026-11-01-000000"); err != nil || !rel.Nightly {
+		t.Errorf("real nightly: %+v, %v", rel, err)
+	}
+}
