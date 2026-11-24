@@ -17,7 +17,7 @@ vsno snapshot delete target --yes       # free the space
 `snapshot` keeps a vSNO's installed root disk as a `VolumeSnapshot` and `create <name>
 --from-snapshot` restores it, so a repeat test does not install OpenShift again. On LVMS the
 volumes are thin, so the storage driver restores a snapshot as a thin clone in **seconds** —
-measured on cnfdt16: a 10 GiB volume snapshotted in 9s and restored in 3s, verified byte for byte —
+measured on a lab cluster: a 10 GiB volume snapshotted in 9s and restored in 3s, verified byte for byte —
 and a vSNO whose disk is restored is **ready in about a minute** (61s and 63s measured, node up and
 every cluster operator green) against ~17 minutes installing.
 (CDI's `DataVolume` snapshot source copies the volume host-assisted instead and took minutes for
