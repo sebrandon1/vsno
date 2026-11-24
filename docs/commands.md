@@ -577,6 +577,23 @@ vsno config set seed.sync.to quay.io/me/seeds
 vsno seed sync seed-a:4.22.22
 ```
 
+## `vsno doctor`
+
+Looks for the states that read as a hang or a boot failure but are something vsno knows about: an
+ImageBasedUpgrade whose `Idle` condition is stuck at a reason LCA's controller does not act on
+([#125](https://github.com/sebrandon1/vsno/issues/125)); a seed generation LCA is running that no
+vsno process is following ([#127](https://github.com/sebrandon1/vsno/issues/127)); a vSNO whose
+`kubelet` and `crio` a half-finished seed generation left disabled ([#129](https://github.com/sebrandon1/vsno/issues/129));
+a `Released` PersistentVolume still holding a disk; and a registry too full for the next seed image.
+
+It only reads unless `--fix` is given, and `--fix` runs only two reversible actions — enabling crio
+and kubelet on such a vSNO, and the status patch that unsticks LCA's Idle condition. It never
+deletes anything, and it prints nothing on a healthy environment.
+
+| Flag | Meaning |
+|---|---|
+| `--fix` | Apply the two reversible fixes; everything else is reported |
+
 ## `vsno report`
 
 Reads the environment once and writes everything a bug report or a demo wants as one document: the

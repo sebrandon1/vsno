@@ -195,14 +195,22 @@ type AllocatedPV struct {
 // the PVC is gone, the PV stays, and nothing else in vsno looks at them. The
 // boot-source images belong to another namespace and are not counted.
 func (p *planner) allocated(ctx context.Context) ([]AllocatedPV, error) {
-	pvs, err := p.Kube.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	return Allocated(ctx, p.Kube, p.o.Namespace)
+}
+
+// Allocated lists the PersistentVolumes made for claims in ns. Deleting the
+// namespace leaves them Released rather than deleted: the PVC is gone, the PV
+// stays, and nothing else in vsno looks at them. Exported so `vsno doctor` can
+// report the leak without a teardown.
+func Allocated(ctx context.Context, kube kubernetes.Interface, ns string) ([]AllocatedPV, error) {
+	pvs, err := kube.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing PersistentVolumes: %w", err)
 	}
 	var out []AllocatedPV
 	for _, pv := range pvs.Items {
 		ref := pv.Spec.ClaimRef
-		if ref == nil || ref.Namespace != p.o.Namespace {
+		if ref == nil || ref.Namespace != ns {
 			continue
 		}
 		out = append(out, AllocatedPV{Name: pv.Name, Claim: ref.Namespace + "/" + ref.Name,
