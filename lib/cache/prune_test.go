@@ -323,3 +323,14 @@ func TestEnsureConfig(t *testing.T) {
 		t.Errorf("overwrote the ConfigMap: %q", cm.Data["config.yml"])
 	}
 }
+
+// A negative --keep is a mistake, not "keep none".
+func TestPruneRefusesNegativeKeep(t *testing.T) {
+	rep := &Report{Entries: []Entry{
+		{Version: "4.20.46", Image: "q:4.20.46"},
+		{Version: "4.21.42", Image: "q:4.21.42"},
+	}}
+	if _, err := selectEntries(rep, PruneOptions{Keep: -1}); err == nil || !strings.Contains(err.Error(), "--keep takes how many releases to keep, not -1") {
+		t.Errorf("err = %v, want a refusal", err)
+	}
+}
