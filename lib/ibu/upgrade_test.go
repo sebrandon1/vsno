@@ -469,3 +469,30 @@ func TestUpgradeRefusesAnOlderSeed(t *testing.T) {
 		}
 	}
 }
+
+// The upgrade guard orders plain release versions numerically, and leaves
+// anything else (a nightly, an empty version) to LCA.
+func TestCompareVersions(t *testing.T) {
+	for _, c := range []struct {
+		target, seed string
+		cmp          int
+		ok           bool
+	}{
+		{"4.22.22", "4.22.23", -1, true},
+		{"4.22.22", "4.22.22", 0, true},
+		{"4.22.23", "4.22.22", 1, true},
+		{"4.22.9", "4.22.10", -1, true}, // numerically, not as text
+		{"4.21.42", "4.22.0", -1, true},
+		{"10.0.0", "9.9.9", 1, true},
+		{"4.22.22", "4.22.0-0.nightly-2026-11-10-072952", 0, false},
+		{"4.22.0-0.nightly-2026-11-10-072952", "4.22.22", 0, false},
+		{"", "4.22.22", 0, false},
+		{"4.22.22", "", 0, false},
+		{"4.22.x", "4.22.23", 0, false},
+	} {
+		cmp, ok := compareVersions(c.target, c.seed)
+		if ok != c.ok || (ok && cmp != c.cmp) {
+			t.Errorf("compareVersions(%q, %q) = %d, %v; want %d, %v", c.target, c.seed, cmp, ok, c.cmp, c.ok)
+		}
+	}
+}
