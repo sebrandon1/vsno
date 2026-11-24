@@ -126,6 +126,32 @@ func palette(w io.Writer) ui.Palette {
 	return ui.Palette{On: outputFormat != formatJSON && ui.ColorEnabled(w)}
 }
 
+// names trims the arguments that name an object: a copy-paste often brings a
+// trailing space, and "no vSNO named seed-cluster " helps nobody.
+func names(args []string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = strings.TrimSpace(a)
+	}
+	return out
+}
+
+// trimmed wraps a RunE whose arguments are all names.
+func trimmed(run func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error { return run(cmd, names(args)) }
+}
+
+// trimmedFirst wraps a RunE where only the first argument is a name: the words
+// after it (oc and ssh) are the user's own.
+func trimmedFirst(run func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			args = append(names(args[:1]), args[1:]...)
+		}
+		return run(cmd, args)
+	}
+}
+
 // oneArg validates a command that takes exactly one positional, naming what it
 // wants: rootCmd sets SilenceUsage, so cobra's own "accepts 1 arg(s), received
 // 0" arrives without the Usage line that would say which.

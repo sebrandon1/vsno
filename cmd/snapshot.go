@@ -41,7 +41,7 @@ var snapshotCreateCmd = &cobra.Command{
 	Use:   "create [name]",
 	Short: "Snapshot a vSNO's disk",
 	Args:  cobra.MaximumNArgs(1),
-	RunE:  runSnapshotCreate,
+	RunE:  trimmed(runSnapshotCreate),
 }
 
 var snapshotListCmd = &cobra.Command{
@@ -58,7 +58,7 @@ var snapshotDeleteCmd = &cobra.Command{
 	Long: `delete removes the named snapshots and the installer files kept with them.
 It lists what it will delete and asks you to type "yes", unless --yes.`,
 	Args: someArgs("the vSNOs to snapshot, as `vsno list` shows them"),
-	RunE: runSnapshotDelete,
+	RunE: trimmed(runSnapshotDelete),
 }
 
 func init() {

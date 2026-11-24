@@ -41,9 +41,9 @@ builder pod. Flags after the name go to oc, for example:
   vsno oc seed get nodes -o wide
   vsno oc seed -- get clusterversion`,
 	Args: someArgs("the vSNO to run oc against, then the oc arguments"),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: trimmedFirst(func(cmd *cobra.Command, args []string) error {
 		return runAccess(cmd, args, guest.Oc)
-	},
+	}),
 }
 
 var sshCmd = &cobra.Command{
@@ -52,9 +52,9 @@ var sshCmd = &cobra.Command{
 	Long: `ssh opens a shell on the vSNO as user core (or runs the command), from the
 builder pod with the environment's SSH key.`,
 	Args: someArgs("the vSNO to ssh to, then the command to run"),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: trimmedFirst(func(cmd *cobra.Command, args []string) error {
 		return runAccess(cmd, args, guest.SSH)
-	},
+	}),
 }
 
 var screenshotCmd = &cobra.Command{
