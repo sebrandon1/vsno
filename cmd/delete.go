@@ -11,6 +11,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/apply"
 	"github.com/sebrandon1/vsno/lib/guest"
 	"github.com/sebrandon1/vsno/lib/kube"
+	"github.com/sebrandon1/vsno/lib/seed"
 	"github.com/sebrandon1/vsno/lib/ui"
 	"github.com/spf13/cobra"
 )
@@ -120,6 +121,15 @@ func runPower(cmd *cobra.Command, name string, run bool) error {
 	if err != nil {
 		return err
 	}
+	se := seed.Env{Env: env}
+	se.Defaults(namespace)
+	// LCA is generating on the node, with the guest's services stopped: a stop
+	// here kills the generation half way and leaves crio and kubelet disabled.
+	if !run {
+		if g := seed.RunningSeedGen(cmd.Context(), se, namespace, name); g != nil {
+			return stopRefusal(name, g)
+		}
+	}
 	if err := guest.SetRunning(cmd.Context(), env, namespace, name, run); err != nil {
 		return err
 	}
@@ -133,8 +143,8 @@ func runPower(cmd *cobra.Command, name string, run bool) error {
 		return nil
 	}
 	st, err := guest.WaitState(cmd.Context(), env, namespace, name, want...)
-	if err == nil && st == guest.Failed {
-		err = fmt.Errorf("vSNO %s failed to start; see `vsno list` and `vsno screenshot %s`", name, name)
+	if run {
+		err = startOutcome(cmd, se, name, st, err)
 	}
 	res.State = string(st)
 	if outputFormat == formatJSON {
@@ -145,6 +155,44 @@ func runPower(cmd *cobra.Command, name string, run bool) error {
 	return err
 }
 
+// startOutcome turns a finished start into what it means: a failure, a guest
+// that answers nothing because of a seed generation, or nothing to add.
+func startOutcome(cmd *cobra.Command, se seed.Env, name string, st guest.State, err error) error {
+	switch {
+	case err == nil && st == guest.Failed:
+		return fmt.Errorf("vSNO %s failed to start; see `vsno list` and `vsno screenshot %s`", name, name)
+	case err == nil && st == guest.MakingSeed:
+		// It answers nothing with the mark set: LCA is generating.
+		if broken, _ := seed.SeedGenInterrupted(cmd.Context(), se.Access(name)); broken {
+			return startRecovery(name)
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: %s is making a seed image; `vsno list` follows it\n", name)
+		return nil
+	case err != nil:
+		// The wait timed out: a stop during a generation leaves the services
+		// off, and the guest then never answers.
+		if broken, _ := seed.SeedGenInterrupted(cmd.Context(), se.Access(name)); broken {
+			return startRecovery(name)
+		}
+	}
+	return err
+}
+
+// stopRefusal is why a vSNO making a seed image can't be stopped.
+func stopRefusal(name string, g *seed.SeedGen) error {
+	return fmt.Errorf("%s is making a seed image (%s): stopping it kills the generation half way, and LCA then leaves "+
+		"crio and kubelet disabled, so the vSNO will not answer when it starts again. Let it finish — `vsno list` follows "+
+		"it — then stop it", name, g)
+}
+
+// startRecovery is what a vSNO whose services an interrupted seed generation
+// left off needs: `vsno doctor --fix` runs it.
+func startRecovery(name string) error {
+	return fmt.Errorf("vSNO %s started, but crio and kubelet are disabled: a seed generation was interrupted, and its "+
+		"state is still on the node, so the cluster does not come up. Recover with `vsno doctor %s --fix` (or `vsno ssh %s "+
+		"-- 'sudo systemctl enable --now crio kubelet'`)", name, name, name)
+}
+
 // powerResult is what start and stop report in JSON.
 type powerResult struct {
 	VSNO   string `json:"vsno"`
@@ -153,10 +201,12 @@ type powerResult struct {
 }
 
 // powerWait is what start and stop say they are doing, and the states they wait
-// for: a stop wants the VM halted, a start wants the guest answering again.
+// for: a stop wants the VM halted, a start wants the guest answering again — or
+// one of the two states that end with it not answering, which startOutcome
+// turns into what is going on.
 func powerWait(run bool) (verb string, want []guest.State) {
 	if run {
-		return "starting", []guest.State{guest.Ready, guest.Failed}
+		return "starting", []guest.State{guest.Ready, guest.Failed, guest.MakingSeed}
 	}
 	return "stopping", []guest.State{guest.Stopped}
 }

@@ -352,8 +352,53 @@ func checkSeedGen(ctx context.Context, e Env, ns, name string) error {
 	if !ok {
 		return nil
 	}
-	return fmt.Errorf("vsno marked a seed generation on the vSNO as started %s ago, and its SeedGenerator can't be read: "+
-		"LCA is still generating. `vsno list` follows it; run this again when it ends", e.Now().Sub(at).Round(time.Second))
+	return fmt.Errorf("vsno marked a seed generation on the vSNO as started %s ago, and LCA's SeedGenerator for it "+
+		"isn't readable: it may still be generating. `vsno list` follows it; run this again when it ends",
+		e.Now().Sub(at).Round(time.Second))
+}
+
+// SeedGen is a seed generation under way on a vSNO.
+type SeedGen struct {
+	Message string        // LCA's own message, when its SeedGenerator can be read
+	Age     time.Duration // since vsno marked it, when the mark is what said so
+}
+
+// String names the generation: LCA's message, or how long the mark has stood.
+func (g SeedGen) String() string {
+	if g.Message != "" {
+		return g.Message
+	}
+	return "started " + g.Age.Round(time.Second).String() + " ago"
+}
+
+// RunningSeedGen reports the seed generation under way on the vSNO, or nil.
+// LCA's SeedGenerator says so while the guest's API is up; while it is down,
+// which a generation causes, the mark vsno left on the VM does.
+func RunningSeedGen(ctx context.Context, e Env, ns, name string) *SeedGen {
+	if sg, found, err := seedGen(ctx, e.Access(name)); err == nil && found {
+		if p, msg := phaseOf(sg); p == sgRunning {
+			return &SeedGen{Message: msg}
+		}
+		return nil
+	}
+	if at, ok := seedingMark(ctx, e, ns, name); ok {
+		return &SeedGen{Age: e.Now().Sub(at)}
+	}
+	return nil
+}
+
+// orchDir is where LCA keeps a seed generation's state on the node.
+const orchDir = "/var/lib/lca/ibu-seedgen-orch"
+
+// SeedGenInterrupted reports the aftermath of a vSNO stopped while LCA was
+// making a seed image: the generation's directory is still on the node and
+// crio and kubelet are disabled, so the guest comes up without an API.
+func SeedGenInterrupted(ctx context.Context, a Access) (bool, error) {
+	out, err := guestctl.SSHOut(ctx, a, "test", "-d", orchDir, "&&", "echo", "orch", ";", "systemctl", "is-enabled", "kubelet", "crio")
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(out, "orch") && strings.Contains(out, "disabled"), nil
 }
 
 // seedingMark is when vsno marked the vSNO as generating, if the mark is recent

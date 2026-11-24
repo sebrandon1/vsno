@@ -173,7 +173,9 @@ Starts a stopped vSNO, keeping its disk.
 
 ## `vsno stop`
 
-Stops a vSNO, keeping its disk and freeing its memory.
+Stops a vSNO, keeping its disk and freeing its memory. A vSNO making a seed image is refused: LCA
+is generating on the node, and a stop kills the generation half way and leaves `crio` and `kubelet`
+disabled, so the vSNO won't answer when it starts again. Let it finish — `vsno list` follows it.
 
 | Flag | Meaning |
 |---|---|
