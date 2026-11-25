@@ -51,7 +51,7 @@ It checks:
 | Existing state | OpenShift Virtualization or LVMS already installed (and whether their channel offers a newer CSV: `up to date` or `update available`), an existing `lvms-vg-vsno` StorageClass, an existing environment namespace (`-n`, default `vsno`) |
 | Hub | Whether the cluster is managed by an ACM hub (hub policies may revert operators vsno installs) |
 | Registry | The seed image goes to an in-cluster registry by default, so nothing is needed. Only if you pass the optional `--seed-repo` (e.g. `quay.io/<you>/ibu-seed`) does it check your local podman/docker auth files for push credentials. |
-| Each worker | `/dev/kvm`, bare metal or nested virtualization, CPU threads, schedulable memory, and an empty disk of at least 600 GB for LVMS |
+| Each worker | `/dev/kvm`, bare metal or nested virtualization, CPU threads, schedulable memory, and a disk it can prove blank (at least 600 GB) for LVMS |
 
 The per-worker hardware probe runs a short-lived privileged pod on each worker in a temporary
 `vsno-precheck-*` namespace, the same way `oc debug node` does, and deletes it afterwards.

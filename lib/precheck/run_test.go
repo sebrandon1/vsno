@@ -490,3 +490,93 @@ func TestWorkerNames(t *testing.T) {
 		t.Errorf("WorkerNames = %v, want %v", got, want)
 	}
 }
+
+// A raw Ceph OSD has no partition table, no filesystem and no holder, so only
+// the signatures and the data read keep it from being called empty.
+func TestRunRejectsCephOSDDisk(t *testing.T) {
+	r := Run(context.Background(), labEnv(t, "probe-ceph-osd-only.txt"), DefaultRequirements(), Options{})
+	if r.Suggested.Node != "" || r.Suggested.Disk != "" {
+		t.Fatalf("no node or disk should be suggested, got %+v", r.Suggested)
+	}
+	got := find(r, "bm-worker: disk")
+	if got == nil || got.Status != Fail {
+		t.Fatalf("bm-worker: disk = %+v", got)
+	}
+	for _, want := range []string{"sdb 1919GB", "ceph_bluestore", "the first MiB holds data"} {
+		if !strings.Contains(got.Detail, want) {
+			t.Errorf("detail %q missing %q", got.Detail, want)
+		}
+	}
+}
+
+func TestRunPicksBlankDiskNextToCephOSD(t *testing.T) {
+	r := Run(context.Background(), labEnv(t, "probe-ceph-osd-and-blank.txt"), DefaultRequirements(), Options{})
+	if want := "/dev/disk/by-id/wwn-0x5000000000000003"; r.Suggested.Disk != want {
+		t.Fatalf("Suggested.Disk = %q, want the blank sdc %q", r.Suggested.Disk, want)
+	}
+	got := find(r, "bm-worker: disk")
+	if got == nil || got.Status != Pass || !strings.Contains(got.Detail, "in use: sdb") {
+		t.Fatalf("bm-worker: disk = %+v, want the OSD named as in use", got)
+	}
+}
+
+func TestRunRejectsHeldMountedAndUnreadableDisks(t *testing.T) {
+	cases := []struct{ fixture, want string }{
+		{"probe-multipath.txt", "held by dm-0"},
+		{"probe-host-mounted.txt", "mounted at /mnt/local-storage/localblock-sc/wwn-0x5000000000000002 on the node"},
+		{"probe-unreadable-disk.txt", "the first MiB could not be read"},
+	}
+	for _, c := range cases {
+		t.Run(c.fixture, func(t *testing.T) {
+			r := Run(context.Background(), labEnv(t, c.fixture), DefaultRequirements(), Options{})
+			got := find(r, "bm-worker: disk")
+			if got == nil || got.Status != Fail || !strings.Contains(got.Detail, c.want) {
+				t.Fatalf("bm-worker: disk = %+v, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// A local PV owns a raw block device no host probe can tell is used.
+func TestRunRejectsDiskWithBoundLocalPV(t *testing.T) {
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-pv-1"},
+		Spec: corev1.PersistentVolumeSpec{
+			Local:    &corev1.LocalVolumeSource{Path: "/mnt/local-storage/localblock-sc/wwn-0x5000000000000002"},
+			ClaimRef: &corev1.ObjectReference{Name: "ocs-deviceset-0-data"},
+		},
+		Status: corev1.PersistentVolumeStatus{Phase: corev1.VolumeBound},
+	}
+	r := Run(context.Background(), labEnv(t, "probe-baremetal-empty-disk.txt", pv), DefaultRequirements(), Options{})
+	got := find(r, "bm-worker: disk")
+	if got == nil || got.Status != Fail || !strings.Contains(got.Detail, "claimed by local PV local-pv-1") {
+		t.Fatalf("bm-worker: disk = %+v, want the bound PV named", got)
+	}
+	if r.Suggested.Disk != "" {
+		t.Errorf("a disk with a bound PV must not be suggested, got %q", r.Suggested.Disk)
+	}
+}
+
+// An Available or Released local PV still means LSO owns the device path.
+func TestRunRejectsDiskWithUnboundLocalPV(t *testing.T) {
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "local-pv-leftover"},
+		Spec: corev1.PersistentVolumeSpec{
+			Local: &corev1.LocalVolumeSource{Path: "/mnt/local-storage/localblock-sc/wwn-0x5000000000000002"},
+		},
+		Status: corev1.PersistentVolumeStatus{Phase: corev1.VolumeAvailable},
+	}
+	r := Run(context.Background(), labEnv(t, "probe-baremetal-empty-disk.txt", pv), DefaultRequirements(), Options{})
+	got := find(r, "bm-worker: disk")
+	if got == nil || got.Status != Fail || !strings.Contains(got.Detail, "referenced by local PV local-pv-leftover") {
+		t.Fatalf("bm-worker: disk = %+v, want the unbound PV named", got)
+	}
+}
+
+func TestRunReportsDegradedProbe(t *testing.T) {
+	r := Run(context.Background(), labEnv(t, "probe-degraded.txt"), DefaultRequirements(), Options{})
+	got := find(r, "bm-worker: probe")
+	if got == nil || got.Status != Warn || !strings.Contains(got.Detail, "lsblk") {
+		t.Fatalf("bm-worker: probe = %+v, want a warn naming lsblk", got)
+	}
+}

@@ -79,6 +79,7 @@ func init() {
 	f.BoolVar(&rnOpts.Delete, "delete", false, "delete both vSNOs afterwards")
 	f.BoolVar(&rnOpts.Restart, "restart", false, "run every stage again instead of skipping the ones an earlier run of this plan finished")
 	f.BoolVar(&rnOpts.Yes, "yes", false, "run the plan without asking (for CI)")
+	f.BoolVar(&rnOpts.ForceDisk, "force-disk", false, "erase a disk the probe cannot prove is blank (as vsno setup --force-disk)")
 	f.DurationVar(&rnTimeout, "timeout", 20*time.Minute, "how long the setup stage may take")
 	addRunLCAFlags(f)
 	_ = runCmd.RegisterFlagCompletionFunc("node", completeNodes)
@@ -240,7 +241,7 @@ func runRun(cmd *cobra.Command, _ []string) error {
 		Env: seed.Env{Env: ge},
 		Setup: func(ctx context.Context) error {
 			_, err := setup.Run(ctx, se, setup.Options{Namespace: o.Namespace, Settings: precheck.Suggested{Node: o.Node, Disk: o.Disk},
-				Yes: o.Yes, Images: manifests.DefaultImages()})
+				Yes: o.Yes, ForceDisk: o.ForceDisk, Images: manifests.DefaultImages()})
 			return err
 		},
 		Stable: resolver.Stable,

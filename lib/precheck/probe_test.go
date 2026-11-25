@@ -3,6 +3,8 @@ package precheck
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -89,12 +91,109 @@ func TestParseProbeRejectsGarbage(t *testing.T) {
 	}
 }
 
+// A disk is only empty when the probe proves it: zero value is not empty.
+func TestDiskNeedsPositiveEvidence(t *testing.T) {
+	var d Disk
+	if d.Empty() {
+		t.Fatal("a disk with no probe evidence must not be empty")
+	}
+	if got := strings.Join(d.Problems(), ", "); !strings.Contains(got, "not checked") {
+		t.Fatalf("Problems = %q, want the unchecked fields named", got)
+	}
+}
+
+// A raw Ceph OSD has no partition table and no lsblk FSTYPE; wipefs still sees
+// its BlueStore label, and the first MiB holds data.
+func TestParseProbeCephOSD(t *testing.T) {
+	hw := loadFixture(t, "probe-ceph-osd-only.txt")
+	sdb := findDisk(hw, "sdb")
+	if sdb == nil {
+		t.Fatal("no sdb")
+	}
+	if sdb.Empty() {
+		t.Fatalf("a raw Ceph OSD must not be empty: %+v", sdb)
+	}
+	why := strings.Join(sdb.Problems(), ", ")
+	for _, want := range []string{"ceph_bluestore", "the first MiB holds data"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("Problems = %q, missing %q", why, want)
+		}
+	}
+}
+
+func TestParseProbeFailedLsblkIsReported(t *testing.T) {
+	hw, err := ParseProbe("VIRT=none\nNPROC=8\nLSBLK_STATUS=failed\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hw.Errors) == 0 || !strings.Contains(hw.Errors[0], "lsblk") {
+		t.Fatalf("Errors = %v, want lsblk named", hw.Errors)
+	}
+}
+
+// lsblk reports an unmounted device as mountpoints:[""], and a mount on a
+// partition belongs to the disk.
+func TestParseProbeMountpoints(t *testing.T) {
+	out := `VIRT=none
+NPROC=8
+LSBLK={"blockdevices":[{"name":"sdb","size":1919716163584,"type":"disk","fstype":null,"pttype":null,"mountpoints":[""],"rm":false,"children":[{"name":"sdb1","size":1919716163584,"type":"part","fstype":"xfs","pttype":null,"mountpoints":["/data"],"rm":false}]}]}
+BYID=sdb wwn-0x5000000000000002
+LSBLK_STATUS=ok
+HOSTMOUNTS_CHECKED=yes
+HOLDERS=sdb -
+SLAVES=sdb -
+SIGCHECK=sdb ok
+SIG=sdb -
+DATA=sdb head=zero tail=zero`
+	hw, err := ParseProbe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := findDisk(hw, "sdb")
+	if d == nil {
+		t.Fatal("no sdb")
+	}
+	if want := []string{"/data"}; !slices.Equal(d.Mountpoints, want) {
+		t.Fatalf("Mountpoints = %q, want %q (the empty one dropped)", d.Mountpoints, want)
+	}
+	if d.Empty() || !strings.Contains(strings.Join(d.Problems(), ", "), "mounted at /data") {
+		t.Fatalf("a disk with a mounted partition must not be empty: %+v", d.Problems())
+	}
+}
+
+// A PV whose lsblk FSTYPE is blank is still an LVM member when wipefs sees it.
+func TestParseProbeLVMBySignatureOnly(t *testing.T) {
+	out := `VIRT=none
+NPROC=8
+LSBLK={"blockdevices":[{"name":"sdb","size":1919716163584,"type":"disk","fstype":null,"pttype":null,"mountpoint":null,"rm":false}]}
+LSBLK_STATUS=ok
+HOSTMOUNTS_CHECKED=yes
+HOLDERS=sdb -
+SLAVES=sdb -
+SIGCHECK=sdb ok
+SIG=sdb LVM2_member
+DATA=sdb head=nonzero tail=nonzero`
+	hw, err := ParseProbe(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := findDisk(hw, "sdb")
+	if d == nil || !d.LVMMember() {
+		t.Fatalf("signature-only LVM member not recognized: %+v", d)
+	}
+}
+
 func TestFlexTypes(t *testing.T) {
 	out := `VIRT=none
 NPROC=8
 LSBLK={"blockdevices":[{"name":"nvme0n1","size":"1000204886016","type":"disk","fstype":null,"pttype":null,"mountpoint":null,"rm":"0"}]}
 BYID=nvme0n1 nvme-eui.0025385a91b04a0b
-BYID=nvme0n1 nvme-Samsung_SSD_970`
+BYID=nvme0n1 nvme-Samsung_SSD_970
+LSBLK_STATUS=ok
+HOSTMOUNTS_CHECKED=yes
+SIGCHECK=nvme0n1 ok
+SIG=nvme0n1 -
+DATA=nvme0n1 head=zero tail=zero`
 	hw, err := ParseProbe(out)
 	if err != nil {
 		t.Fatal(err)

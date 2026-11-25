@@ -101,7 +101,7 @@ PersistentVolume, a registry under the seed floor — and says how to clear it. 
 - Go 1.27 or newer to build from source. Prebuilt binaries for Linux and macOS (amd64 or arm64)
   are on the [releases](https://github.com/sebrandon1/vsno/releases), with `checksums.sha256`.
 - A kubeconfig for an OpenShift cluster with a bare-metal worker with `/dev/kvm`, enough CPU and
-  memory for the vSNOs, and an empty disk of at least 600 GB for LVM Storage. `vsno precheck`
+  memory for the vSNOs, and a disk it can prove blank (at least 600 GB) for LVM Storage. `vsno precheck`
   checks all of it.
 
 ## Development

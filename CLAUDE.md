@@ -229,7 +229,7 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 | File | Role |
 |---|---|
 | `types.go` | `Status`, `Group`, `Result` (per-node rows set `Node`; `Name()` is `<node>: <check>`), `Report` (with `Nodes` verdicts), `Suggested`, and `Requirements` (defaults: 2 VMs × 16 cores / 32 GiB — twice `guest.DefaultMemoryGiB`, for seed generation's headroom — a 600 GB disk, guest CIDRs). Also the `Progress`/`ProgressStep` interfaces, with no-op defaults. |
-| `probe.sh` | Embedded node probe script. It runs via `chroot /host` and prints `KEY=VALUE` lines (`VIRT`, `KVM`, `NPROC`, `MEM_*`, `LSBLK`, `BYID`). It must stay read-only. |
+| `probe.sh` | Embedded node probe script. It runs via `chroot /host` and prints `KEY=VALUE` lines (`VIRT`, `KVM`, `NPROC`, `MEM_*`, `LSBLK`, `LSBLK_STATUS`, `BYID`, and per disk `SIG`, `SIGCHECK`, `HOLDERS`, `SLAVES`, `HOSTMOUNT`, `DATA`; `HOSTMOUNTS_CHECKED`, `PROBEERR`). Emptiness is positive evidence: `wipefs -n` signatures, `/sys` holders, the node's own mount table via `/proc/1/mountinfo`, and a bounded zero read must all come back clean. It must stay read-only (`blkid -p`, `wipefs -n`, `cmp` against `/dev/zero`). |
 | `probe.go` | `ParseProbe` turns that output into `NodeHardware`/`Disk`. `Disk.PreferredByID` prefers `wwn-*`. |
 | `prober.go` | `PodProber` creates a temporary privileged namespace, one pod per node, reads the logs, then deletes the namespace. It reports each node as it finishes (`onDone`). |
 | `checks.go` | Individual checks over `Env` (Kube, Dyn, `Prober`, `Progress`). `EvaluateNode` is pure and tested with fixtures. |

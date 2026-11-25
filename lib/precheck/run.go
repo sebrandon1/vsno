@@ -126,6 +126,7 @@ func (e *Env) evaluateWorkers(ctx context.Context, r *Report, workers []corev1.N
 		step.Done(fmt.Sprintf("%d probed", len(names)))
 	}
 	var verdicts []NodeVerdict
+	pvUsers := e.localPVUsers(ctx)
 	for _, n := range workers {
 		if perr := probeErrs[n.Name]; perr != nil {
 			r.add(Result{Node: n.Name, Check: "probe", Status: Warn, Detail: perr.Error()})
@@ -135,6 +136,14 @@ func (e *Env) evaluateWorkers(ctx context.Context, r *Report, workers []corev1.N
 		if !ok {
 			continue
 		}
+		if len(h.Errors) > 0 {
+			r.add(Result{Node: n.Name, Check: "probe", Status: Warn, Detail: strings.Join(h.Errors, "; ")})
+		}
+		// A local PV can own a disk no host probe can tell is used: a raw block
+		// PV (a Ceph OSD, say) has no filesystem and no partition table.
+		disks := append([]Disk(nil), h.Disks...)
+		annotatePVs(disks, pvUsers)
+		h.Disks = disks
 		free, held, ferr := e.freeMemory(ctx, n)
 		if ferr != nil {
 			r.add(Result{Node: n.Name, Check: "memory", Status: Warn, Detail: ferr.Error()})
