@@ -31,6 +31,7 @@ var (
 	suDisk       string
 	suConfig     string
 	suYes        bool
+	suForceDisk  bool
 	suForce      bool
 	suUpgrade    bool
 	suChannels   []string
@@ -58,8 +59,13 @@ It runs precheck first. Cluster-level failures stop setup; CPU and memory
 shortfalls on the node only warn. Settings come from flags, then --config (the
 file 'vsno precheck --write-config' writes), then the precheck's suggestion.
 
-Taking over a disk asks you to type the node name, unless --yes. Reruns reuse
-generated credentials and report "unchanged" for objects that didn't change.
+Taking over a disk asks you to type the node name, unless --yes. Just before
+applying the LVMCluster it re-probes the disk and refuses one it cannot prove
+is blank -- no partitions, filesystem, signature, holder or mount, and zeros in
+its first MiB and last 4 KiB -- because LVMS erases it. A raw block volume such
+as a Ceph OSD is refused. --force-disk overrides that; --yes does not. A dry run
+or --no-probe skips the re-check. Reruns reuse generated credentials and report
+"unchanged" for objects that didn't change.
 
 Before the operator steps, setup lists the operators it manages (OpenShift
 Virtualization and LVM Storage) that OLM can update: a newer CSV in the
@@ -93,7 +99,8 @@ func init() {
 	f.StringVar(&suDisk, "disk", "", "deprecated: use --device")
 	_ = f.MarkDeprecated("disk", "use --device")
 	f.StringVar(&suConfig, "config", "", "settings file written by 'vsno precheck --write-config'")
-	f.BoolVar(&suYes, "yes", false, "approve taking over the LVMS disk without asking")
+	f.BoolVar(&suYes, "yes", false, "approve taking over the LVMS disk without asking (does not skip the blank-disk check)")
+	f.BoolVar(&suForceDisk, "force-disk", false, "erase a disk the probe cannot prove is blank (it has data, signatures, holders or a mount)")
 	f.BoolVar(&suForce, "force", false, "take over an existing namespace vsno didn't create without asking, overwriting objects in it")
 	f.BoolVar(&suUpgrade, "upgrade-operators", false, "upgrade operators that have an update available without asking")
 	f.StringArrayVar(&suChannels, "operator-channel", nil, "move an operator to a channel without asking, as <cnv|lvms>=<channel>; repeatable")
@@ -153,7 +160,7 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Setting up %s in %s (context %q)...\n\n", namespace, c.Config.Host, c.Context)
 	}
 	res, err := setup.Run(cmd.Context(), env, setup.Options{
-		Namespace: namespace, Settings: settings, Yes: suYes, Force: suForce,
+		Namespace: namespace, Settings: settings, Yes: suYes, ForceDisk: suForceDisk, Force: suForce,
 		UpgradeOperators: suUpgrade, Channels: channels, DryRun: suDryRun, Images: manifests.DefaultImages(),
 		RegistrySize: suRegSize, MemoryOvercommit: suOvercommit, KSM: suKSM,
 	})
@@ -175,19 +182,26 @@ func setupEnv(cmd *cobra.Command, c *kube.Clients, probe bool, timeout time.Dura
 		return setup.Env{}, err
 	}
 	progress := precheckProgress{newProgress()}
-	return setup.Env{
+	var prober precheck.Prober
+	if probe {
+		prober = &precheck.PodProber{Kube: c.Kube, Image: precheck.DefaultProbeImage, Timeout: 3 * time.Minute}
+	}
+	env := setup.Env{
 		Kube: c.Kube, Dyn: c.Dyn, Applier: apply.NewSSA(dc, c.Dyn),
 		Precheck: func(ctx context.Context, node string) *precheck.Report {
-			pe := &precheck.Env{Kube: c.Kube, Dyn: c.Dyn, Namespace: namespace, Progress: progress}
-			if probe {
-				pe.Prober = &precheck.PodProber{Kube: c.Kube, Image: precheck.DefaultProbeImage, Timeout: 3 * time.Minute}
-			}
+			pe := &precheck.Env{Kube: c.Kube, Dyn: c.Dyn, Namespace: namespace, Progress: progress, Prober: prober}
 			return precheck.Run(ctx, pe, precheck.DefaultRequirements(), precheck.Options{Node: node})
 		},
 		Confirm:  confirmOnTerminal(os.Stdin, cmd.ErrOrStderr()),
 		Progress: progress,
 		Timeout:  timeout,
-	}, nil
+	}
+	if prober != nil {
+		env.VerifyDisk = func(ctx context.Context, node, disk string) (precheck.Disk, error) {
+			return precheck.VerifyDisk(ctx, prober, node, disk)
+		}
+	}
+	return env, nil
 }
 
 // setupSettings reads --config and applies --node/--disk over it.

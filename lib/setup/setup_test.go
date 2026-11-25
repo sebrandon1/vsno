@@ -550,6 +550,121 @@ func TestRunDiskConfirmation(t *testing.T) {
 	}
 }
 
+// blankDisk is what the probe reports for a disk it could prove is blank.
+func blankDisk() precheck.Disk {
+	return precheck.Disk{Name: "sdb", SizeBytes: 1920 * 1_000_000_000,
+		SigChecked: true, HostMountsChecked: true,
+		DataHead: precheck.DataZero, DataTail: precheck.DataZero,
+		ByID: []string{"wwn-0x5000000000000002"}}
+}
+
+func TestRunRechecksDiskBeforeErasing(t *testing.T) {
+	ctx := context.Background()
+	dirty := blankDisk()
+	dirty.Holders = []string{"dm-0"}
+	cases := []struct {
+		name     string
+		disk     precheck.Disk
+		force    bool
+		wantErr  string
+		wantWarn string
+	}{
+		{name: "blank disk", disk: blankDisk()},
+		{name: "in use refused", disk: dirty, wantErr: "not provably empty"},
+		{name: "forced", disk: dirty, force: true, wantWarn: "--force-disk"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newSim()
+			e := s.env(report())
+			calls := 0
+			e.VerifyDisk = func(_ context.Context, gotNode, gotDisk string) (precheck.Disk, error) {
+				calls++
+				if gotNode != node || gotDisk != disk {
+					t.Errorf("verified %q on %q, want %q on %q", gotDisk, gotNode, disk, node)
+				}
+				return c.disk, nil
+			}
+			o := opts()
+			o.ForceDisk = c.force
+			res, err := Run(ctx, e, o)
+			if c.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+					t.Fatalf("err = %v, want %q", err, c.wantErr)
+				}
+				for _, a := range s.applied {
+					if strings.HasPrefix(a, "LVMCluster/") {
+						t.Error("LVMCluster applied for a disk that is not provably blank")
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 {
+				t.Errorf("VerifyDisk called %d times, want 1", calls)
+			}
+			if c.wantWarn != "" && !hasWarning(res, c.wantWarn) {
+				t.Errorf("warnings = %v, want %q", res.Warnings, c.wantWarn)
+			}
+		})
+	}
+}
+
+func TestRunVerifyDiskErrorsStopSetup(t *testing.T) {
+	s := newSim()
+	e := s.env(report())
+	e.VerifyDisk = func(context.Context, string, string) (precheck.Disk, error) {
+		return precheck.Disk{}, errors.New("probe pod failed")
+	}
+	if _, err := Run(context.Background(), e, opts()); err == nil || !strings.Contains(err.Error(), "re-checking") {
+		t.Fatalf("err = %v, want the re-check failure", err)
+	}
+}
+
+func TestRunUsesTheByIDNameForAKernelDisk(t *testing.T) {
+	s := newSim()
+	e := s.env(report())
+	e.VerifyDisk = func(context.Context, string, string) (precheck.Disk, error) { return blankDisk(), nil }
+	o := opts()
+	o.Settings = precheck.Suggested{Node: node, Disk: "/dev/sdb"}
+	res, err := Run(context.Background(), e, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasWarning(res, "not a stable name") {
+		t.Errorf("warnings = %v, want the unstable-name warning", res.Warnings)
+	}
+	var detail string
+	for _, st := range res.Steps {
+		if st.Name == manifests.StepStorage {
+			detail = st.Detail
+		}
+	}
+	if !strings.Contains(detail, "/dev/disk/by-id/wwn-0x5000000000000002") {
+		t.Errorf("storage detail = %q, want the by-id path", detail)
+	}
+}
+
+func TestRunDryRunDoesNotProbeTheDisk(t *testing.T) {
+	s := newSim()
+	e := s.env(report())
+	calls := 0
+	e.VerifyDisk = func(context.Context, string, string) (precheck.Disk, error) {
+		calls++
+		return blankDisk(), nil
+	}
+	o := opts()
+	o.DryRun = true
+	if _, err := Run(context.Background(), e, o); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Errorf("VerifyDisk called %d times in a dry run, want 0", calls)
+	}
+}
+
 func TestRunStorageErrors(t *testing.T) {
 	ctx := context.Background()
 	other := &unstructured.Unstructured{Object: map[string]any{}}
@@ -754,6 +869,10 @@ func TestResolve(t *testing.T) {
 		{name: "no probe, no node", wantErr: "no node selected"},
 		{name: "user disk wins", user: precheck.Suggested{Disk: "/dev/disk/by-id/wwn-0x5000000000000009"}, suggested: node,
 			wantNode: node, wantDisk: "/dev/disk/by-id/wwn-0x5000000000000009"},
+		{name: "user disk makes a disk failure a warning",
+			results:  []precheck.Result{failOn(node, "disk")},
+			user:     precheck.Suggested{Node: node, Disk: "/dev/disk/by-id/wwn-0x5000000000000009"},
+			wantNode: node, wantDisk: "/dev/disk/by-id/wwn-0x5000000000000009", wantWarn: 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

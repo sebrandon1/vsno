@@ -88,6 +88,9 @@ type Options struct {
 	Delete   bool `json:"delete,omitempty"`
 	// Yes approves the plan without asking.
 	Yes bool `json:"yes,omitempty"`
+	// ForceDisk erases a disk setup cannot prove is blank, as vsno setup
+	// --force-disk. Yes does not imply it.
+	ForceDisk bool `json:"forceDisk,omitempty"`
 	// Restart runs every stage again instead of skipping the ones an earlier
 	// run of the same plan finished. Each stage still reuses what is on the
 	// cluster, so little is rebuilt.

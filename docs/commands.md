@@ -89,6 +89,12 @@ Exits non-zero if any check fails. The hardware probe runs a short-lived privile
 candidate worker in a temporary namespace (like `oc debug node`) and deletes it; nothing else is
 changed.
 
+For each node it suggests a disk for LVMS only when it can show the disk is blank: no partitions,
+partition table, filesystem or signature, no LVM/RAID/device-mapper holder, no mount in the pod's or
+the node's mount namespace, no local PersistentVolume, and zeros in its first MiB and last 4 KiB.
+That catches a raw block volume with no filesystem, such as a Ceph OSD. Disks it rejects are listed
+with the reason instead of being skipped silently.
+
 | Flag | Meaning |
 |---|---|
 | `--node <name>` | Only probe this worker node |
@@ -110,6 +116,13 @@ DNS, a builder, S3 and a TLS registry. Runs `precheck` first. Settings come from
 `--config`, then precheck's suggestion. Without `-n` it sets up the environment that already exists;
 name a new one with `-n`.
 
+Right before applying the `LVMCluster`, `setup` re-probes the chosen disk and refuses one it cannot
+prove is blank, because LVMS erases it. A disk counts as blank only when the probe shows no
+partition table, filesystem or signature, no LVM/RAID/device-mapper holder, no mount (including the
+node's own mount namespace), and zeros in its first MiB and last 4 KiB. A raw block volume such as a
+Ceph OSD is therefore refused. `--force-disk` overrides the refusal; `--yes` does not. A dry run and
+`--no-probe` skip the re-check, and say so.
+
 | Flag | Meaning |
 |---|---|
 | `--config <file>` | Settings file written by `vsno precheck --write-config` |
@@ -120,7 +133,8 @@ name a new one with `-n`.
 | `--ksm` | Turn on kernel samepage merging for the vSNO node; asks unless `--yes` |
 | `--operator-channel <cnv\|lvms>=<channel>` | Move an operator to a channel without asking; repeatable |
 | `--upgrade-operators` | Upgrade operators that have an update available without asking |
-| `--yes` | Approve taking over the LVMS disk without asking |
+| `--yes` | Approve taking over the LVMS disk without asking. It does not skip the blank-disk check |
+| `--force-disk` | Erase a disk the probe cannot prove is blank (it holds data, signatures, holders or a mount) |
 | `--force` | Take over an existing namespace vsno didn't create without asking, overwriting objects in it |
 | `--no-probe` | Skip the precheck hardware probe (then `--node` is required) |
 | `--dry-run` | List what setup would do and change nothing |

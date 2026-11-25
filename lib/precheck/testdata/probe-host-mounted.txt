@@ -1,0 +1,24 @@
+PRODUCT=Example Server
+VIRT=none
+KVM=yes
+NPROC=104
+MEM_TOTAL_KB=97522004
+MEM_AVAILABLE_KB=85123456
+LSBLK={"blockdevices":[{"name":"sda","size":479559942144,"type":"disk","fstype":null,"pttype":"gpt","mountpoint":null,"rota":true,"rm":false,"children":[{"name":"sda1","size":1048576,"type":"part","fstype":null,"pttype":"gpt","mountpoint":null,"rota":true,"rm":false},{"name":"sda2","size":133169152,"type":"part","fstype":"vfat","pttype":"gpt","mountpoint":null,"rota":true,"rm":false},{"name":"sda3","size":402653184,"type":"part","fstype":"ext4","pttype":"gpt","mountpoint":"/boot","rota":true,"rm":false},{"name":"sda4","size":479022002176,"type":"part","fstype":"xfs","pttype":"gpt","mountpoint":"/sysroot","rota":true,"rm":false}]},{"name":"sdb","size":1919716163584,"type":"disk","fstype":null,"pttype":null,"mountpoint":null,"rota":true,"rm":false}]}
+BYID=sda scsi-35000000000000001
+BYID=sda wwn-0x5000000000000001
+BYID=sdb scsi-35000000000000002
+BYID=sdb wwn-0x5000000000000002
+LSBLK_STATUS=ok
+HOSTMOUNTS_CHECKED=yes
+HOLDERS=sda -
+SLAVES=sda -
+SIGCHECK=sda ok
+SIG=sda -
+DATA=sda head=nonzero tail=nonzero
+HOLDERS=sdb -
+SLAVES=sdb -
+SIGCHECK=sdb ok
+SIG=sdb -
+HOSTMOUNT=sdb /mnt/local-storage/localblock-sc/wwn-0x5000000000000002
+DATA=sdb head=zero tail=zero

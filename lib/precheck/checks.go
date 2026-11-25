@@ -3,6 +3,7 @@ package precheck
 import (
 	"context"
 	"fmt"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -448,25 +449,78 @@ func (v *NodeVerdict) evalMemory(freeMemBytes int64, req Requirements) {
 }
 
 // pickDisk returns the largest empty disk of at least minGB, plus the names of
-// disks that were too small or already LVM members (for the report).
-func pickDisk(disks []Disk, minGB int64) (best *Disk, tooSmall, lvm []string) {
+// disks that were too small or already LVM members, and the disks that were
+// rejected as not provably empty, with the reason (for the report).
+func pickDisk(disks []Disk, minGB int64) (best *Disk, tooSmall, lvm, rejected []string) {
 	for i := range disks {
 		d := disks[i]
 		switch {
 		case d.LVMMember():
 			lvm = append(lvm, d.Name)
-		case !d.Empty():
 		case d.SizeGB() < minGB:
+			// Too small to matter, whatever is on it.
 			tooSmall = append(tooSmall, fmt.Sprintf("%s %dGB", d.Name, d.SizeGB()))
+		case len(d.Problems()) > 0:
+			rejected = append(rejected, fmt.Sprintf("%s %dGB (%s)", d.Name, d.SizeGB(), strings.Join(d.Problems(), ", ")))
 		case best == nil || d.SizeBytes > best.SizeBytes:
 			best = &disks[i]
 		}
 	}
-	return best, tooSmall, lvm
+	return best, tooSmall, lvm, rejected
+}
+
+// summarizeList keeps a node's disk row readable when many disks are listed.
+func summarizeList(items []string) string {
+	const max = 3
+	if len(items) <= max {
+		return strings.Join(items, "; ")
+	}
+	return strings.Join(items[:max], "; ") + fmt.Sprintf("; and %d more", len(items)-max)
+}
+
+// pvUse is what a local PersistentVolume says about one device path.
+type pvUse struct {
+	name  string
+	bound bool
+}
+
+// localPVUsers maps each local PV's device path (its basename, which is the
+// by-id name or the kernel name) to the PV.
+func (e *Env) localPVUsers(ctx context.Context) map[string]pvUse {
+	users := map[string]pvUse{}
+	pvs, err := e.Kube.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return users
+	}
+	for _, pv := range pvs.Items {
+		if pv.Spec.Local == nil {
+			continue
+		}
+		users[path.Base(pv.Spec.Local.Path)] = pvUse{
+			name:  pv.Name,
+			bound: pv.Status.Phase == corev1.VolumeBound || pv.Spec.ClaimRef != nil,
+		}
+	}
+	return users
+}
+
+// annotatePVs marks the disks a local PV references, so a raw block PV keeps a
+// disk from being called empty when nothing else shows it is used.
+func annotatePVs(disks []Disk, users map[string]pvUse) {
+	for i := range disks {
+		d := &disks[i]
+		keys := append([]string{d.Name}, d.ByID...)
+		for _, k := range keys {
+			if u, ok := users[k]; ok {
+				d.PVName, d.PVBound = u.name, u.bound
+				break
+			}
+		}
+	}
 }
 
 func (v *NodeVerdict) evalDisk(hw NodeHardware, req Requirements, storageReady bool) {
-	best, tooSmall, lvm := pickDisk(hw.Disks, req.MinDiskGB)
+	best, tooSmall, lvm, rejected := pickDisk(hw.Disks, req.MinDiskGB)
 	switch {
 	case best != nil:
 		v.Disk = best
@@ -474,17 +528,24 @@ func (v *NodeVerdict) evalDisk(hw NodeHardware, req Requirements, storageReady b
 		if id == "" {
 			id = "/dev/" + best.Name + " (no stable by-id name found)"
 		}
-		v.add("disk", Pass, fmt.Sprintf("%s %dGB empty: %s", best.Name, best.SizeGB(), id), "")
+		detail := fmt.Sprintf("%s %dGB empty: %s", best.Name, best.SizeGB(), id)
+		if len(rejected) > 0 {
+			detail += "; in use: " + summarizeList(rejected)
+		}
+		v.add("disk", Pass, detail, "")
 	case storageReady:
 		v.add("disk", Info, fmt.Sprintf("no free disk, but StorageClass %s already exists (LVM members: %s)", vsnoSC, strings.Join(lvm, ",")), "")
 	default:
 		detail := "no empty disk"
 		if len(tooSmall) > 0 {
-			detail += fmt.Sprintf(" of at least %dGB (too small: %s)", req.MinDiskGB, strings.Join(tooSmall, ", "))
+			detail += fmt.Sprintf(" of at least %dGB (too small: %s)", req.MinDiskGB, summarizeList(tooSmall))
 		}
 		if len(lvm) > 0 {
 			detail += "; LVM members: " + strings.Join(lvm, ",")
 		}
-		v.add("disk", Fail, detail, "LVMS needs a whole, unpartitioned disk with no filesystem signatures.")
+		if len(rejected) > 0 {
+			detail += "; in use: " + summarizeList(rejected)
+		}
+		v.add("disk", Fail, detail, "LVMS erases the whole disk. A disk is only suggested when the probe shows it is blank: no partitions, filesystem, signature, holders or mount, and no data in its first MiB or last 4 KiB.")
 	}
 }

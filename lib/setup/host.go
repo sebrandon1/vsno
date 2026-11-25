@@ -331,17 +331,18 @@ func (r *runner) storage(ctx context.Context, ps precheck.ProgressStep) (Step, e
 	if disk == "" {
 		return step, fmt.Errorf("no disk for LVMS on %s: pass --disk (see `vsno precheck`)", node)
 	}
-	if !r.o.Yes && !r.o.DryRun {
-		q := fmt.Sprintf("LVMS will take over %s on %s and erase everything on it. Type the node name to continue", disk, node)
-		if r.Confirm == nil || !r.Confirm(q, node) {
-			return step, errors.New("not confirmed; rerun with --yes to approve the disk")
-		}
+	note, derr := r.checkDisk(ctx, node, &disk)
+	if derr != nil {
+		return step, derr
+	}
+	if err := r.confirmDisk(disk, node); err != nil {
+		return step, err
 	}
 	detail, err := r.applyTemplate(ctx, manifests.LVMCluster, nil)
 	if err != nil {
 		return step, err
 	}
-	step.Outcome, step.Detail = r.outcome(), detail+"; "+disk+" on "+node
+	step.Outcome, step.Detail = r.outcome(), detail+"; "+disk+" on "+node+note
 	if r.o.DryRun {
 		return step, nil
 	}
@@ -358,6 +359,47 @@ func (r *runner) storage(ctx context.Context, ps precheck.ProgressStep) (Step, e
 		_, err = r.Kube.StorageV1().StorageClasses().Get(ctx, sc, metav1.GetOptions{})
 		return err == nil, err
 	})
+}
+
+// confirmDisk asks the user to type the node name before LVMS erases the disk.
+func (r *runner) confirmDisk(disk, node string) error {
+	if r.o.Yes || r.o.DryRun {
+		return nil
+	}
+	q := fmt.Sprintf("LVMS will take over %s on %s and erase everything on it. Type the node name to continue", disk, node)
+	if r.Confirm == nil || !r.Confirm(q, node) {
+		return errors.New("not confirmed; rerun with --yes to approve the disk")
+	}
+	return nil
+}
+
+// checkDisk re-probes the disk setup is about to erase and refuses one it
+// cannot prove is blank, unless --force-disk. It returns a note for the step.
+func (r *runner) checkDisk(ctx context.Context, node string, disk *string) (string, error) {
+	switch {
+	case r.o.DryRun:
+		return " (not re-probed: dry run)", nil
+	case r.VerifyDisk == nil:
+		return " (not re-checked: no hardware probe)", nil
+	}
+	d, err := r.VerifyDisk(ctx, node, *disk)
+	if err != nil {
+		return "", fmt.Errorf("re-checking %s on %s: %w", *disk, node, err)
+	}
+	if !d.Empty() {
+		why := strings.Join(d.Problems(), ", ")
+		if !r.o.ForceDisk {
+			return "", fmt.Errorf("%s on %s is not provably empty (%s); LVMS would erase it. Wipe it, choose another --device, or pass --force-disk", *disk, node, why)
+		}
+		r.res.Warnings = append(r.res.Warnings, fmt.Sprintf("%s on %s is not provably empty (%s); using it anyway (--force-disk)", *disk, node, why))
+	}
+	// A kernel name is not stable across reboots; the LVMCluster wants by-id.
+	if id := d.PreferredByID(); id != "" && !strings.HasPrefix(*disk, "/dev/disk/by-id/") {
+		r.res.Warnings = append(r.res.Warnings, fmt.Sprintf("%s is not a stable name; using %s instead", *disk, id))
+		*disk = id
+		r.cfg.DiskByID = id
+	}
+	return "", nil
 }
 
 // checkNoOtherLVMCluster fails if LVMS already has a different LVMCluster:

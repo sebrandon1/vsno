@@ -22,7 +22,7 @@ You need:
   ```
 
 - one worker node with `/dev/kvm` and enough memory for the vSNOs (ideally bare metal), and a
-  disk free for LVM Storage
+  disk free for LVM Storage (precheck only suggests one it can prove is blank)
 - nothing else on your `PATH`: vsno talks to the cluster itself, and runs `oc` inside the builder
   pod it creates. `--verbose` shows both
 
@@ -86,8 +86,11 @@ vsno setup --memory-overcommit 150          # fit more vSNOs (changes every VM o
 ```
 
 Taking over the LVMS disk asks you to type the node name, since it erases the disk; `--yes` answers
-that for you in a script. `setup` only takes over a namespace vsno did not create when you say
-`--force`, so it cannot overwrite a hand-built environment by accident.
+that for you in a script. Right before applying the LVMCluster, `setup` re-probes the disk and
+refuses one it cannot prove is blank: a disk holding anything, including a raw block volume with no
+filesystem such as a Ceph OSD, is not taken unless you pass `--force-disk`. `setup` only takes over a
+namespace vsno did not create when you say `--force`, so it cannot overwrite a hand-built
+environment by accident.
 
 Check it any time:
 

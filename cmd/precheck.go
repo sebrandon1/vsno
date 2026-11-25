@@ -34,8 +34,10 @@ can run two vSNO VMs for an Image Based Upgrade:
 
   - you are cluster-admin, the cluster is OpenShift, guest networks don't overlap
   - OpenShift Virtualization and LVM Storage are in the catalog
-  - a worker has /dev/kvm (ideally bare metal), enough CPU and memory, and an
-    empty disk for LVMS
+  - a worker has /dev/kvm (ideally bare metal), enough CPU and memory, and a
+    disk it can show is blank for LVMS: no partitions, filesystem, signature,
+    holder or mount, and zeros in its first MiB and last 4 KiB. Disks that are
+    in use are listed with the reason.
 
 The hardware probe runs a short-lived privileged pod on each candidate worker in
 a temporary namespace (like 'oc debug node'), then deletes it. Nothing else on

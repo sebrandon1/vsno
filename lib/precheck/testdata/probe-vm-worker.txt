@@ -6,3 +6,15 @@ MEM_TOTAL_KB=16372700
 MEM_AVAILABLE_KB=10633536
 LSBLK={   "blockdevices": [      {         "name": "loop0",         "size": 6488064,         "type": "loop",         "fstype": "erofs",         "pttype": null,         "mountpoint": null,         "rota": true,         "rm": false      },{         "name": "sr0",         "size": 1073741312,         "type": "rom",         "fstype": null,         "pttype": null,         "mountpoint": null,         "rota": false,         "rm": true      },{         "name": "vda",         "size": 107374182400,         "type": "disk",         "fstype": null,         "pttype": "gpt",         "mountpoint": null,         "rota": true,         "rm": false,         "children": [            {               "name": "vda1",               "size": 1048576,               "type": "part",               "fstype": null,               "pttype": "gpt",               "mountpoint": null,               "rota": true,               "rm": false            },{               "name": "vda2",               "size": 133169152,               "type": "part",               "fstype": "vfat",               "pttype": "gpt",               "mountpoint": null,               "rota": true,               "rm": false            },{               "name": "vda3",               "size": 402653184,               "type": "part",               "fstype": "ext4",               "pttype": "gpt",               "mountpoint": "/boot",               "rota": true,               "rm": false            },{               "name": "vda4",               "size": 106836246016,               "type": "part",               "fstype": "xfs",               "pttype": "gpt",               "mountpoint": "/sysroot",               "rota": true,               "rm": false            }         ]      },{         "name": "vdb",         "size": 107374182400,         "type": "disk",         "fstype": null,         "pttype": null,         "mountpoint": null,         "rota": true,         "rm": false      }   ]}
 BYID=sr0 ata-QEMU_DVD-ROM_QM00009
+LSBLK_STATUS=ok
+HOSTMOUNTS_CHECKED=yes
+HOLDERS=vda -
+SLAVES=vda -
+SIGCHECK=vda ok
+SIG=vda -
+DATA=vda head=nonzero tail=nonzero
+HOLDERS=vdb -
+SLAVES=vdb -
+SIGCHECK=vdb ok
+SIG=vdb -
+DATA=vdb head=zero tail=zero

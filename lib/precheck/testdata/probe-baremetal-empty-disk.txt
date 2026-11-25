@@ -16,3 +16,15 @@ BYID=sda2 wwn-0x5000000000000001-part2
 BYID=sda3 wwn-0x5000000000000001-part3
 BYID=sda4 wwn-0x5000000000000001-part4
 BYID=dm-0 dm-name-vg--example-thin--pool--1
+LSBLK_STATUS=ok
+HOSTMOUNTS_CHECKED=yes
+HOLDERS=sda -
+SLAVES=sda -
+SIGCHECK=sda ok
+SIG=sda -
+DATA=sda head=nonzero tail=nonzero
+HOLDERS=sdb -
+SLAVES=sdb -
+SIGCHECK=sdb ok
+SIG=sdb -
+DATA=sdb head=zero tail=zero

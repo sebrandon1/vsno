@@ -32,6 +32,9 @@ type Env struct {
 	Applier apply.Applier
 	// Precheck runs the precheck, limited to node when it is set.
 	Precheck func(ctx context.Context, node string) *precheck.Report
+	// VerifyDisk re-probes node for the disk setup is about to hand to LVMS.
+	// Nil means the disk is not re-checked (for example with --no-probe).
+	VerifyDisk func(ctx context.Context, node, disk string) (precheck.Disk, error)
 	// Confirm asks the user to type answer to approve question. Nil never approves.
 	Confirm  func(question, answer string) bool
 	Progress precheck.Progress // nil = silent
@@ -46,8 +49,11 @@ type Options struct {
 	// Settings from --config and flags. Empty fields come from the precheck.
 	Settings precheck.Suggested
 	Yes      bool // approve taking over the LVMS disk
-	Force    bool // apply into an existing namespace vsno didn't create
-	DryRun   bool // plan and report, change nothing
+	// ForceDisk erases a disk the probe cannot prove is blank. --yes does not:
+	// it only answers prompts.
+	ForceDisk bool
+	Force     bool // apply into an existing namespace vsno didn't create
+	DryRun    bool // plan and report, change nothing
 	// UpgradeOperators accepts every operator update without asking. --yes
 	// alone does not: it only approves the disk.
 	UpgradeOperators bool

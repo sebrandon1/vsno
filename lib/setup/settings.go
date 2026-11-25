@@ -26,6 +26,10 @@ func resolve(rep *precheck.Report, user precheck.Suggested) (precheck.Suggested,
 			// Another node; not used.
 		case r.Node != "" && capacityChecks[r.Check]:
 			warnings = append(warnings, r.Name()+": "+r.Detail)
+		case r.Check == "disk" && s.Disk != "":
+			// The user named a disk: the storage step re-probes it right before
+			// erasing it, which is the authoritative check.
+			warnings = append(warnings, r.Name()+": "+r.Detail)
 		case r.Check == "Eligible node" && s.Node != "":
 			// The user picked a node.
 		default:
