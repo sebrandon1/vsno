@@ -173,15 +173,17 @@ func invalid(err error) bool {
 }
 
 // carryOver copies the fields a replace has to keep: the addresses a Service
-// was assigned, the PersistentVolume a PVC is bound to, and a Namespace's
-// finalizers. The manifest doesn't set them, and the API rejects a replace
-// that changes or drops them.
+// was assigned, the PersistentVolume a PVC is bound to, a Namespace's
+// finalizers, and the owner references that make the object collect with its
+// vSNO (set by a different field manager, so the rendered object never has
+// them). The API rejects a replace that changes or drops the first four.
 func carryOver(o, cur *unstructured.Unstructured) {
 	o.SetResourceVersion(cur.GetResourceVersion())
 	for _, p := range [][]string{
 		{"spec", "clusterIP"}, {"spec", "clusterIPs"}, {"spec", "ipFamilies"},
 		{"spec", "ipFamilyPolicy"}, {"spec", "healthCheckNodePort"},
 		{"spec", "volumeName"}, {"spec", "finalizers"},
+		{"metadata", "ownerReferences"},
 	} {
 		if v, found, _ := unstructured.NestedFieldCopy(cur.Object, p...); found {
 			_ = unstructured.SetNestedField(o.Object, v, p...)

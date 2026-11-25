@@ -24,6 +24,13 @@ const (
 	KindFiles = "Builder files" // the ISO, install dir and kubeconfig in the builder
 )
 
+// KindPVC is the root disk of a vSNO restored from a snapshot: a PVC where an
+// install has a root DataVolume.
+const KindPVC = "PersistentVolumeClaim"
+
+// KindService is the vSNO's Service, which carries its ClusterIP.
+const KindService = "Service"
+
 // DeleteOptions are the user's choices for vsno delete.
 type DeleteOptions struct {
 	Namespace string
@@ -53,7 +60,8 @@ func parts(name string) []part {
 		{"VirtualMachine", name, cluster.GVRVirtualMachine},
 		{"DataVolume", name + "-root", GVRDataVolume},
 		{"DataVolume", name + "-iso", GVRDataVolume},
-		{"Service", name, cluster.GVRService},
+		{KindPVC, name + "-root", GVRPersistentVolumeClaim},
+		{KindService, name, cluster.GVRService},
 		{KindDNS, name + ".conf", schema.GroupVersionResource{}},
 		{KindFiles, "/work/guests/" + name, schema.GroupVersionResource{}},
 	}
@@ -116,12 +124,12 @@ func planDelete(ctx context.Context, e Env, ns, name string) ([]apply.Change, er
 		case KindFiles:
 			c.Action = apply.Delete // cheap to remove; not worth an exec to check
 		default:
-			_, err := e.Dyn.Resource(p.gvr).Namespace(ns).Get(ctx, p.name, metav1.GetOptions{})
-			switch {
-			case err == nil:
+			exists, err := partExists(ctx, e, ns, p)
+			if err != nil {
+				return nil, err
+			}
+			if exists {
 				c.Action, found = apply.Delete, true
-			case !apierrors.IsNotFound(err):
-				return nil, fmt.Errorf("reading %s %s: %w", p.kind, p.name, err)
 			}
 		}
 		out = append(out, c)
@@ -153,7 +161,7 @@ func deleteOne(ctx context.Context, e Env, ns, name string, res *DeleteResult) e
 				err = e.Builder.Run(ctx, script("rm.sh"), []string{name}, builder.IO{})
 			}
 		default:
-			err = e.Dyn.Resource(p.gvr).Namespace(ns).Delete(ctx, p.name, metav1.DeleteOptions{})
+			err = deletePart(ctx, e, ns, p)
 			if apierrors.IsNotFound(err) {
 				continue
 			}
@@ -168,7 +176,7 @@ func deleteOne(ctx context.Context, e Env, ns, name string, res *DeleteResult) e
 	ps.Update("waiting until the VM and its disks are gone")
 	err := wait.PollUntilContextTimeout(ctx, e.Poll, e.Timeout, true, func(ctx context.Context) (bool, error) {
 		for _, p := range waits {
-			if _, err := e.Dyn.Resource(p.gvr).Namespace(ns).Get(ctx, p.name, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			if !partGone(ctx, e, ns, p) {
 				return false, nil
 			}
 		}
@@ -180,6 +188,49 @@ func deleteOne(ctx context.Context, e Env, ns, name string, res *DeleteResult) e
 	}
 	ps.Done("deleted")
 	return nil
+}
+
+// core reports whether the part is a core-v1 object, which is read through the
+// typed client; everything else goes through the dynamic one.
+func (p part) core() bool { return p.kind == KindPVC }
+
+// partExists reports whether a vSNO part is there. The snapshot restore's root
+// PVC is read through the typed client; the rest through the dynamic one.
+func partExists(ctx context.Context, e Env, ns string, p part) (bool, error) {
+	if p.core() {
+		_, err := e.Kube.CoreV1().PersistentVolumeClaims(ns).Get(ctx, p.name, metav1.GetOptions{})
+		return exists(err, p)
+	}
+	_, err := e.Dyn.Resource(p.gvr).Namespace(ns).Get(ctx, p.name, metav1.GetOptions{})
+	return exists(err, p)
+}
+
+func exists(err error, p part) (bool, error) {
+	switch {
+	case err == nil:
+		return true, nil
+	case apierrors.IsNotFound(err):
+		return false, nil
+	default:
+		return false, fmt.Errorf("reading %s %s: %w", p.kind, p.name, err)
+	}
+}
+
+func partGone(ctx context.Context, e Env, ns string, p part) bool {
+	var err error
+	if p.core() {
+		_, err = e.Kube.CoreV1().PersistentVolumeClaims(ns).Get(ctx, p.name, metav1.GetOptions{})
+	} else {
+		_, err = e.Dyn.Resource(p.gvr).Namespace(ns).Get(ctx, p.name, metav1.GetOptions{})
+	}
+	return apierrors.IsNotFound(err)
+}
+
+func deletePart(ctx context.Context, e Env, ns string, p part) error {
+	if p.core() {
+		return e.Kube.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, p.name, metav1.DeleteOptions{})
+	}
+	return e.Dyn.Resource(p.gvr).Namespace(ns).Delete(ctx, p.name, metav1.DeleteOptions{})
 }
 
 // SetRunning starts (run) or stops a vSNO by setting its VM's runStrategy.

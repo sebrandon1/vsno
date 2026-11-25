@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	dynfake "k8s.io/client-go/dynamic/fake"
 	kfake "k8s.io/client-go/kubernetes/fake"
 )
@@ -93,7 +94,12 @@ var gvrs = map[string]schema.GroupVersionResource{
 func (t tracker) Apply(_ context.Context, objs []*unstructured.Unstructured) ([]apply.Change, error) {
 	var ch []apply.Change
 	for _, o := range objs {
-		if err := t.dyn.Tracker().Create(gvrs[o.GetKind()], o.DeepCopy(), o.GetNamespace()); err != nil {
+		o = o.DeepCopy()
+		// The API server assigns a UID; the fake tracker doesn't.
+		if o.GetUID() == "" {
+			o.SetUID(types.UID("uid-" + o.GetName()))
+		}
+		if err := t.dyn.Tracker().Create(gvrs[o.GetKind()], o, o.GetNamespace()); err != nil {
 			return ch, err
 		}
 		ch = append(ch, apply.Change{Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName(), Action: apply.Created})

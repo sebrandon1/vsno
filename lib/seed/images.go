@@ -102,14 +102,10 @@ func synced(ctx context.Context, e Env, ns string, imgs []Image) {
 	}
 }
 
-// changeSyncs loads the environment's state, lets change edit it, and saves it.
+// changeSyncs loads the environment's state, lets change edit it, and saves it,
+// merging with whatever another writer recorded in the meantime.
 func changeSyncs(ctx context.Context, e Env, ns string, change func(*state.State)) error {
-	st, _, err := state.Load(ctx, e.Kube, ns)
-	if err != nil {
-		return err
-	}
-	change(st)
-	return state.Save(ctx, e.Kube, ns, st)
+	return state.Mutate(ctx, e.Kube, ns, change)
 }
 
 // recordSync notes in the environment's state when ref arrived.

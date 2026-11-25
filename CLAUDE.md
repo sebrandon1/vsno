@@ -59,6 +59,9 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   - `completion.go`: the `ValidArgsFunction`/`RegisterFlagCompletionFunc` candidates. cobra's
     `__complete` runs before `PersistentPreRunE`, so these read `lib/config` themselves, never call
     `useEnvironment`, are bounded by their own timeout, and print nothing on error.
+  - `reconcile.go`: `vsno reconcile`, over `reconcile.Sweep`. Report-only by default, `--prune` to
+    change things, no prompt, and it prints nothing on a healthy environment so a cron log stays
+    empty.
 - `lib/kube`: builds client-go typed and dynamic clients from a kubeconfig (explicit path, then
   `$KUBECONFIG`, then `~/.kube/config`), and wraps the config's `WrapTransport` so `lib/trace` sees
   every request.
@@ -78,7 +81,16 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   a seed generation nothing follows, a guest whose `kubelet`/`crio` an interrupted generation left
   off, a `Released` PV (`teardown.Allocated`), a registry under the seed floor (`seed.RoomWarn`).
   `Fix` runs only the two reversible `Action`s; everything else is a hint. Detection is a table of
-  checks over `guestctltest.Fake`, so each state has a unit test.
+  checks over `guestctltest.Fake`, so each state has a unit test. `Environment` is the two
+  environment-wide checks alone (`volumeLeaks`, `registryRoom`), so `reconcile` reports them the
+  same way.
+- `lib/reconcile`: `Sweep` is `vsno reconcile`'s level-triggered pass: settle cache mirrors
+  (`cache.Reconcile`), delete an abandoned create's Service (`guest.AbandonedServices`), remove a
+  dnsmasq key nothing answers to, clear a `vsno.io/seeding` mark whose generation ended
+  (`seed.ClearEndedMark`), and report `doctor.Environment`. It changes nothing unless `Prune`; only
+  then does it take the advisory `vsno-reconcile` Lease (`lib/reconcile/lock.go`), and it never
+  prompts. Each item carries `precheck.Result` plus kind/name/action, so a controller could turn it
+  into conditions without translating.
 - `lib/report`: `Collect` gathers what `status`, `guest.List`, `cache.List`, `seed.List` and
   `isos.List` report into one document for a bug report or a demo; each part that fails becomes a
   warning, and the type graph carries no credentials (a test walks it to be sure). `cmd/report.go`
@@ -93,9 +105,13 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   for each object. `Plan` (the `Planner` interface) only reads, and says create, reapply (vsno's
   field manager owns fields in it) or take over (it exists, but vsno doesn't manage it). When the API
   rejects an apply with 422 because another manager's fields collide with ours (two `readinessProbe`
-  handlers, say), `Apply` replaces the object, carrying the Service addresses, PVC binding and
-  Namespace finalizers a replace must keep. Other errors are reported, never retried as a replace.
-- `lib/state`: environment state in ConfigMap `<ns>/vsno-state`.
+  handlers, say), `Apply` replaces the object, carrying the Service addresses, PVC binding,
+  Namespace finalizers and owner references a replace must keep. Other errors are reported, never
+  retried as a replace.
+- `lib/state`: environment state in ConfigMap `<ns>/vsno-state`. `Mutate` loads inside a retry loop
+  and applies a change to the fresh copy, so writers that touch different fields (setup's `Node`,
+  run's stages, seed's `Syncs`) merge instead of overwriting each other; `Save` is for a whole
+  state and is last-writer-wins.
 - `lib/setup`: `Run` resolves settings from the precheck, then runs the steps: operators, HyperConverged,
   storage, namespace, support services. Each step either reuses what it finds or applies the manifests
   and waits for them. In a dry run a recording Applier replaces SSA, asks the SSA's `Plan` what
@@ -126,7 +142,11 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - `lib/guest`: vSNOs. `templates/` (install-config, agent-config, the `/var/lib/containers`
   MachineConfig, and the Service, ISO DataVolume and VM) and `scripts/` (`iso.sh`, `probe.sh`,
   `rm.sh`, run in the builder) are embedded. `Create`, `List`, `ListAll`, `Delete`, `SetRunning`,
-  `WaitState`, and the `Oc`/`SSH`/`Kubeconfig`/`Screenshot` helpers. `Environments` finds the
+  `WaitState`, and the `Oc`/`SSH`/`Kubeconfig`/`Screenshot` helpers. `Own` writes an
+  `ownerReferences` entry on the Service, the ISO DataVolume and a snapshot restore's root PVC, so
+  deleting the VM out-of-band collects them; `ClearStaleOwners` removes a reference to a dead VM
+  before create reuses its Service. `AbandonedServices` is the "no VM, older than any ISO build"
+  list `reconcile` prunes. `Environments` finds the
   environments for `ListAll`: namespaces labeled `app.kubernetes.io/managed-by=vsno`, plus any
   holding the `app=builder` pod, so hand-built environments are included. `Classify` turns
   observations (VM status, ISO DataVolume, probe) into a `State`; create's wait and list share it.
@@ -241,6 +261,20 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
 - Memory requested by pods in the environment namespace (`-n`) counts as **available**, because
   an existing environment would be reused or replaced. Memory used by other namespaces, including
   other vsno environments, doesn't, so a second environment on a busy node needs `--node`.
+- Owner references go only on what vsno made and nothing else owns: the Service, the ISO
+  DataVolume and a snapshot restore's root PVC. The root DataVolume and its PVC belong to KubeVirt
+  and CDI. They are written as a merge patch under field manager `vsno-owner`, never server-side
+  apply under `vsno` (which would prune them on the next apply of the rendered template), and never
+  with `controller` or `blockOwnerDeletion` (the latter needs RBAC a namespace editor may lack).
+- `delete` still deletes every part explicitly; garbage collection is the backstop, not the
+  mechanism, or the wait and the dry-run report would lie. The root PVC of a restored vSNO is a
+  part.
+- `reconcile` changes nothing without `--prune`, never prompts (it runs from cron), prints nothing
+  on a healthy environment, and exits 0 with findings — non-zero only when a read or a `--prune`
+  action failed. It never treats a Service younger than `abandonGrace` as abandoned, and refuses an
+  abandoned create's removal while the builder pod is not ready. It does not sweep builder ISOs:
+  `isos.List` shells into the builder, too heavy for a five-minute cron, so `vsno isos prune` stays
+  the manual path — and it still classifies by VMs only, so it can race a create's first minutes.
 - The "StorageClass `lvms-vg-vsno` already exists" shortcut only applies to nodes whose CSINode
   lists the `topolvm.io` driver.
 - When at least one node is eligible, failures on the other nodes are demoted to `info` with a
@@ -326,6 +360,9 @@ Cobra CLI, same layout as `sebrandon1/succulent-cli`.
   call does not: `-v` tracing to stderr while `-o json` stays parseable, and refusals that leave
   stdout empty. It needs no cluster — an `httptest` server answers the reads a command makes, and
   every path it does not answer 404s. Keep it untagged so CI's `go test ./...` runs it.
+- Fake clients cannot model server-side apply's managed fields, so the "an apply under `vsno` never
+  prunes `vsno-owner`'s owner references" contract is verified against a real API, not in a unit
+  test. `lib/apply`'s `TestCarryOver` covers the replace path, which the fake can model.
 - CI prints the total coverage in the run's job summary and fails below the floor in
   `.github/workflows/pre-main.yaml` (`COVERAGE_FLOOR`). Check locally with `make coverage`.
 
@@ -335,6 +372,15 @@ All seven milestones are done and v0.1.0 is released: `precheck`, `setup`, `stat
 the vSNO lifecycle, seed images, the release cache, IBU (`prepare`, `upgrade`), testing an LCA
 branch, `vsno run`, and snapshots. New work is tracked in the
 [issue tracker](https://github.com/sebrandon1/vsno/issues); there is no roadmap label any more.
+
+**No CRD or controller, deliberately.** `vsno reconcile` is the level-triggered seam: it does what
+a controller would do for bookkeeping and orphans without adding controller-runtime, a container
+image, envtest or `pods/exec` RBAC for a long-running service. Its `Item` is shaped like a
+condition so a future controller can consume `Sweep` per namespace without a translation. If
+declarative vSNOs are ever wanted, the pilot is a `CachedRelease` CRD around `lib/cache`: its
+`Reconcile` is already a controller body and its work is already a Job, so it touches nothing
+privileged or irreversible. `VirtualSNO` would need `iso.sh`/`probe.sh` turned into Jobs and the
+terminal confirmations replaced by explicit approval state — a rewrite, not an addition.
 
 vsno is a general vSNO lifecycle tool; IBU is one workflow on top of it. Don't build features that
 assume exactly two guests named seed and target.

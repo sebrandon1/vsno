@@ -30,6 +30,10 @@ import (
 // GVRDataVolume is CDI's DataVolume.
 var GVRDataVolume = schema.GroupVersionResource{Group: "cdi.kubevirt.io", Version: "v1beta1", Resource: "datavolumes"}
 
+// GVRPersistentVolumeClaim is the root disk a snapshot restore makes directly,
+// where an install has a root DataVolume instead.
+var GVRPersistentVolumeClaim = schema.GroupVersionResource{Version: "v1", Resource: "persistentvolumeclaims"}
+
 // Env is the cluster access and UI the guest commands need.
 type Env struct {
 	Kube     kubernetes.Interface
@@ -241,12 +245,56 @@ func finish(g *Guest, o *Observed) {
 // be the relic of a create that died. An ISO build takes one to three minutes.
 const abandonGrace = 10 * time.Minute
 
+// AbandonGrace is how long a Service without a VM stays "building" before it is
+// "abandoned". Reconcile uses the same number so the two cannot disagree.
+func AbandonGrace() time.Duration { return abandonGrace }
+
+// AbandonedServices names the Services that have no VM behind them and have
+// waited longer than any ISO build: what a create that died leaves behind.
+// names, when not empty, restricts the answer.
+func AbandonedServices(ctx context.Context, e Env, ns string, grace time.Duration, names []string) ([]string, error) {
+	e.defaults()
+	svcs, err := e.Kube.CoreV1().Services(ns).List(ctx, metav1.ListOptions{LabelSelector: LabelName})
+	if err != nil {
+		return nil, fmt.Errorf("listing vSNO Services: %w", err)
+	}
+	vms, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).List(ctx, metav1.ListOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("listing vSNOs: %w", err)
+	}
+	have := map[string]bool{}
+	if vms != nil {
+		for i := range vms.Items {
+			have[vms.Items[i].GetName()] = true
+		}
+	}
+	var out []string
+	for i := range svcs.Items {
+		s := &svcs.Items[i]
+		name := s.Labels[LabelName]
+		if name == "" || have[name] || !abandonedFor(s, e.Now(), grace) {
+			continue
+		}
+		if len(names) > 0 && !slices.Contains(names, name) {
+			continue
+		}
+		out = append(out, name)
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// abandonedFor is serviceAbandoned with the grace the caller chooses.
+func abandonedFor(s *corev1.Service, now time.Time, grace time.Duration) bool {
+	created := s.CreationTimestamp.Time
+	return !created.IsZero() && now.Sub(created) > grace
+}
+
 // serviceAbandoned reports whether a Service with no VM behind it has waited
 // longer than any ISO build: the relic of a create that died, not one still
 // building.
 func serviceAbandoned(s *corev1.Service, now time.Time) bool {
-	created := s.CreationTimestamp.Time
-	return !created.IsZero() && now.Sub(created) > abandonGrace
+	return abandonedFor(s, now, abandonGrace)
 }
 
 // noBuildDetail is an abandoned Service's detail: nothing created its VM.

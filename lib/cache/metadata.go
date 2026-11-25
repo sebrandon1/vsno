@@ -51,7 +51,7 @@ func loadCM(ctx context.Context, kube kubernetes.Interface, ns string) (*metadat
 // update changes the metadata and saves it, retrying if someone else wrote it
 // in the meantime.
 func update(ctx context.Context, kube kubernetes.Interface, ns string, change func(*metadata)) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	return retry.OnError(retry.DefaultRetry, retriable, func() error {
 		m, cm, err := loadCM(ctx, kube, ns)
 		if err != nil {
 			return err
@@ -77,4 +77,10 @@ func update(ctx context.Context, kube kubernetes.Interface, ns string, change fu
 		}
 		return nil
 	})
+}
+
+// retriable covers both ways a write loses a race: an Update on a stale
+// resourceVersion, and a Create that another writer won.
+func retriable(err error) bool {
+	return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err)
 }

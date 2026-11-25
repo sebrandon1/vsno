@@ -192,6 +192,8 @@ func (f *fakeHost) serve(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, namespaceJSONFor(name))
 	case p == "/api/v1/pods":
 		writeJSON(w, http.StatusOK, emptyList("v1", "PodList"))
+	case p == "/api/v1/persistentvolumes":
+		writeJSON(w, http.StatusOK, emptyList("v1", "PersistentVolumeList"))
 	case strings.HasSuffix(p, "/services"):
 		writeJSON(w, http.StatusOK, emptyList("v1", "ServiceList"))
 	case strings.HasSuffix(p, "/virtualmachines"):

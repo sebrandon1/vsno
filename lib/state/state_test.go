@@ -9,8 +9,10 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -104,6 +106,94 @@ func TestSaveUpdateError(t *testing.T) {
 	})
 	if err := Save(context.Background(), k, "vsno", &State{}); err == nil || !strings.Contains(err.Error(), "conflict") {
 		t.Errorf("want update error, got %v", err)
+	}
+}
+
+func TestMutateRetriesOnConflict(t *testing.T) {
+	ctx := context.Background()
+	k := fake.NewClientset()
+	if err := Save(ctx, k, "vsno", &State{Node: "worker-0"}); err != nil {
+		t.Fatal(err)
+	}
+	var updates int
+	k.PrependReactor("update", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if updates == 0 {
+			updates++
+			return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "configmaps"}, ConfigMapName, errors.New("changed"))
+		}
+		return false, nil, nil
+	})
+	if err := Mutate(ctx, k, "vsno", func(st *State) { st.HostDNS = "10.0.0.2" }); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := Load(ctx, k, "vsno")
+	if updates != 1 || got.HostDNS != "10.0.0.2" || got.Node != "worker-0" {
+		t.Errorf("updates=%d state=%+v", updates, got)
+	}
+}
+
+func TestMutateRetriesOnAlreadyExists(t *testing.T) {
+	ctx := context.Background()
+	k := fake.NewClientset()
+	var creates int
+	k.PrependReactor("create", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if creates == 0 {
+			creates++
+			return true, nil, apierrors.NewAlreadyExists(schema.GroupResource{Resource: "configmaps"}, ConfigMapName)
+		}
+		return false, nil, nil
+	})
+	if err := Mutate(ctx, k, "vsno", func(st *State) { st.Node = "worker-1" }); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := Load(ctx, k, "vsno"); creates != 1 || got.Node != "worker-1" {
+		t.Errorf("creates=%d state=%+v", creates, got)
+	}
+}
+
+// Two writers editing different fields both land: each Mutate reloads the
+// previous writer's save instead of overwriting it with an older copy.
+func TestMutateMergesDifferentFields(t *testing.T) {
+	ctx := context.Background()
+	k := fake.NewClientset()
+	if err := Save(ctx, k, "vsno", &State{Node: "worker-0"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Mutate(ctx, k, "vsno", func(st *State) { st.Services = map[string]string{"registry": "1.2.3.4"} }); err != nil {
+		t.Fatal(err)
+	}
+	if err := Mutate(ctx, k, "vsno", func(st *State) { st.RecordSync(Sync{Ref: "r/x:1", SyncedAt: t0}) }); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := Load(ctx, k, "vsno")
+	if got.Services["registry"] != "1.2.3.4" || got.Node != "worker-0" {
+		t.Errorf("earlier fields lost: %+v", got)
+	}
+	if _, ok := got.Synced("r/x:1"); !ok {
+		t.Errorf("sync lost: %+v", got.Syncs)
+	}
+}
+
+func TestMutateKeepsRecordCap(t *testing.T) {
+	ctx := context.Background()
+	k := fake.NewClientset()
+	st := &State{}
+	for i := range maxStages + 10 {
+		st.Stages = append(st.Stages, Stage{Name: "s", Status: Done, Time: t0.Add(time.Duration(i) * time.Second)})
+	}
+	if err := Save(ctx, k, "vsno", st); err != nil {
+		t.Fatal(err)
+	}
+	newest := t0.Add(time.Hour)
+	if err := Mutate(ctx, k, "vsno", func(st *State) { st.Record("last", Done, "", newest) }); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := Load(ctx, k, "vsno")
+	if len(got.Stages) != maxStages {
+		t.Fatalf("len = %d", len(got.Stages))
+	}
+	if last := got.Stages[len(got.Stages)-1]; last.Name != "last" || !last.Time.Equal(newest) {
+		t.Errorf("newest entry = %+v", last)
 	}
 }
 

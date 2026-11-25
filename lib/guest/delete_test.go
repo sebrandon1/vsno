@@ -11,6 +11,7 @@ import (
 	"github.com/sebrandon1/vsno/lib/builder"
 	"github.com/sebrandon1/vsno/lib/cluster"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,7 +21,7 @@ import (
 // existing is a world with vSNO seed fully created.
 func existing(t *testing.T) *world {
 	t.Helper()
-	w := newWorld(t, vm("seed", "Running"), dv("seed-root", "Succeeded", ""), dv("seed-iso", "Succeeded", "100.0%"), svcObj("seed"))
+	w := newWorld(t, vm("seed", "Running"), dv("seed-root", "Succeeded", ""), dv("seed-iso", "Succeeded", "100.0%"), svcObj())
 	if err := SetDNS(context.Background(), w.env(), ns, "seed", true); err != nil {
 		t.Fatal(err)
 	}
@@ -28,9 +29,9 @@ func existing(t *testing.T) *world {
 }
 
 // svcObj is the vSNO's Service in the dynamic fake, where Delete reads it.
-func svcObj(name string) *unstructured.Unstructured {
+func svcObj() *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service",
-		"metadata": map[string]any{"name": name, "namespace": ns}}}
+		"metadata": map[string]any{"name": "seed", "namespace": ns}}}
 }
 
 func unstructuredString(obj map[string]any, path ...string) (string, bool, error) {
@@ -47,7 +48,7 @@ func TestDeletePlanAndDryRun(t *testing.T) {
 	for _, c := range res.Objects {
 		got = append(got, c.Kind+" "+c.Name+" "+string(c.Action))
 	}
-	want := "VirtualMachine seed delete,DataVolume seed-root delete,DataVolume seed-iso delete,Service seed delete,DNS entry seed.conf delete,Builder files /work/guests/seed delete"
+	want := "VirtualMachine seed delete,DataVolume seed-root delete,DataVolume seed-iso delete,PersistentVolumeClaim seed-root absent,Service seed delete,DNS entry seed.conf delete,Builder files /work/guests/seed delete"
 	if strings.Join(got, ",") != want {
 		t.Errorf("plan:\n%s\nwant:\n%s", strings.Join(got, ","), want)
 	}
@@ -69,8 +70,11 @@ func TestDelete(t *testing.T) {
 	if asked != "seed" || shown != 1 {
 		t.Errorf("confirm: asked %q, shown %d", asked, shown)
 	}
-	if n := apply.Count(res.Objects, apply.Removed); n != len(res.Objects) {
-		t.Errorf("%d of %d removed: %+v", n, len(res.Objects), res.Objects)
+	if n := apply.Count(res.Objects, apply.Delete); n != 0 {
+		t.Errorf("%d parts still marked for deletion: %+v", n, res.Objects)
+	}
+	if n := apply.Count(res.Objects, apply.Removed); n != 6 {
+		t.Errorf("%d parts removed, want 6 (the absent PVC is not one): %+v", n, res.Objects)
 	}
 	if _, err := w.dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Get(context.Background(), "seed", metav1.GetOptions{}); err == nil {
 		t.Error("VM still there")
@@ -80,6 +84,37 @@ func TestDelete(t *testing.T) {
 	}
 	if rm := w.runner.ran("rm.sh"); len(rm) != 1 || rm[0].args[0] != "seed" {
 		t.Errorf("rm.sh = %+v", rm)
+	}
+}
+
+// A vSNO restored from a snapshot keeps its root disk in a PVC where an
+// install has a root DataVolume. Delete must remove the PVC, or the disk leaks
+// until the whole namespace is torn down.
+func TestDeleteRestoredRootPVC(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, vm("seed", "Running"), svcObj())
+	if _, err := w.kube.CoreV1().PersistentVolumeClaims(ns).Create(ctx,
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "seed-root"}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetDNS(ctx, w.env(), ns, "seed", true); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Delete(ctx, w.env(), DeleteOptions{Namespace: ns, Names: []string{"seed"}, Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed := false
+	for _, c := range res.Objects {
+		if c.Kind == KindPVC && c.Name == "seed-root" && c.Action == apply.Removed {
+			removed = true
+		}
+	}
+	if !removed {
+		t.Errorf("the root PVC was not deleted: %+v", res.Objects)
+	}
+	if _, err := w.kube.CoreV1().PersistentVolumeClaims(ns).Get(ctx, "seed-root", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("root PVC still there: %v", err)
 	}
 }
 

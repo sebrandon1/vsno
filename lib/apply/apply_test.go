@@ -327,8 +327,9 @@ func TestTakeOverReplacesWhenApplyIsRejected(t *testing.T) {
 func TestCarryOver(t *testing.T) {
 	cur := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1", "kind": "Service",
-		"metadata": map[string]any{"name": "registry", "namespace": "vsno", "resourceVersion": "7"},
-		"spec":     map[string]any{"clusterIP": "172.30.0.9", "clusterIPs": []any{"172.30.0.9"}, "type": "ClusterIP"},
+		"metadata": map[string]any{"name": "registry", "namespace": "vsno", "resourceVersion": "7",
+			"ownerReferences": []any{map[string]any{"apiVersion": "kubevirt.io/v1", "kind": "VirtualMachine", "name": "seed", "uid": "vm-1"}}},
+		"spec": map[string]any{"clusterIP": "172.30.0.9", "clusterIPs": []any{"172.30.0.9"}, "type": "ClusterIP"},
 	}}
 	o := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1", "kind": "Service",
@@ -343,6 +344,13 @@ func TestCarryOver(t *testing.T) {
 	}
 	if _, found, _ := unstructured.NestedString(o.Object, "spec", "type"); found {
 		t.Error("carryOver copied a field the manifest sets")
+	}
+	// The template never renders ownerReferences (the VM's UID doesn't exist at
+	// render time), so a replace must keep the reference that makes the Service
+	// collect with its vSNO.
+	refs := o.GetOwnerReferences()
+	if len(refs) != 1 || refs[0].Name != "seed" || refs[0].UID != "vm-1" {
+		t.Errorf("ownerReferences not carried: %+v", refs)
 	}
 }
 
