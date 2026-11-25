@@ -315,21 +315,19 @@ func (r *runner) saveState(ctx context.Context, status state.StageStatus, detail
 	if r.o.DryRun || !r.nsSet {
 		return nil
 	}
-	st, _, err := state.Load(ctx, r.Kube, r.o.Namespace)
-	if err != nil {
-		st = &state.State{}
-	}
-	if status == state.Done {
-		st.Node, st.Disk, st.HostDNS = r.cfg.Node, r.cfg.DiskByID, r.cfg.HostDNS
-		st.Services, st.Versions = r.st.Services, r.st.Versions
-	}
-	// The settings before vsno first changed them: a later change mustn't
-	// replace them, or teardown would restore vsno's own values.
-	if st.PreviousDensity == nil {
-		st.PreviousDensity = r.st.PreviousDensity
-	}
-	st.Record(StageName, status, detail, r.Now())
-	return state.Save(ctx, r.Kube, r.o.Namespace, st)
+	now := r.Now()
+	return state.Mutate(ctx, r.Kube, r.o.Namespace, func(st *state.State) {
+		if status == state.Done {
+			st.Node, st.Disk, st.HostDNS = r.cfg.Node, r.cfg.DiskByID, r.cfg.HostDNS
+			st.Services, st.Versions = r.st.Services, r.st.Versions
+		}
+		// The settings before vsno first changed them: a later change mustn't
+		// replace them, or teardown would restore vsno's own values.
+		if st.PreviousDensity == nil {
+			st.PreviousDensity = r.st.PreviousDensity
+		}
+		st.Record(StageName, status, detail, now)
+	})
 }
 
 func summary(res *Result) string {

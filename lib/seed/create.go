@@ -411,8 +411,25 @@ func seedingMark(ctx context.Context, e Env, ns, name string) (time.Time, bool) 
 	return guest.SeedingSince(vm.GetAnnotations()[guest.AnnSeeding], e.Now())
 }
 
-// seedGenEnded reports whether the SeedGenerator LCA runs is gone or finished.
-// It reads with the run's cancellation dropped: the mark must be cleared only
+// ClearEndedMark removes a vsno.io/seeding mark whose generation has ended. It
+// reports whether a mark was there and went. A generation still running, or one
+// that cannot be read, keeps its mark: seedGenEnded answers false for both.
+func ClearEndedMark(ctx context.Context, e Env, ns, name string) (bool, error) {
+	vm, err := e.Dyn.Resource(cluster.GVRVirtualMachine).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return false, fmt.Errorf("reading vSNO %s/%s: %w", ns, name, err)
+	}
+	if vm.GetAnnotations()[guest.AnnSeeding] == "" {
+		return false, nil
+	}
+	if !seedGenEnded(ctx, e.Access(name)) {
+		return false, nil
+	}
+	setSeeding(ctx, e, ns, name, time.Time{})
+	return true, nil
+}
+
+// seedGenEnded reports whether the SeedGenerator LCA runs is gone or finished.// It reads with the run's cancellation dropped: the mark must be cleared only
 // when the generation really ended, and a canceled context reaches nothing.
 func seedGenEnded(ctx context.Context, a Access) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)

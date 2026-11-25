@@ -74,14 +74,23 @@ func Run(ctx context.Context, e Env, ns string, names []string) ([]Finding, erro
 		}
 	}
 	if len(names) == 0 {
-		leaks, err := volumeLeaks(ctx, e, ns)
-		if err != nil {
-			out = append(out, unreadable("the environment", err))
-		}
-		out = append(out, leaks...)
-		out = append(out, registryRoom(ctx, e, ns)...)
+		out = append(out, Environment(ctx, e, ns)...)
 	}
 	return out, nil
+}
+
+// Environment reports the environment's own checks rather than its vSNOs':
+// Released volumes still holding a disk, and a registry too full for the next
+// seed. It only reads, and reconcile reuses it so the two agree.
+func Environment(ctx context.Context, e Env, ns string) []Finding {
+	e.Defaults(ns)
+	var out []Finding
+	leaks, err := volumeLeaks(ctx, e, ns)
+	if err != nil {
+		out = append(out, unreadable("the environment", err))
+	}
+	out = append(out, leaks...)
+	return append(out, registryRoom(ctx, e, ns)...)
 }
 
 func contains(all []string, s string) bool {

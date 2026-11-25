@@ -76,6 +76,7 @@ With `--verbose`, a `create` reads like this:
 | [`iso`](#vsno-iso) | Show, delete and prune what creates leave behind |
 | [`config`](#vsno-config) | Read and write the settings file |
 | [`doctor`](#vsno-doctor) | Look for known broken states and fix the reversible ones |
+| [`reconcile`](#vsno-reconcile) | Settle unfinished bookkeeping and remove what a dead create left |
 | [`report`](#vsno-report) | Collect one document for a bug report or a demo |
 | [`teardown`](#vsno-teardown) | Delete an environment |
 | [`version`](#vsno-version) | Print the vsno version |
@@ -278,7 +279,8 @@ disabled, so the vSNO won't answer when it starts again. Let it finish — `vsno
 ## `vsno delete`
 
 Removes each named vSNO: its VM and root disk, the ISO, its Service, its DNS entry and the
-builder's files for it. Lists what it will delete and asks you to type the name(s) unless `--yes`.
+builder's files for it. A vSNO restored from a snapshot has its root disk in a PVC, which is removed
+too. Lists what it will delete and asks you to type the name(s) unless `--yes`.
 
 | Flag | Meaning |
 |---|---|
@@ -702,6 +704,43 @@ deletes anything, and it prints nothing on a healthy environment.
 | Flag | Meaning |
 |---|---|
 | `--fix` | Apply the two reversible fixes; everything else is reported |
+
+## `vsno reconcile`
+
+Sweeps an environment for the bookkeeping nothing else watches, and for what a create that died left
+behind. Unlike `doctor`, it is about completion rather than diagnosis, and it can delete:
+
+- a release whose mirror Job finished while no command was looking (as `cache list` settles it)
+- a Service left by a create that died: no VM behind it, and older than any ISO build
+- a dnsmasq entry for a name that is neither a VM nor a Service
+- a `vsno.io/seeding` mark whose generation LCA has ended
+- the environment's own checks: a `Released` PersistentVolume, and a registry too full for the next
+  seed
+
+By default it only reports. It never asks a question, so it is safe from cron, and it exits `0`
+whenever the sweep ran — findings, even `fail` rows, do not change the exit code. It exits non-zero
+only when a read failed or a `--prune` action did, so a cron failure means the sweep broke rather
+than that the lab is imperfect.
+
+`--prune` performs the removals. It takes an advisory `Lease` (`vsno-reconcile`) so two prunes cannot
+plan the same deletion, and it will not remove an abandoned create's parts while the builder pod is
+not ready. It never touches an ISO the builder is serving or a build directory unless no Service
+answers to that name, so it cannot race a create that is still building.
+
+Takes optional vSNO names; none means every vSNO and the environment. `-o json` prints the report.
+`-o wide` is refused.
+
+| Flag | Meaning |
+|---|---|
+| `--prune` | Remove what is orphaned; without it the sweep only reports |
+| `--dry-run` | Report only (the default), and an error together with `--prune` |
+| `--grace <duration>` | How long a Service may wait for its VM (default `10m`) |
+| `--timeout <duration>` | Limit for the whole sweep (default `5m`) |
+
+```bash
+# every five minutes, with only problems in the log
+*/5 * * * * vsno -n vsno reconcile --prune -o json >> /var/log/vsno-reconcile.log 2>&1
+```
 
 ## `vsno report`
 

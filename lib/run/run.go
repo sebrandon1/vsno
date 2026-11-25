@@ -569,20 +569,17 @@ func ensureSeed(ctx context.Context, e Env, o Options, plan *Plan) error {
 }
 
 // record notes a stage's outcome in the environment's state, best effort:
-// the run's own output is what the user reads.
-// record notes a stage's outcome in the environment's state; a finished
-// stage's detail is the plan's key, so only a run of the same plan resumes it.
+// the run's own output is what the user reads. A finished stage's detail is
+// the plan's key, so only a run of the same plan resumes it.
 func record(ctx context.Context, e Env, ns, key string, s Stage, err error) {
-	st, _, lerr := state.Load(ctx, e.Kube, ns)
-	if lerr != nil {
-		return
-	}
 	status, detail := state.Done, key
 	if err != nil {
 		status, detail = state.Failed, err.Error()
 	}
-	st.Record(StageName+":"+string(s), status, detail, e.Now())
-	_ = state.Save(ctx, e.Kube, ns, st)
+	now := e.Now()
+	_ = state.Mutate(ctx, e.Kube, ns, func(st *state.State) {
+		st.Record(StageName+":"+string(s), status, detail, now)
+	})
 }
 
 // finished lists the stages the environment's state says a run of the plan

@@ -119,12 +119,8 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 	}
 
 	started := e.Now()
-	if err := step(e, "Creating VM "+spec.Name, func(precheck.ProgressStep) (string, error) {
-		_, err := e.Applier.Apply(ctx, objs[1:])
-		if spec.Snapshot != "" {
-			return fmt.Sprintf("root disk %d GiB from snapshot %s", spec.DiskGiB, spec.Snapshot), err
-		}
-		return fmt.Sprintf("ISO DataVolume %s-iso, root disk %d GiB", spec.Name, spec.DiskGiB), err
+	if err := step(e, "Creating VM "+spec.Name, func(ps precheck.ProgressStep) (string, error) {
+		return createVM(ctx, e, spec, objs, ps)
 	}); err != nil {
 		return g, err
 	}
@@ -143,10 +139,35 @@ func Create(ctx context.Context, e Env, o CreateOptions) (*Guest, error) {
 	return g, record(ctx, e, spec.Namespace, g)
 }
 
+// createVM applies the vSNO's ISO DataVolume and VM, then hangs its own objects
+// off the VM.
+func createVM(ctx context.Context, e Env, spec Spec, objs []*unstructured.Unstructured, ps precheck.ProgressStep) (string, error) {
+	if _, err := e.Applier.Apply(ctx, objs[1:]); err != nil {
+		return "", err
+	}
+	// Now that the VM has a UID, its own objects hang off it: deleting it
+	// out-of-band leaves nothing for the garbage collector to miss. A failure
+	// here loses that safety net for this vSNO, which is not worth failing an
+	// install that got this far; `vsno delete` still removes every part by name.
+	if err := Own(ctx, e, spec); err != nil {
+		ps.Warn("could not make the vSNO's objects garbage-collect with its VM: " + err.Error())
+	}
+	if spec.Snapshot != "" {
+		return fmt.Sprintf("root disk %d GiB from snapshot %s", spec.DiskGiB, spec.Snapshot), nil
+	}
+	return fmt.Sprintf("ISO DataVolume %s-iso, root disk %d GiB", spec.Name, spec.DiskGiB), nil
+}
+
 // makeDisk makes what the vSNO's VM boots from: the root disk restored from a
 // snapshot, or the release mirrored for an install. It reports whether the
 // install uses the environment's registry.
 func makeDisk(ctx context.Context, e Env, o CreateOptions, spec Spec, sec *Secrets) (bool, error) {
+	// A create that died after its Service can leave a reference to a VM that
+	// is gone; reusing the Service under it would let the garbage collector
+	// delete it mid-build.
+	if err := ClearStaleOwners(ctx, e, spec); err != nil {
+		return false, err
+	}
 	if spec.Snapshot != "" {
 		return false, restore(ctx, e, spec)
 	}

@@ -205,6 +205,28 @@ type Report struct {
 	Total int64 `json:"total"`
 }
 
+// Pending lists the releases a mirror is still writing, so a sweep can say
+// what it settled rather than reading the whole cache.
+func Pending(ctx context.Context, kube kubernetes.Interface, ns string) ([]Entry, error) {
+	m, err := load(ctx, kube, ns)
+	if err != nil {
+		return nil, err
+	}
+	var out []Entry
+	for _, ent := range m.Entries {
+		if ent.State == StateMirroring {
+			out = append(out, *ent)
+		}
+	}
+	slices.SortFunc(out, func(a, b Entry) int {
+		if c := strings.Compare(a.Version, b.Version); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Digest, b.Digest)
+	})
+	return out, nil
+}
+
 // List returns the cached releases, with the vSNOs that use each one. users
 // maps a release image to the vSNOs running it.
 func List(ctx context.Context, e Env, ns string, users map[string][]string) (*Report, error) {

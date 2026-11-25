@@ -12,6 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 )
 
 const (
@@ -161,8 +162,37 @@ func Load(ctx context.Context, kube kubernetes.Interface, ns string) (st *State,
 	return st, true, nil
 }
 
-// Save writes the state, creating the ConfigMap if needed.
+// Save writes the state, creating the ConfigMap if needed. Two writers that
+// each save a whole State still resolve last-writer-wins; a writer that edits
+// fields another writer also touches must use Mutate.
 func Save(ctx context.Context, kube kubernetes.Interface, ns string, st *State) error {
+	return retry.OnError(retry.DefaultRetry, retriable, func() error {
+		return saveOnce(ctx, kube, ns, st)
+	})
+}
+
+// Mutate loads the state, lets change edit it, and saves it, retrying when
+// another writer changed it in between. change runs on a freshly loaded State
+// on every attempt, so it must be pure over State: capture anything else it
+// needs (a time, a plan key) before calling.
+func Mutate(ctx context.Context, kube kubernetes.Interface, ns string, change func(*State)) error {
+	return retry.OnError(retry.DefaultRetry, retriable, func() error {
+		st, _, err := Load(ctx, kube, ns)
+		if err != nil {
+			return err
+		}
+		change(st)
+		return saveOnce(ctx, kube, ns, st)
+	})
+}
+
+// retriable covers the two ways a write loses a race: an Update on a stale
+// resourceVersion (Conflict) and a Create that another writer won (AlreadyExists).
+func retriable(err error) bool {
+	return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err)
+}
+
+func saveOnce(ctx context.Context, kube kubernetes.Interface, ns string, st *State) error {
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err

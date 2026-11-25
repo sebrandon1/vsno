@@ -187,6 +187,28 @@ func TestUpdateAndLoad(t *testing.T) {
 	}
 }
 
+func TestPending(t *testing.T) {
+	ctx := context.Background()
+	e := env(&runner{})
+	if got, err := Pending(ctx, e.Kube, ns); err != nil || len(got) != 0 {
+		t.Fatalf("empty cache: %v %v", got, err)
+	}
+	err := update(ctx, e.Kube, ns, func(m *metadata) {
+		m.Entries["sha256:ready"] = &Entry{Version: "4.20.46", Digest: "sha256:ready"}
+		m.Entries["sha256:running"] = &Entry{Version: "4.21.0", Digest: "sha256:running", State: StateMirroring}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Pending(ctx, e.Kube, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Digest != "sha256:running" {
+		t.Errorf("pending = %+v", got)
+	}
+}
+
 func TestList(t *testing.T) {
 	ctx := context.Background()
 	e := env(&runner{})
